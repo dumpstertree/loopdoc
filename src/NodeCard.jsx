@@ -294,13 +294,15 @@ export default function NodeCard({
       </div>
 
       <div className="nd-body" onPointerDown={(e) => e.stopPropagation()}>
-        <input
-          className="nd-name"
-          placeholder={meta.label.toLowerCase() + ' name…'}
-          value={node.name}
-          onChange={(e) => onPatch({ name: e.target.value })}
-          onKeyDown={(e) => e.stopPropagation()}
-        />
+        {(mode === 'flow' || node.kind === 'text') && (
+          <input
+            className="nd-name"
+            placeholder={meta.label.toLowerCase() + ' name…'}
+            value={node.name}
+            onChange={(e) => onPatch({ name: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+        )}
 
         {node.kind === 'event' && (
           <>
@@ -470,10 +472,22 @@ export default function NodeCard({
           <div className="mc-click warn">pick a system + fn</div>
         )}
 
-        {/* flow exit ports (choice exits included) */}
-        {flowOuts.map((p) => (
-          <ExitRow key={p.id} node={node} port={p} onPortDown={onPortDown} />
-        ))}
+        {/* flow exit ports — rows on the flow canvas, pinned top-right on machine parts */}
+        {mode === 'machine'
+          ? flowOuts.map((p) => (
+              <span
+                key={p.id}
+                className="port port-flow-out port-out-mc"
+                data-port={portKey(node.id, p.id, 'out')}
+                title="drag to connect"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  onPortDown(e, node.id, p.id)
+                }}
+              />
+            ))
+          : flowOuts.map((p) => <ExitRow key={p.id} node={node} port={p} onPortDown={onPortDown} />)}
       </div>
     </div>
   )

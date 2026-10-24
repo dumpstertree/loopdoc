@@ -554,6 +554,11 @@ svg.edges .edge {
 .port-flow-out:hover {
   background: var(--cyan);
 }
+.port-out-mc {
+  position: absolute;
+  right: -6px;
+  top: 8px;
+}
 .port-data {
   position: relative;
   width: 9px;
