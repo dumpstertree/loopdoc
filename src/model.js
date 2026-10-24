@@ -190,8 +190,9 @@ export const KINDS = {
     mode: 'machine',
     label: 'DRAIN',
     cls: 'mc-drain',
-    hint: 'removes tokens from upstream pools — drain amount per step (falls back to the link amount)',
+    hint: 'removes tokens from upstream pools — drain amount per step · wire ⇣ in:int to take that value instead',
     ports: () => [{ id: 'in', dir: 'in', label: '' }],
+    data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
   },
   pool: {
     mode: 'machine',

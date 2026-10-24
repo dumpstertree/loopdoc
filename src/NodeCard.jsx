@@ -290,6 +290,9 @@ export default function NodeCard({
   // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
   const poolFed =
     node.kind === 'pool' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
+  // drain whose per-step amount comes from a wired int instead of the field
+  const drainFed =
+    node.kind === 'drain' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
   if (sim) {
     if (node.kind === 'pool') amount = sim.amounts[node.id] ?? node.init ?? 0
     if (['delay', 'queue', 'register'].includes(node.kind)) {
@@ -326,7 +329,9 @@ export default function NodeCard({
           </span>
         )}
         {isMachineKind && node.kind === 'drain' && (
-          <span className="mc-amount" title="tokens removed from each upstream pool per step">−{node.drain ?? 1}</span>
+          <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'tokens removed from each upstream pool per step'}>
+            {drainFed ? '⇣' : `−${node.drain ?? 1}`}
+          </span>
         )}
         {isEntry && <span className="entry-flag">▶ START</span>}
         {mode === 'flow' && (
@@ -500,7 +505,7 @@ export default function NodeCard({
             <input className="inp" style={{ width: 52 }} type="number" value={node.init ?? 0} onChange={(e) => onPatch({ init: Math.max(0, Number(e.target.value) || 0) })} />
           </div>
         )}
-        {isMachineKind && node.kind === 'drain' && (
+        {isMachineKind && node.kind === 'drain' && !drainFed && (
           <div className="nd-row">
             <span className="nd-sub">drain</span>
             <input
@@ -512,6 +517,14 @@ export default function NodeCard({
               onChange={(e) => onPatch({ drain: Math.max(0, Number(e.target.value) || 0) })}
             />
             <span className="nd-sub">/step</span>
+          </div>
+        )}
+        {isMachineKind && node.kind === 'drain' && (
+          <div className="dvar" title="wire an int in — the drain removes that many per pool each step (field hides)">
+            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
+            <span>
+              ⇣ in:<b>int</b>
+            </span>
           </div>
         )}
         {isMachineKind && node.kind === 'pool' && (

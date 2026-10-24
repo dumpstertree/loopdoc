@@ -245,11 +245,19 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   // drains
   for (const n of nodes) {
     if (n.kind !== 'drain' || n.auto === false) continue
+    // ⇣ in:int dictates the amount when wired; otherwise the card field,
+    // falling back to the per-link circle
+    const fed = links.some((l) => l.kind === 'data' && l.to === n.id && l.toPort === '__in__')
+    let want = n.drain ?? null
+    if (fed) {
+      const d = dataValue(nodes, links, a, mem, n.id, '__in__')
+      const x = d && Number.isFinite(Number(d.val)) ? Number(d.val) : 0
+      want = Math.max(0, Math.floor(x))
+    }
     for (const e of flows.filter((e) => e.to === n.id)) {
       const s = pool(e.from)
       if (!s) continue
-      // the drain's own amount dictates — per-link circles only apply when unset
-      const take = Math.min(a[e.from] || 0, n.drain ?? e.amount ?? 1)
+      const take = Math.min(a[e.from] || 0, want ?? e.amount ?? 1)
       if (take > 0) {
         a[e.from] -= take
         log.push(`🕳 ${n.name || 'drain'} ⟵ −${take} ${s.name || 'pool'} = ${a[e.from]}`)
