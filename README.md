@@ -39,7 +39,9 @@ graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 (assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
 (nested economy sim — opens full-screen like any nested graph).
 
-machine canvas: `SOURCE` · `DRAIN` · `POOL` (its amount is ⇡ `int` data —
+machine canvas: `SOURCE` · `DRAIN` (drains `n` tokens/pool/step — set it on
+the card; link circles only apply when unset) · `POOL` (its amount is ⇡
+`int` data —
 wire ⇣ `in:int` to mirror another value; the initial field disappears then) ·
 `CONVERTER` · `GATE` · `RAND GATE` · `TRADER` · `DELAY` · `QUEUE` ·
 `REGISTER` · `FOR` (⇣ `to:int` loads a count on trigger; passes 1 flow/step,

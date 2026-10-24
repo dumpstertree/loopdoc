@@ -248,7 +248,8 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     for (const e of flows.filter((e) => e.to === n.id)) {
       const s = pool(e.from)
       if (!s) continue
-      const take = Math.min(a[e.from] || 0, e.amount ?? 1)
+      // the drain's own amount dictates — per-link circles only apply when unset
+      const take = Math.min(a[e.from] || 0, n.drain ?? e.amount ?? 1)
       if (take > 0) {
         a[e.from] -= take
         log.push(`🕳 ${n.name || 'drain'} ⟵ −${take} ${s.name || 'pool'} = ${a[e.from]}`)

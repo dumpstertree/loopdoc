@@ -190,7 +190,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'DRAIN',
     cls: 'mc-drain',
-    hint: 'removes tokens from upstream pools',
+    hint: 'removes tokens from upstream pools — drain amount per step (falls back to the link amount)',
     ports: () => [{ id: 'in', dir: 'in', label: '' }],
   },
   pool: {
@@ -365,6 +365,7 @@ export function newNode(kind, x, y) {
   if (kind === 'graph') n.graph = newGraph('flow', n.name || 'sub graph')
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'pool') n.init = 10
+  if (kind === 'drain') n.drain = 1
   if (kind === 'source' || kind === 'drain') n.auto = true
   if (kind === 'delay') n.delay = 3
   if (kind === 'queue') n.rate = 1

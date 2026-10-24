@@ -325,6 +325,9 @@ export default function NodeCard({
             {node.kind === 'delay' ? `⏳${node.delay ?? 3}` : node.kind === 'queue' ? `×${node.rate ?? 1}` : `÷${node.countTo ?? 2}`}
           </span>
         )}
+        {isMachineKind && node.kind === 'drain' && (
+          <span className="mc-amount" title="tokens removed from each upstream pool per step">−{node.drain ?? 1}</span>
+        )}
         {isEntry && <span className="entry-flag">▶ START</span>}
         {mode === 'flow' && (
           <button
@@ -495,6 +498,20 @@ export default function NodeCard({
           <div className="nd-row">
             <span className="nd-sub">initial</span>
             <input className="inp" style={{ width: 52 }} type="number" value={node.init ?? 0} onChange={(e) => onPatch({ init: Math.max(0, Number(e.target.value) || 0) })} />
+          </div>
+        )}
+        {isMachineKind && node.kind === 'drain' && (
+          <div className="nd-row">
+            <span className="nd-sub">drain</span>
+            <input
+              className="inp"
+              style={{ width: 52 }}
+              type="number"
+              title="tokens removed from each upstream pool per step — overrides the link amount circle"
+              value={node.drain ?? 1}
+              onChange={(e) => onPatch({ drain: Math.max(0, Number(e.target.value) || 0) })}
+            />
+            <span className="nd-sub">/step</span>
           </div>
         )}
         {isMachineKind && node.kind === 'pool' && (
