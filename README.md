@@ -19,7 +19,7 @@ npm run dev
 
 | concept  | shape                                                              |
 | -------- | ------------------------------------------------------------------ |
-| `Doc`    | `{ app, version, name, design: Graph, notes, assets: Asset[] }`    |
+| `Doc`    | `{ app, version, name, design: Graph, notes, assets: Asset[], types: Type[] }` |
 | `Graph`  | `{ id, mode:'flow'│'machine', name, entry, nodes[], links[] }`     |
 | `Node`   | `{ id, kind, name, x, y, …kind fields }`                           |
 | `Link`   | `{ id, kind:'flow'│'data', from, fromPort, to, toPort, amount? }`  |
@@ -53,12 +53,18 @@ as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
 
 ## Systems & data wires
 
-Define a ⚙️ **system** asset in the docked 📦 panel and give it an API:
-function names with typed ⇣ inputs and ⇡ outputs (free-form types: `int`,
-`loot table`, …). EVENT nodes and SYS CALL nodes pick a system + fn and grow
-typed port squares. Drag ⇡ → ⇣ to wire data; mismatches are refused with a
-warning. In machines, pools feed `int` into fn inputs; sys calls log their
-exchanged values into the sim log.
+Declare **T**ypes in the docked 📦 panel: a name plus the fields it is made
+up of (each field picks its type from the same dropdown). Basic types
+(`int · float · string · bool`) and their `[]` array versions are always
+available; declared types join the list — every fn variable type is picked,
+never typed. Renaming a type cascades into fn variables and foreach item
+types.
+
+Define a ⚙️ **system** asset and give it an API: function names with typed
+⇣ inputs and ⇡ outputs. EVENT nodes and SYS CALL nodes pick a system + fn
+and grow typed port squares. Drag ⇡ → ⇣ to wire data; mismatches are refused
+with a warning. In machines, pools feed `int` into fn inputs; sys calls log
+their exchanged values into the sim log.
 
 ## Interactions
 

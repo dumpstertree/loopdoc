@@ -6,7 +6,7 @@ import GraphCanvas from './GraphCanvas.jsx'
 import MachineCanvas from './MachineCanvas.jsx'
 import AssetsPanel from './AssetsPanel.jsx'
 import Traverse from './Traverse.jsx'
-import { newDoc, parseDoc, serializeDoc, removeAssetRefs, walkGraphs } from './model.js'
+import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs } from './model.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
 
@@ -296,6 +296,16 @@ export default function App() {
         {tab === 'design' && showAssets && (
           <AssetsPanel
             doc={doc}
+            types={doc.types || []}
+            onTypes={(next) => {
+              const prev = docRef.current.types || []
+              let d = { ...docRef.current, types: next }
+              for (const t of next) {
+                const p = prev.find((x) => x.id === t.id)
+                if (p && p.name && p.name !== t.name) d = renameTypeInDoc(d, p.name, t.name)
+              }
+              commit(d)
+            }}
             onAssets={(fnOrList) =>
               commit({ ...docRef.current, assets: typeof fnOrList === 'function' ? fnOrList(docRef.current.assets) : fnOrList })
             }

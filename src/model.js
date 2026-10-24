@@ -35,8 +35,44 @@ export const ASSET_KINDS = [
 ]
 export const assetIcon = (kind) => (ASSET_KINDS.find((k) => k.id === kind) || {}).icon || '📦'
 
+// ---- data types ------------------------------------------------------------
+// types are declared on the doc and picked from dropdowns everywhere.
+// a variable's `type` is a plain type NAME string — arrays carry '[]'
+// ('int', 'Foe', 'Foe[]') — so wire checking stays a simple name compare.
+export const BASIC_TYPES = ['int', 'float', 'string', 'bool']
+
+export function newType(name = '') {
+  return { id: uid('ty'), name, fields: [{ id: uid('f'), name: '', typeId: 'int' }] }
+}
+
+// every pickable type name, base first then arrays
+export function typeNames(types) {
+  const seen = []
+  for (const n of [...BASIC_TYPES, ...(types || []).map((t) => t.name).filter(Boolean)])
+    if (!seen.includes(n)) seen.push(n)
+  return seen
+}
+
+// rename a type everywhere it is referenced (fn vars, foreach item types)
+export function renameTypeInDoc(doc, oldName, newName) {
+  const d = JSON.parse(JSON.stringify(doc))
+  const fix = (t) => (t === oldName ? newName : t === oldName + '[]' ? newName + '[]' : t)
+  for (const a of d.assets || [])
+    for (const f of a.api || [])
+      for (const key of ['inputs', 'outputs'])
+        for (const v of f[key] || []) v.type = fix(v.type)
+  const walk = (g) => {
+    for (const n of g.nodes) {
+      if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
+      if (n.graph) walk(n.graph)
+    }
+  }
+  walk(d.design)
+  return d
+}
+
 export function newVar() {
-  return { id: uid('v'), name: '', type: '' }
+  return { id: uid('v'), name: '', type: 'int' }
 }
 export function newFn() {
   return { id: uid('fn'), name: '', inputs: [newVar()], outputs: [newVar()] }
@@ -329,6 +365,7 @@ export function newDoc(name = 'Untitled Design') {
     design: newGraph('flow', 'Main Loop'),
     notes: { business: '', mood: '' },
     assets: [],
+    types: [],
   }
 }
 
@@ -437,5 +474,6 @@ export function parseDoc(text) {
   if (!d || d.app !== 'loopdoc-composer' || !d.design) throw new Error('not a loopdoc composer file')
   d.notes = { business: '', mood: '', ...(d.notes || {}) }
   d.assets = d.assets || []
+  d.types = d.types || []
   return d
 }

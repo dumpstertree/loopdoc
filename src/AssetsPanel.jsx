@@ -3,7 +3,7 @@
 // and for ⚙️ systems the API editor (functions with typed ⇣/⇡ variables)
 // inline in the card. No modals.
 import React, { useState } from 'react'
-import { ASSET_KINDS, assetIcon, newAsset, newFn, newVar, walkGraphs } from './model.js'
+import { ASSET_KINDS, assetIcon, newAsset, newFn, newVar, newType, typeNames, walkGraphs } from './model.js'
 
 function useCounts(doc) {
   const counts = {}
@@ -19,7 +19,111 @@ function useCounts(doc) {
   return counts
 }
 
-function ApiEditor({ asset, onChange }) {
+// one dropdown of every type: base + declared types, each with its array form
+function TypeSelect({ value, onChange, types, title }) {
+  const names = typeNames(types)
+  const v = value || ''
+  const known = names.includes(v.replace('[]', ''))
+  return (
+    <select
+      className="inp t"
+      title={title || 'data type'}
+      value={known ? v : '__legacy__'}
+      onChange={(e) => onChange(e.target.value === '__legacy__' ? v : e.target.value)}
+    >
+      {v && !known && <option value="__legacy__">{v} (undeclared)</option>}
+      {!v && <option value="">type…</option>}
+      <optgroup label="base">
+        {names.filter((n) => n === 'int' || n === 'float' || n === 'string' || n === 'bool').map((n) => (
+          <option key={n} value={n}>{n}</option>
+        ))}
+      </optgroup>
+      <optgroup label="arrays">
+        {names.filter((n) => n === 'int' || n === 'float' || n === 'string' || n === 'bool').map((n) => (
+          <option key={n + '[]'} value={n + '[]'}>{n}[]</option>
+        ))}
+      </optgroup>
+      {names.filter((n) => !['int', 'float', 'string', 'bool'].includes(n)).length > 0 && (
+        <>
+          <optgroup label="declared">
+            {names.filter((n) => !['int', 'float', 'string', 'bool'].includes(n)).map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </optgroup>
+          <optgroup label="declared arrays">
+            {names.filter((n) => !['int', 'float', 'string', 'bool'].includes(n)).map((n) => (
+              <option key={n + '[]'} value={n + '[]'}>{n}[]</option>
+            ))}
+          </optgroup>
+        </>
+      )}
+    </select>
+  )
+}
+
+function TypesSection({ types, onTypes }) {
+  const set = (fn) => onTypes(fn(types))
+  const upd = (i, patch) => set((list) => list.map((t, j) => (j === i ? { ...t, ...patch } : t)))
+  return (
+    <div className="types-box">
+      <div className="io-label head">
+        ≡ TYPES — named data shapes · {types.length}
+        <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={() => set((l) => [...l, newType('NewType')])}>
+          + type
+        </button>
+      </div>
+      {types.map((t, i) => (
+        <div className="api-fn" key={t.id}>
+          <div className="api-var">
+            <span className="io-label">T</span>
+            <input
+              className="inp"
+              style={{ flex: 1 }}
+              placeholder="TypeName…"
+              value={t.name}
+              onChange={(e) => upd(i, { name: e.target.value })}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <button className="icon-btn" title="delete type (usages keep the name)" onClick={() => set((l) => l.filter((_, j) => j !== i))}>
+              ×
+            </button>
+          </div>
+          <div className="api-io">
+            <div className="io-label">FIELDS (made up of)</div>
+            {(t.fields || []).map((f, j) => (
+              <div className="api-var" key={f.id}>
+                <input
+                  className="inp"
+                  style={{ flex: 1 }}
+                  placeholder="field…"
+                  value={f.name}
+                  onChange={(e) => upd(i, { fields: t.fields.map((x, k) => (k === j ? { ...x, name: e.target.value } : x)) })}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+                <TypeSelect
+                  types={types}
+                  value={f.typeId}
+                  onChange={(typeId) => upd(i, { fields: t.fields.map((x, k) => (k === j ? { ...x, typeId } : x)) })}
+                />
+                <button className="icon-btn" onClick={() => upd(i, { fields: t.fields.filter((_, k) => k !== j) })}>
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              className="tb-btn"
+              onClick={() => upd(i, { fields: [...(t.fields || []), { id: `${t.id}_f${Date.now().toString(36)}`, name: '', typeId: 'int' }] })}
+            >
+              + field
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ApiEditor({ asset, onChange, types }) {
   const api = asset.api || []
   const set = (next) => onChange({ ...asset, api: next })
   const upd = (i, patch) => set(api.map((f, j) => (j === i ? { ...f, ...patch } : f)))
@@ -60,14 +164,10 @@ function ApiEditor({ asset, onChange }) {
                     onChange={(e) => updVar(i, key, j, { name: e.target.value })}
                     onKeyDown={(e) => e.stopPropagation()}
                   />
-                  <input
-                    className="inp t"
-                    style={{ width: 84 }}
-                    placeholder="type…"
-                    title="free-form type: int, float, EnemyId, loot table…"
+                  <TypeSelect
+                    types={types}
                     value={v.type}
-                    onChange={(e) => updVar(i, key, j, { type: e.target.value })}
-                    onKeyDown={(e) => e.stopPropagation()}
+                    onChange={(type) => updVar(i, key, j, { type })}
                   />
                   <button className="icon-btn" onClick={() => upd(i, { [key]: f[key].filter((_, j2) => j2 !== j) })}>
                     ×
@@ -88,7 +188,7 @@ function ApiEditor({ asset, onChange }) {
   )
 }
 
-export default function AssetsPanel({ doc, onAssets, onRemove, onClose }) {
+export default function AssetsPanel({ doc, types, onTypes, onAssets, onRemove, onClose }) {
   const assets = doc.assets || []
   const counts = useCounts(doc)
   const [open, setOpen] = useState(null) // asset id whose card is expanded
@@ -112,6 +212,8 @@ export default function AssetsPanel({ doc, onAssets, onRemove, onClose }) {
         </button>
       </div>
       <div className="assets-list">
+        <TypesSection types={types || []} onTypes={onTypes} />
+        <div className="io-label head">📦 ASSETS · {assets.length}</div>
         {assets.map((a) => (
           <div key={a.id} className={`asset-card ${open === a.id ? 'sel' : ''}`}>
             <div className="asset-row">
@@ -153,7 +255,7 @@ export default function AssetsPanel({ doc, onAssets, onRemove, onClose }) {
                   onChange={(e) => upd({ ...a, note: e.target.value })}
                   onKeyDown={(e) => e.stopPropagation()}
                 />
-                {a.kind === 'system' && <ApiEditor asset={a} onChange={upd} />}
+                {a.kind === 'system' && <ApiEditor asset={a} onChange={upd} types={types} />}
               </div>
             )}
           </div>

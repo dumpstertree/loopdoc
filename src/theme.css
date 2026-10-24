@@ -778,6 +778,26 @@ svg.edges .edge {
   color: var(--mint);
   width: 7ch;
 }
+select.inp.t {
+  width: 92px;
+  flex: none;
+}
+.types-box {
+  border: 1px solid var(--line);
+  background: var(--bg-3);
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.io-label.head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mint);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
 .add-row {
   display: flex;
   gap: 4px;
