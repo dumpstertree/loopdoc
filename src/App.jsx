@@ -1,0 +1,288 @@
+// App shell: tabs (design / business / mood), the doc store with autosave +
+// file open/save, the docked assets panel, breadcrumb navigation through
+// nested graphs, the machine modal and the traverse overlay.
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import GraphCanvas from './GraphCanvas.jsx'
+import MachineModal from './MachineModal.jsx'
+import AssetsPanel from './AssetsPanel.jsx'
+import Traverse from './Traverse.jsx'
+import { newDoc, parseDoc, serializeDoc, removeAssetRefs, walkGraphs } from './model.js'
+
+const LS_KEY = 'loopdoc-composer:doc'
+
+// resolve a nested flow graph by the chain of node ids leading to it
+function resolveGraph(doc, path) {
+  let g = doc.design
+  for (const id of path) {
+    const n = g.nodes.find((x) => x.id === id)
+    if (!n?.graph) return g
+    g = n.graph
+  }
+  return g
+}
+function replaceGraph(doc, path, next) {
+  if (!path.length) return { ...doc, design: next }
+  const root = { ...doc.design }
+  let g = root
+  for (let i = 0; i < path.length; i++) {
+    const n = g.nodes.find((x) => x.id === path[i])
+    if (!n) break
+    const nn = { ...n }
+    g.nodes = g.nodes.map((x) => (x.id === path[i] ? nn : x))
+    if (i === path.length - 1) nn.graph = next
+    else {
+      nn.graph = { ...n.graph }
+      g = nn.graph
+    }
+  }
+  return { ...doc, design: root }
+}
+
+export default function App() {
+  const [doc, setDoc] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY)
+      if (raw) return parseDoc(raw)
+    } catch {}
+    return newDoc()
+  })
+  const [dirty, setDirty] = useState(false)
+  const [savedAt, setSavedAt] = useState(null)
+  const [tab, setTab] = useState('design')
+  const [path, setPath] = useState([]) // breadcrumb: node ids from design down
+  const [machineNode, setMachineNode] = useState(null) // node id whose machine modal is open
+  const [showAssets, setShowAssets] = useState(true)
+  const [showTraverse, setShowTraverse] = useState(false)
+  const handleRef = useRef(null)
+  const docRef = useRef(doc)
+  docRef.current = doc
+
+  const commit = (next) => {
+    setDoc(next)
+    setDirty(true)
+  }
+  const updateGraph = (next) => commit(replaceGraph(docRef.current, path, next))
+
+  // autosave to localStorage (debounced)
+  useEffect(() => {
+    if (!dirty) return
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(LS_KEY, serializeDoc(doc))
+      } catch {}
+    }, 600)
+    return () => clearTimeout(t)
+  }, [doc, dirty])
+
+  // ---- file io -------------------------------------------------------------
+  const doSave = async () => {
+    const text = serializeDoc(docRef.current)
+    try {
+      if (handleRef.current) {
+        const w = await handleRef.current.createWritable()
+        await w.write(text)
+        await w.close()
+      } else {
+        const h = await window.showSaveFilePicker({
+          suggestedName: `${(docRef.current.name || 'design').replace(/[^\w\- ]+/g, '')}.json`,
+          types: [{ description: 'loopdoc composer', accept: { 'application/json': ['.json'] } }],
+        })
+        handleRef.current = h
+        const w = await h.createWritable()
+        await w.write(text)
+        await w.close()
+      }
+      setDirty(false)
+      setSavedAt(new Date().toLocaleTimeString())
+    } catch (e) {
+      if (e?.name !== 'AbortError') alert(`save failed: ${e.message}`)
+    }
+  }
+  const doOpen = async () => {
+    try {
+      const [h] = await window.showOpenFilePicker({
+        types: [{ description: 'loopdoc composer', accept: { 'application/json': ['.json'] } }],
+      })
+      const f = await h.getFile()
+      const d = parseDoc(await f.text())
+      handleRef.current = h
+      setDoc(d)
+      setPath([])
+      setTab('design')
+      setDirty(false)
+    } catch (e) {
+      if (e?.name !== 'AbortError') alert(`open failed: ${e.message}`)
+    }
+  }
+  const newDocument = () => {
+    if (!window.confirm('Start a new empty document? Unsaved changes are lost.')) return
+    handleRef.current = null
+    setDoc(newDoc())
+    setPath([])
+    setDirty(false)
+  }
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        doSave()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- derived view state ----------------------------------------------------
+  const graph = resolveGraph(doc, path)
+  const crumbs = useMemo(() => {
+    const out = [{ name: doc.design.name || 'Main Loop', path: [] }]
+    let g = doc.design
+    for (let i = 0; i < path.length; i++) {
+      const n = g.nodes.find((x) => x.id === path[i])
+      if (!n?.graph) break
+      g = n.graph
+      out.push({ name: n.name || 'sub graph', path: path.slice(0, i + 1) })
+    }
+    return out
+  }, [doc, path])
+
+  // assets visible on the current canvas: the registry + ✨ generated by this graph
+  const scopedAssets = useMemo(() => {
+    const gen = []
+    for (const n of graph.nodes)
+      if (n.gen && (n.gen.name || '').trim()) gen.push({ id: n.gen.id, kind: n.gen.kind, name: n.gen.name, note: '', __local: true })
+    return [...doc.assets, ...gen]
+  }, [doc.assets, graph.nodes])
+
+  const machineTarget = machineNode
+    ? resolveGraph(doc, path).nodes.find((n) => n.id === machineNode)
+    : null
+
+  const totalNodes = (() => {
+    let c = 0
+    walkGraphs(doc.design, () => c++)
+    return c
+  })()
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <span className="app-title">loopdoc composer</span>
+        <div className="topbar-block">
+          <input
+            className="doc-name"
+            value={doc.name}
+            onChange={(e) => commit({ ...doc, name: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+            spellCheck={false}
+          />
+        </div>
+        <nav className="tabs">
+          {[
+            ['design', 'DESIGN'],
+            ['business', 'BUSINESS'],
+            ['mood', 'MOOD'],
+          ].map(([id, label]) => (
+            <button key={id} className={`tab ${tab === id ? 'tab-on' : ''}`} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+        <span className="spacer" />
+        <div className="topbar-block">
+          <span className={`save-state ${dirty ? 'dirty' : 'saved'}`}>{dirty ? '● unsaved' : savedAt ? `✓ ${savedAt}` : '✓ local'}</span>
+          <button className="btn" onClick={doOpen} title="open .json">
+            open
+          </button>
+          <button className="btn" onClick={doSave} title="Ctrl+S">
+            💾 save
+          </button>
+          <button className="btn" onClick={newDocument}>
+            new
+          </button>
+        </div>
+        <div className="topbar-block">
+          <button className={`btn ${showTraverse ? 'btn-hi' : ''}`} onClick={() => setShowTraverse(!showTraverse)}>
+            ▶ traverse
+          </button>
+          <button className={`btn ${showAssets ? 'btn-hi' : ''}`} onClick={() => setShowAssets(!showAssets)}>
+            📦 assets
+          </button>
+        </div>
+      </header>
+
+      <div className="main">
+        <div className="stage">
+          {tab === 'design' ? (
+            <>
+              <GraphCanvas
+                graph={graph}
+                assets={scopedAssets}
+                onChange={updateGraph}
+                onOpenGraph={(id) => setPath([...path, id])}
+                onEditMachine={(id) => setMachineNode(id)}
+                toolbarExtra={
+                  <span className="tb-hint">
+                    graph {totalNodes} · nodes {graph.nodes.length} · links {graph.links.length}
+                  </span>
+                }
+              />
+              {path.length > 0 && (
+                <div className="crumb" style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 5 }}>
+                  {crumbs.map((c, i) => (
+                    <React.Fragment key={i}>
+                      <span style={{ color: 'var(--dim)' }}>/</span>
+                      <button
+                        className={i === crumbs.length - 1 ? 'crumb-now' : ''}
+                        onClick={() => setPath(c.path)}
+                        title={i === crumbs.length - 1 ? 'you are here' : 'go back'}
+                      >
+                        {c.name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="notes-tab">
+              <textarea
+                className="inp"
+                placeholder={`${tab} notes — free-form markdown-ish text, saved with the document…`}
+                value={doc.notes[tab]}
+                onChange={(e) => commit({ ...doc, notes: { ...doc.notes, [tab]: e.target.value } })}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+        </div>
+
+        {tab === 'design' && showAssets && (
+          <AssetsPanel
+            doc={doc}
+            onAssets={(fnOrList) =>
+              commit({ ...docRef.current, assets: typeof fnOrList === 'function' ? fnOrList(docRef.current.assets) : fnOrList })
+            }
+            onRemove={(id) => commit(removeAssetRefs(docRef.current, id))}
+            onClose={() => setShowAssets(false)}
+          />
+        )}
+      </div>
+
+      {machineTarget && (
+        <MachineModal
+          node={machineTarget}
+          assets={doc.assets}
+          onClose={() => setMachineNode(null)}
+          onCommit={(nextGraph) => {
+            const g = resolveGraph(docRef.current, path)
+            commit(replaceGraph(docRef.current, path, { ...g, nodes: g.nodes.map((n) => (n.id === machineNode ? { ...n, graph: nextGraph } : n)) }))
+          }}
+        />
+      )}
+
+      {showTraverse && <Traverse doc={doc} onClose={() => setShowTraverse(false)} />}
+    </div>
+  )
+}
