@@ -74,16 +74,46 @@ export default function App() {
   }, [doc, dirty])
 
   // ---- file io -------------------------------------------------------------
+  const docFileName = () => `${(docRef.current.name || 'design').replace(/[^\w\- ]+/g, '')}.json`
+  // fallback for browsers without the File System Access API (e.g. Firefox)
+  const hasFS = () => typeof window.showSaveFilePicker === 'function'
+  const doDownload = () => {
+    const blob = new Blob([serializeDoc(docRef.current)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = docFileName()
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    setDirty(false)
+    setSavedAt(new Date().toLocaleTimeString())
+  }
+  const doUpload = () =>
+    new Promise((resolve, reject) => {
+      const inp = document.createElement('input')
+      inp.type = 'file'
+      inp.accept = 'application/json,.json'
+      inp.onchange = async () => {
+        try {
+          const f = inp.files?.[0]
+          if (!f) return reject(new DOMException('', 'AbortError'))
+          resolve({ name: f.name, text: await f.text() })
+        } catch (e) {
+          reject(e)
+        }
+      }
+      inp.click()
+    })
   const doSave = async () => {
     const text = serializeDoc(docRef.current)
     try {
+      if (!hasFS()) return doDownload()
       if (handleRef.current) {
         const w = await handleRef.current.createWritable()
         await w.write(text)
         await w.close()
       } else {
         const h = await window.showSaveFilePicker({
-          suggestedName: `${(docRef.current.name || 'design').replace(/[^\w\- ]+/g, '')}.json`,
+          suggestedName: docFileName(),
           types: [{ description: 'loopdoc composer', accept: { 'application/json': ['.json'] } }],
         })
         handleRef.current = h
@@ -99,18 +129,25 @@ export default function App() {
   }
   const doOpen = async () => {
     try {
-      const [h] = await window.showOpenFilePicker({
-        types: [{ description: 'loopdoc composer', accept: { 'application/json': ['.json'] } }],
-      })
-      const f = await h.getFile()
-      const d = parseDoc(await f.text())
-      handleRef.current = h
+      let text
+      if (!hasFS()) {
+        const up = await doUpload()
+        text = up.text
+      } else {
+        const [h] = await window.showOpenFilePicker({
+          types: [{ description: 'loopdoc composer', accept: { 'application/json': ['.json'] } }],
+        })
+        const f = await h.getFile()
+        text = await f.text()
+      }
+      const d = parseDoc(text)
       setDoc(d)
       setPath([])
       setTab('design')
       setDirty(false)
     } catch (e) {
-      if (e?.name !== 'AbortError') alert(`open failed: ${e.message}`)
+      if (e?.name === 'AbortError') return
+      alert(e?.message === 'not a loopdoc composer file' ? 'open failed: not a loopdoc composer file' : `open failed: ${e.message}`)
     }
   }
   const newDocument = () => {
