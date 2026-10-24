@@ -33,11 +33,11 @@ to a ⇣ input **of the same type** (types compare case-insensitively).
 
 ## Node kinds
 
-flow canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
+canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
 graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 `LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR`
 (assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
-(nested economy sim).
+(nested economy sim — opens full-screen like any nested graph).
 
 machine canvas: `SOURCE` · `DRAIN` · `POOL` (its amount is ⇡ `int` data) ·
 `CONVERTER` · `GATE` · `RAND GATE` · `TRADER` · `DELAY` · `QUEUE` ·
@@ -70,7 +70,7 @@ exchanged values into the sim log.
 src/model.js         schema, kind registry, factories, graph ops — single source of truth
 src/NodeCard.jsx     the node renderer shared by both canvases
 src/GraphCanvas.jsx  flow canvas: drag/connect/select/paste/data wires
-src/MachineModal.jsx machine editor + token simulation
+src/MachineCanvas.jsx machine canvas: full-screen editor + token simulation
 src/AssetsPanel.jsx  docked asset registry + system API editor
 src/Traverse.jsx     flow-graph walkthrough
 src/App.jsx          shell: tabs, doc store, save/open, breadcrumbs

@@ -1,5 +1,5 @@
-// The machine editor: a Machinations-style economy sim inside a modal.
-// Same NodeCard / port / data-wire machinery as the flow canvas — only the
+// The machine canvas: full-screen Machinations-style economy sim editing.
+// Same node card / port / data-wire machinery as the flow canvas — only the
 // simulation semantics are unique: tokens move between pools each step,
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -101,9 +101,9 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
 
     if (!ins.length || ins.some((e) => !pool(e.from))) continue
     const ready = !ins.some((e) => (a[e.from] || 0) < (e.amount ?? 1))
-    const icon = (KINDS[n.kind]?.label || '').slice(0, 1)
 
     if (n.kind === 'gate' || n.kind === 'randgate' || n.kind === 'trader') {
+      const icon = (KINDS[n.kind]?.label || '').slice(0, 1)
       let take = 0
       if (ready) take = Math.min(...ins.map((e) => e.amount ?? 1))
       else if (n.kind === 'trader') take = Math.min(...ins.map((e) => Math.min(a[e.from] || 0, e.amount ?? 1)))
@@ -201,15 +201,14 @@ function fireAction(nodes, links, prev, nodeId, log) {
 }
 
 // ---- editor ------------------------------------------------------------------
-export default function MachineModal({ node, assets, onClose, onCommit }) {
-  const [work, setWork] = useState(() => JSON.parse(JSON.stringify(node.graph)))
+export default function MachineCanvas({ graph, assets, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
-  const workRef = useRef(work)
-  workRef.current = work
+  const graphRef = useRef(graph)
+  graphRef.current = graph
   const simRef = useRef(sim)
   simRef.current = sim
 
@@ -218,26 +217,20 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
     setTimeout(() => setMsg((x) => (x === m ? null : x)), 3200)
   }
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const mutate = (fn) => setWork((w) => fn(w))
-  const patch = (id, p) => mutate((w) => pruneLinks(patchNode(w, id, p), assets, id))
+  const mutate = (fn) => onChange(fn(graphRef.current))
+  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
   const surfacePoint = (e) => {
     const r = surfaceRef.current.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
   const addNode = (kind) =>
-    mutate((w) => ({ ...w, nodes: [...w.nodes, newNode(kind, 140 + Math.random() * 180, 100 + Math.random() * 140)] }))
+    mutate((g) => ({ ...g, nodes: [...g.nodes, newNode(kind, 140 + Math.random() * 180, 100 + Math.random() * 140)] }))
   const delNode = (id) =>
-    mutate((w) => ({ ...w, nodes: w.nodes.filter((n) => n.id !== id), links: w.links.filter((l) => l.from !== id && l.to !== id) }))
+    mutate((g) => ({ ...g, nodes: g.nodes.filter((n) => n.id !== id), links: g.links.filter((l) => l.from !== id && l.to !== id) }))
 
   const onHeaderDown = (e, id) => {
     if (e.button !== 0) return
-    const n = workRef.current.nodes.find((x) => x.id === id)
+    const n = graphRef.current.nodes.find((x) => x.id === id)
     const p = surfacePoint(e)
     setDrag({ kind: 'node', id, dx: p.x - n.x, dy: p.y - n.y })
   }
@@ -250,14 +243,14 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
     setDrag({ kind: 'data', from: id, port: portId, x: p.x, y: p.y })
   }
   const addDataLink = (from, fromPort, to, toPort) => {
-    const ta = dataPortType(workRef.current, assets, from, fromPort, 'out')
-    const tb = dataPortType(workRef.current, assets, to, toPort, 'in')
+    const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
+    const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
     if (!ta || !tb) return warn('⚠ that data port no longer exists')
     if (ta !== tb) return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
-    mutate((w) => ({
-      ...w,
+    mutate((g) => ({
+      ...g,
       links: [
-        ...w.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
+        ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
         { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
       ],
     }))
@@ -267,7 +260,8 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
     if (!drag) return
     const onMove = (e) => {
       const p = surfacePoint(e)
-      if (drag.kind === 'node') mutate((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === drag.id ? { ...n, x: Math.max(0, p.x - drag.dx), y: Math.max(0, p.y - drag.dy) } : n)) }))
+      if (drag.kind === 'node')
+        mutate((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === drag.id ? { ...n, x: Math.max(0, p.x - drag.dx), y: Math.max(0, p.y - drag.dy) } : n)) }))
       else setDrag((d) => ({ ...d, x: p.x, y: p.y }))
     }
     const onUp = (e) => {
@@ -277,10 +271,10 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
         if (t) {
           const to = t.getAttribute('data-node-id')
           if (to !== drag.from)
-            mutate((w) => ({
-              ...w,
+            mutate((g) => ({
+              ...g,
               links: [
-                ...w.links.filter((l) => l.kind === 'data' || !(l.from === drag.from && l.to === to)),
+                ...g.links.filter((l) => l.kind === 'data' || !(l.from === drag.from && l.to === to)),
                 { id: uid('lk'), kind: 'flow', from: drag.from, fromPort: 'out', to, toPort: 'in', amount: 1 },
               ],
             }))
@@ -306,8 +300,9 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag && drag.kind, drag && drag.id, drag && drag.from])
 
-  // measure data + flow ports
-  useEffect(() => {
+  // measure flow + data ports
+  const portPosRef = useRef(portXY)
+  const measure = () => {
     const surf = surfaceRef.current
     if (!surf) return
     const r = surf.getBoundingClientRect()
@@ -316,95 +311,94 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
       const b = el.getBoundingClientRect()
       pos[el.getAttribute('data-port')] = { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top }
     })
-    setPortXY((p) => {
-      const ks = Object.keys(pos)
-      const same = ks.length === Object.keys(p).length && ks.every((k) => p[k] && p[k].x === pos[k].x && p[k].y === pos[k].y)
-      return same ? p : pos
-    })
-  })
+    const prev = portPosRef.current
+    const keys = Object.keys(pos)
+    const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] && prev[k].x === pos[k].x && prev[k].y === pos[k].y)
+    if (same) return
+    portPosRef.current = pos
+    setPortXY(pos)
+  }
+  useLayoutEffect(measure)
 
   // ---- sim controls ----------------------------------------------------------
   const diagnostics = () => {
     const out = []
-    const srcOk = (id) => workRef.current.nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
-    for (const n of workRef.current.nodes.filter((x) => x.kind === 'syscall')) {
-      const ins = workRef.current.links.filter((l) => l.kind !== 'data' && l.to === n.id)
+    const srcOk = (id) => graphRef.current.nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
+    for (const n of graphRef.current.nodes.filter((x) => x.kind === 'syscall')) {
+      const ins = graphRef.current.links.filter((l) => l.kind !== 'data' && l.to === n.id)
       if (!resolveCall((n.calls || [])[0], assets)) out.push(`⚠ sys call "${n.name || ''}" has no system fn selected`)
       if (!ins.length) out.push(`⚠ sys call "${n.name || ''}" has no flow input — it will never be called`)
-      else if (ins.some((e) => !srcOk(e.from) && !workRef.current.nodes.some((x) => x.id === e.from && x.kind === 'pool')))
+      else if (ins.some((e) => !srcOk(e.from) && !graphRef.current.nodes.some((x) => x.id === e.from && x.kind === 'pool')))
         out.push(`⚠ sys call "${n.name || ''}" — flow inputs must come from pools or sources`)
     }
     return out
   }
-  const startSim = () => setSim({ amounts: Object.fromEntries(work.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])), mem: {}, log: ['— simulation started —', ...diagnostics()], steps: 0 })
+  const startSim = () =>
+    setSim({
+      amounts: Object.fromEntries(graphRef.current.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])),
+      mem: {},
+      log: ['— simulation started —', ...diagnostics()],
+      steps: 0,
+    })
   const stepN = (k = 1) =>
     setSim((s) => {
       if (!s) return s
+      const g = graphRef.current
       let amounts = s.amounts
       const log = [...s.log]
       const mem = JSON.parse(JSON.stringify(s.mem || {}))
       for (let i = 0; i < k; i++) {
-        amounts = stepOnce(work.nodes, work.links, amounts, log, mem, assets)
+        amounts = stepOnce(g.nodes, g.links, amounts, log, mem, assets)
         log.push(`— step ${s.steps + i + 1} —`)
       }
       return { amounts, mem, log: log.slice(-400), steps: s.steps + k }
     })
   const clickNode = (id) => {
-    const n = workRef.current.nodes.find((x) => x.id === id)
+    const g = graphRef.current
+    const n = g.nodes.find((x) => x.id === id)
     if (!simRef.current || !n || n.kind !== 'action') return
     setSim((s) => {
       const log = [...s.log]
       const mem = JSON.parse(JSON.stringify(s.mem || {}))
-      let amounts = fireAction(workRef.current.nodes, workRef.current.links, s.amounts, id, log)
-      amounts = stepOnce(workRef.current.nodes, workRef.current.links, amounts, log, mem, assets)
+      let amounts = fireAction(g.nodes, g.links, s.amounts, id, log)
+      amounts = stepOnce(g.nodes, g.links, amounts, log, mem, assets)
       return { ...s, amounts, mem, log: log.slice(-400), steps: s.steps + 1 }
     })
   }
-  const save = () => {
-    onCommit(work)
-    onClose()
-  }
 
-  const byId = Object.fromEntries(work.nodes.map((n) => [n.id, n]))
+  const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
   const endOf = (l) => portXY[`${l.to}:${l.toPort}:in`] || (byId[l.to] ? { x: byId[l.to].x, y: byId[l.to].y + 16 } : null)
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span className="modal-title">⚙ MACHINE — {node.name || 'unnamed'}</span>
-          <span className="modal-sub">Machinations economy · tokens, pools & typed data</span>
-          <span className="spacer" />
-          {sim ? (
-            <>
-              <button className="btn" onClick={() => stepN(1)}>step</button>
-              <button className="btn" onClick={() => stepN(10)}>step ×10</button>
-              <button className="btn" onClick={() => setSim(null)}>■ stop</button>
-              <button className="btn" onClick={startSim}>↺ reset</button>
-            </>
-          ) : (
-            <button className="btn" onClick={startSim} disabled={!work.nodes.some((n) => n.kind === 'pool' || n.kind === 'syscall')}>
-              ▶ simulate
-            </button>
-          )}
-          <button className="btn btn-hi" onClick={save}>💾 save</button>
-          <button className="btn" onClick={onClose}>close ×</button>
-        </div>
-        <div className="graph-toolbar">
-          <span className="tb-label">ADD</span>
-          {kindsFor('machine').map((k) => (
-            <button key={k} className="tb-btn" title={KINDS[k].hint} onClick={() => addNode(k)}>
-              {KINDS[k].label}
-            </button>
-          ))}
-          <span className="tb-hint">drag ▢ out → node = flow · click flow sets amount · teal squares = typed data (pool ⇡ int)</span>
-          {msg && <span className="warn">{msg}</span>}
-        </div>
-        <div className="modal-body">
-          <div className="canvas-scroll" style={{ flex: 1 }}>
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2200, height: 1500 }}>
-              <svg className="edges" width={2200} height={1500}>
+    <>
+      <div className="graph-toolbar">
+        <span className="tb-label">ADD</span>
+        {kindsFor('machine').map((k) => (
+          <button key={k} className="tb-btn" title={KINDS[k].hint} onClick={() => addNode(k)}>
+            {KINDS[k].label}
+          </button>
+        ))}
+        <span className="spacer" />
+        {sim ? (
+          <>
+            <button className="btn" onClick={() => stepN(1)}>step</button>
+            <button className="btn" onClick={() => stepN(10)}>step ×10</button>
+            <button className="btn" onClick={() => setSim(null)}>■ stop</button>
+            <button className="btn" onClick={startSim}>↺ reset</button>
+          </>
+        ) : (
+          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => n.kind === 'pool' || n.kind === 'syscall')}>
+            ▶ simulate
+          </button>
+        )}
+        {msg && <span className="warn">{msg}</span>}
+      </div>
+      <div className="machine-view">
+        <div className="canvas-wrap">
+          <div className="canvas-scroll">
+            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }}>
+              <svg className="edges" width={2600} height={1800}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-flow" />
@@ -413,7 +407,7 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-data" />
                   </marker>
                 </defs>
-                {work.links.map((l) => {
+                {graph.links.map((l) => {
                   if (l.kind === 'data') return null
                   const a = startOf(l)
                   const b = endOf(l)
@@ -428,7 +422,7 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                         const v = window.prompt('tokens transferred per flow:', String(l.amount ?? 1))
                         if (v === null) return
                         const n = Number(v)
-                        if (Number.isFinite(n) && n >= 0) mutate((w) => ({ ...w, links: w.links.map((x) => (x.id === l.id ? { ...x, amount: n } : x)) }))
+                        if (Number.isFinite(n) && n >= 0) mutate((g) => ({ ...g, links: g.links.map((x) => (x.id === l.id ? { ...x, amount: n } : x)) }))
                       }}
                     >
                       <title>flow — click sets amount</title>
@@ -440,7 +434,7 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                     </g>
                   )
                 })}
-                {work.links.map((l) => {
+                {graph.links.map((l) => {
                   if (l.kind !== 'data') return null
                   const a = portXY[`${l.from}:${l.fromPort}:out`]
                   const b = portXY[`${l.to}:${l.toPort}:in`]
@@ -452,7 +446,7 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                       className="edge edge-data"
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (window.confirm('remove this data wire?')) mutate((w) => ({ ...w, links: w.links.filter((x) => x.id !== l.id) }))
+                        if (window.confirm('remove this data wire?')) mutate((g) => ({ ...g, links: g.links.filter((x) => x.id !== l.id) }))
                       }}
                     >
                       <title>data wire — click removes</title>
@@ -474,11 +468,11 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                   />
                 )}
               </svg>
-              {work.nodes.map((n) => (
+              {graph.nodes.map((n) => (
                 <NodeCard
                   key={n.id}
                   node={n}
-                  graph={work}
+                  graph={graph}
                   assets={assets}
                   selected={false}
                   isEntry={false}
@@ -489,28 +483,36 @@ export default function MachineModal({ node, assets, onClose, onCommit }) {
                   onSelect={() => {}}
                   onToggleEntry={() => {}}
                   onOpenGraph={() => {}}
-                  onEditMachine={() => {}}
                   onPortDown={onPortDown}
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
                 />
               ))}
+              {graph.nodes.length === 0 && (
+                <div className="canvas-empty">
+                  <p>
+                    <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
+                    CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
+                  </p>
+                  <p>drag ▢ out → part = flow · click a flow to set the token amount · teal squares wire typed data (pool ⇡ int).</p>
+                </div>
+              )}
             </div>
           </div>
-          {sim && (
-            <aside className="sim-panel">
-              <div className="log-title">SIM LOG — {sim.steps} STEPS</div>
-              <div className="log-box">
-                {sim.log.map((l, i) => (
-                  <div key={i} className="log-line">
-                    {l}
-                  </div>
-                ))}
-              </div>
-            </aside>
-          )}
         </div>
+        {sim && (
+          <aside className="sim-panel">
+            <div className="log-title">SIM LOG — {sim.steps} STEPS</div>
+            <div className="log-box">
+              {sim.log.map((l, i) => (
+                <div key={i} className="log-line">
+                  {l}
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
       </div>
-    </div>
+    </>
   )
 }

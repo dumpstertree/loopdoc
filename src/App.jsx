@@ -3,7 +3,7 @@
 // nested graphs, the machine modal and the traverse overlay.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import GraphCanvas from './GraphCanvas.jsx'
-import MachineModal from './MachineModal.jsx'
+import MachineCanvas from './MachineCanvas.jsx'
 import AssetsPanel from './AssetsPanel.jsx'
 import Traverse from './Traverse.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, walkGraphs } from './model.js'
@@ -50,7 +50,6 @@ export default function App() {
   const [savedAt, setSavedAt] = useState(null)
   const [tab, setTab] = useState('design')
   const [path, setPath] = useState([]) // breadcrumb: node ids from design down
-  const [machineNode, setMachineNode] = useState(null) // node id whose machine modal is open
   const [showAssets, setShowAssets] = useState(true)
   const [showTraverse, setShowTraverse] = useState(false)
   const handleRef = useRef(null)
@@ -155,10 +154,6 @@ export default function App() {
     return [...doc.assets, ...gen]
   }, [doc.assets, graph.nodes])
 
-  const machineTarget = machineNode
-    ? resolveGraph(doc, path).nodes.find((n) => n.id === machineNode)
-    : null
-
   const totalNodes = (() => {
     let c = 0
     walkGraphs(doc.design, () => c++)
@@ -216,18 +211,21 @@ export default function App() {
         <div className="stage">
           {tab === 'design' ? (
             <>
-              <GraphCanvas
-                graph={graph}
-                assets={scopedAssets}
-                onChange={updateGraph}
-                onOpenGraph={(id) => setPath([...path, id])}
-                onEditMachine={(id) => setMachineNode(id)}
-                toolbarExtra={
-                  <span className="tb-hint">
-                    graph {totalNodes} · nodes {graph.nodes.length} · links {graph.links.length}
-                  </span>
-                }
-              />
+              {graph.mode === 'machine' ? (
+                <MachineCanvas graph={graph} assets={doc.assets} onChange={updateGraph} />
+              ) : (
+                <GraphCanvas
+                  graph={graph}
+                  assets={scopedAssets}
+                  onChange={updateGraph}
+                  onOpenGraph={(id) => setPath([...path, id])}
+                  toolbarExtra={
+                    <span className="tb-hint">
+                      graph {totalNodes} · nodes {graph.nodes.length} · links {graph.links.length}
+                    </span>
+                  }
+                />
+              )}
               {path.length > 0 && (
                 <div className="crumb" style={{ position: 'absolute', bottom: 12, left: 12, zIndex: 5 }}>
                   {crumbs.map((c, i) => (
@@ -269,18 +267,6 @@ export default function App() {
           />
         )}
       </div>
-
-      {machineTarget && (
-        <MachineModal
-          node={machineTarget}
-          assets={doc.assets}
-          onClose={() => setMachineNode(null)}
-          onCommit={(nextGraph) => {
-            const g = resolveGraph(docRef.current, path)
-            commit(replaceGraph(docRef.current, path, { ...g, nodes: g.nodes.map((n) => (n.id === machineNode ? { ...n, graph: nextGraph } : n)) }))
-          }}
-        />
-      )}
 
       {showTraverse && <Traverse doc={doc} onClose={() => setShowTraverse(false)} />}
     </div>

@@ -224,7 +224,6 @@ export default function NodeCard({
   onSelect,
   onToggleEntry,
   onOpenGraph,
-  onEditMachine,
   onPortDown,
   onDataPortDown,
   onHeaderDown,
@@ -390,8 +389,8 @@ export default function NodeCard({
             <span className="nd-sub">
               {node.graph.nodes.length} parts · {node.graph.links.length} flows
             </span>
-            <button className="tb-btn" onClick={() => onEditMachine(node.id)}>
-              ✎ machine
+            <button className="tb-btn" onClick={() => onOpenGraph(node.id)}>
+              open →
             </button>
           </div>
         )}

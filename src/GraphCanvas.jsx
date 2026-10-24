@@ -1,6 +1,6 @@
-// The flow-graph canvas: node placement, drag-to-connect flow links, typed
-// data wires, box-select, copy/paste, endless top/left growth. The machine
-// editor (MachineModal) reuses the same vocabulary and several helpers below.
+// graph canvas: node placement, drag-to-connect flow links, typed data
+// wires, box-select, copy/paste, endless top/left growth. The machine canvas
+// reuses the same vocabulary and the bezier helpers below.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
 import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType } from './model.js'
@@ -14,7 +14,7 @@ export const throughPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} $
 const GROW_STEP = 600
 const GROW_AT = 64
 
-export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, onEditMachine, toolbarExtra }) {
+export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, toolbarExtra }) {
   const [selection, setSelection] = useState([])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
@@ -496,7 +496,6 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, onEd
                   onSelect={(id, shift) => setSelection(shift ? [...new Set([...selection, id])] : [id])}
                   onToggleEntry={(id) => mutate((g) => ({ ...g, entry: g.entry === id ? null : id }))}
                   onOpenGraph={() => onOpenGraph(n.id)}
-                  onEditMachine={() => onEditMachine(n.id)}
                   onPortDown={onPortDown}
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
