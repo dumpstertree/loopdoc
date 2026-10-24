@@ -343,8 +343,8 @@ export function dataPorts(node, assets) {
   for (const call of node.calls || []) {
     const r = resolveCall(call, assets)
     if (!r) continue
-    for (const v of r.fn.inputs || []) out.in.push({ id: v.id, type: v.type, name: v.name })
-    for (const v of r.fn.outputs || []) out.out.push({ id: v.id, type: v.type, name: v.name })
+    for (const v of r.fn.inputs || []) if (v.name || v.type) out.in.push({ id: v.id, type: v.type, name: v.name })
+    for (const v of r.fn.outputs || []) if (v.name || v.type) out.out.push({ id: v.id, type: v.type, name: v.name })
   }
   return out
 }
@@ -358,9 +358,11 @@ export function dataPortType(graph, assets, nodeId, portId, dir) {
   return p ? (p.type || '').trim().toLowerCase() : null
 }
 
-// The data a call takes/returns, for logs and labels.
+// The data a call takes/returns, for logs and labels. Blank input vars
+// (leftovers from API editing) are ignored.
 export function fnSig(r) {
-  const fmt = (vs, dash) => (vs || []).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ') || dash
+  const real = (vs) => (vs || []).filter((v) => v.name || v.type)
+  const fmt = (vs, dash) => real(vs).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ') || dash
   return { in: fmt(r.fn.inputs, 'void'), out: fmt(r.fn.outputs, 'void') }
 }
 

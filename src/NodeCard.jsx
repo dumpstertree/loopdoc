@@ -111,8 +111,14 @@ function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimO
                       ⇡ {v.name || '?'}:<b>{v.type || '?'}</b>
                     </span>
                     {onSimOut ? (
-                      (types || []).some((t) => t.name === v.type) ? (
+                      (types || []).some((t) => t.name.toLowerCase() === String(v.type || '').toLowerCase()) ? (
                         <StructInputs v={v} node={node} types={types} onSimOut={onSimOut} />
+                      ) : String(v.type || '').includes('[') &&
+                        (types || []).some(
+                          (t) =>
+                            t.name.toLowerCase() === String(v.type).replace(/\[\s*\]$/, '').trim().toLowerCase(),
+                        ) ? (
+                        <StructArrayInputs v={v} node={node} types={types} onSimOut={onSimOut} />
                       ) : String(v.type || '').includes('[') ? (
                         <input
                           className="inp"
@@ -192,6 +198,61 @@ function StructInputs({ v, node, types, onSimOut }) {
           />
         </div>
       ))}
+    </div>
+  )
+}
+
+function StructArrayInputs({ v, node, types, onSimOut }) {
+  const base = String(v.type || '').replace(/\[\s*\]$/, '').trim()
+  const tdef = (types || []).find((t) => t.name.toLowerCase() === base.toLowerCase())
+  const list = Array.isArray((node.out || {})[v.id]) ? node.out[v.id] : []
+  const set = (next) => onSimOut(v.id, next)
+  const blank = () => Object.fromEntries((tdef.fields || []).map((f) => [f.name || 'field', 0]))
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: '100%' }}>
+      {list.map((item, i) => (
+        <div key={i} style={{ border: '1px solid var(--line)', padding: '2px 4px' }}>
+          <div className="nd-row" style={{ justifyContent: 'space-between' }}>
+            <span className="nd-sub">{tdef.name} {i + 1}</span>
+            <button
+              className="icon-btn"
+              title="remove item"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => set(list.filter((_, j) => j !== i))}
+            >
+              ×
+            </button>
+          </div>
+          {(tdef.fields || []).map((f) => (
+            <div className="nd-row" key={f.id}>
+              <span className="nd-sub" style={{ width: 52, textAlign: 'right' }}>{f.name || '·'}</span>
+              <input
+                className="inp"
+                style={{ flex: 1 }}
+                title={`${f.typeId}`}
+                value={item[f.name || 'field'] ?? ''}
+                onPointerDown={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  set(
+                    list.map((x, j) =>
+                      j === i ? { ...x, [f.name || 'field']: raw !== '' && !isNaN(raw) ? Number(raw) : raw } : x,
+                    ),
+                  )
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      ))}
+      <button
+        className="tb-btn"
+        style={{ width: '100%' }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => set([...list, blank()])}
+      >
+        + {tdef.name || 'item'}
+      </button>
     </div>
   )
 }

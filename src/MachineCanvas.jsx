@@ -107,6 +107,7 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
   log.push(`⚙️ ${r.asset.name || 'system'} → ${r.fn.name || '(unnamed)'}(${sig.in}) ⇡ ${sig.out}`)
   const made = ((mem.call = mem.call || {})[n.id] = {})
   for (const v of r.fn.inputs || []) {
+    if (!v.name && !v.type) continue // blank var left in the API
     const d = dataValue(nodes, links, a, mem, n.id, v.id)
     if (!d) log.push(`    ⚠ in ${v.name || '?'}:${v.type || '?'} — no data wire`)
     else if (d.val === null) log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ⋯ ("${d.from}" never fired)`)
