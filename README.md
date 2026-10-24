@@ -3,7 +3,7 @@
 A design-doc authoring tool for game loops. One vocabulary, two canvases:
 
 - **flow graphs** — the game-loop canvas: control flow between typed nodes
-- **machines** — Machinations-style economy sims (tokens, pools, rates)
+- **machines** — chain-execution sims: entry points, running chains, pools of data
 
 Both are `Graph ▸ Node + Link`. Both use the same node card, the same port
 model, and the same **typed data wires**.
@@ -26,36 +26,47 @@ npm run dev
 | `Asset`  | `{ id, kind, name, note, api? }` — systems carry an `api`          |
 | `api fn` | `{ id, name, inputs:[{id,name,type}], outputs:[…] }`               |
 
-A `flow` graph moves **control** between nodes; a `machine` graph moves
-**resource tokens** between pools. `flow` links inside machines carry an
-`amount` (tokens per flow). `data` links carry a typed value from a ⇡ output
+A `flow` graph moves **control** between nodes. A `machine` graph runs
+**chains**: every part with no flow input is an *entry point*; a chain walks
+downstream one hop per step, and the entry re-fires when all of its chains
+reach an end. Link circles set the `amount` a chain adds/removes from pools
+it passes through. `data` links carry a typed value from a ⇡ output
 to a ⇣ input **of the same type** (types compare case-insensitively).
 
 ## Node kinds
 
 canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
 graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
-`LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR`
-(assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
-(nested economy sim — opens full-screen like any nested graph).
+`LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
+(nested machine — opens full-screen like any nested graph).
 
-machine canvas: `SOURCE` · `DRAIN` (drains `n` tokens/pool/step — set it on
-the card, or wire ⇣ `in:int` and the field hides) · `POOL` (its amount is ⇡
+machine canvas: `SOURCE` (chain entry) · `DRAIN` (chain end — removes its
+amount from upstream pools; set `n` on the card, or wire ⇣ `in:int` and the
+field hides) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
-`CONVERTER` · `GATE` · `RAND GATE` · `TRADER` · `DELAY` · `QUEUE` ·
-`REGISTER` · `FOR` (⇣ `to:int` loads a count on trigger; passes 1 flow/step,
-⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array, from a
-sys-call output; passes 1 flow/step, ⇡ `item:T` + ⇡ `index:int`; **end** out
-pulses once when the loop completes) · `ACTION` (click while simulating →
-fires + one tick) · `SYS CALL` (calls its system
-fn whenever flow passes through — never clickable) · `INSPECT` (pure data —
+`CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
+`TRADER` · `DELAY` (holds the chain N steps) · `QUEUE` (releases at most
+rate chains/step) ·
+`REGISTER` (absorbs chains, pulses every N) · `FOR` (⇣ `to:int` loads a
+count on trigger; one iteration per step once the previous body chain has
+ended, ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array,
+from a sys-call output; one iteration per step, ⇡ `item:T` + ⇡ `index:int`;
+**end** out continues the chain once the last body chain finishes) ·
+`ACTION` (the chain waits here — click to fire; refuses to fire while input
+pools are short) · `SYS CALL` (calls its system fn as the chain
+passes · tick **⏳ can block** and it stays *opened* — the chain freezes
+until you click it to return) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT`.
 
+Chain sim visuals: parts with a chain token in flight glow teal; waiting
+parts (⏳ ACTION / blocked SYS CALL) pulse amber and are clickable.
+
 Pool windows: wire a value into a pool's ⇣ `in:int` and it becomes a live
-window onto that value — drains, sources and converters edit the number, and
-at the end of every step it is **written back to its origin** (e.g. the
-`Entity` inside a foreach's array), so the next read anywhere — next
-iteration, next round — sees the change. The sim log marks writes with ✎.
+window onto that value — chains never add or subtract from it; only `drain`
+edits the number, and at the end of every step it is **written back to its
+origin** (e.g. the `Entity` inside a foreach's array), so the next read
+anywhere — next iteration, next round — sees the change. The sim log marks
+writes with ✎.
 
 Array data: give a system fn an output typed `Foo[]` and edit its sim value
 as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
@@ -94,7 +105,8 @@ their exchanged values into the sim log.
 src/model.js         schema, kind registry, factories, graph ops — single source of truth
 src/NodeCard.jsx     the node renderer shared by both canvases
 src/GraphCanvas.jsx  flow canvas: drag/connect/select/paste/data wires
-src/MachineCanvas.jsx machine canvas: full-screen editor + token simulation
+src/MachineCanvas.jsx machine canvas: full-screen editor + chain simulation
+src/MachineCanvasLegacy.jsx previous machinations step-tick sim (backup)
 src/AssetsPanel.jsx  docked asset registry + system API editor
 src/Traverse.jsx     flow-graph walkthrough
 src/App.jsx          shell: tabs, doc store, save/open, breadcrumbs

@@ -287,6 +287,8 @@ export default function NodeCard({
   // machine live values
   let amount
   let held
+  let tokHere = 0
+  let tokWait = false
   // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
   const poolFed =
     node.kind === 'pool' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
@@ -295,15 +297,18 @@ export default function NodeCard({
     node.kind === 'drain' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
   if (sim) {
     if (node.kind === 'pool') amount = sim.amounts[node.id] ?? node.init ?? 0
-    if (['delay', 'queue', 'register'].includes(node.kind)) {
-      const m = sim.mem[node.id]
-      held = node.kind === 'register' ? m?.count ?? 0 : m?.items.reduce((s, it) => s + it.amt, 0) ?? 0
-    }
+    const tk = ((sim.mem || {}).tokens || []).filter((t) => t.node === node.id)
+    tokHere = tk.length
+    tokWait = tk.some((x) => x.wait)
+    if (node.kind === 'register') held = (sim.mem.reg || {})[node.id] ?? 0
+    else if (['delay', 'queue'].includes(node.kind)) held = tokHere
   }
 
   return (
     <div
-      className={`nd ${meta.cls} ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''}`}
+      className={`nd ${meta.cls} ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''} ${
+        sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''
+      }`}
       data-node-id={node.id}
       style={{ left: node.x, top: node.y, width: W }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
@@ -331,6 +336,14 @@ export default function NodeCard({
         {isMachineKind && node.kind === 'drain' && (
           <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'tokens removed from each upstream pool per step'}>
             {drainFed ? '⇣' : `−${node.drain ?? 1}`}
+          </span>
+        )}
+        {sim && tokHere > 0 && !['register', 'delay', 'queue'].includes(node.kind) && (
+          <span
+            className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
+            title={tokWait ? 'chain waiting here — click to continue' : `chain token${tokHere > 1 ? 's' : ''} here`}
+          >
+            {tokWait ? '⏳' : `●${tokHere > 1 ? tokHere : ''}`}
           </span>
         )}
         {isEntry && <span className="entry-flag">▶ START</span>}
@@ -590,16 +603,20 @@ export default function NodeCard({
             />
           </div>
         )}
-        {(node.kind === 'source' || node.kind === 'drain') && !sim && (
-          <label className="nd-sub" style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-            <input type="checkbox" checked={node.auto !== false} onChange={(e) => onPatch({ auto: e.target.checked })} />
-            fires every step
-          </label>
+        {sim && node.kind === 'action' && <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>}
+        {sim && node.kind === 'syscall' && (
+          <div className={`mc-click${tokWait ? '' : ' info'}`}>
+            {tokWait ? '⏳ click to return' : node.block ? 'blocks the chain — opens here' : 'calls fn as chain passes'}
+          </div>
         )}
-        {sim && node.kind === 'action' && <div className="mc-click">click to fire</div>}
-        {sim && node.kind === 'syscall' && <div className="mc-click info">auto-calls on flow</div>}
         {!sim && node.kind === 'syscall' && !resolveCall((node.calls || [])[0], assets) && (
           <div className="mc-click warn">pick a system + fn</div>
+        )}
+        {!sim && node.kind === 'syscall' && (
+          <label className="nd-sub" style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+            <input type="checkbox" checked={!!node.block} onChange={(e) => onPatch({ block: e.target.checked })} />
+            ⏳ can block — chain waits until clicked to return
+          </label>
         )}
 
         {/* flow exit ports — rows on the flow canvas, pinned top-right on machine parts */}

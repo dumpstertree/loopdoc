@@ -118,109 +118,27 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
   }
 }
 
+// Chain execution: parts with no flow input are ENTRY POINTS, and their
+// chains self-pace — when every token from an entry has reached an end, the
+// entry re-fires. A token moves one hop per step. Blocking sys calls and
+// actions wait in place for a click. Pools never gate: chains pass through
+// them, link circles add/remove pool amounts, and fed ⇣ in pools are live
+// windows that write back to their origin value.
 function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   const a = { ...prev }
-  const pool = (id) => nodes.find((n) => n.id === id && n.kind === 'pool')
   const flows = links.filter((l) => l.kind !== 'data')
-  // sources fill downstream pools
-  for (const n of nodes) {
-    if (n.kind !== 'source' || n.auto === false) continue
-    for (const e of flows.filter((e) => e.from === n.id)) {
-      const s = pool(e.to)
-      if (!s) continue
-      a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      log.push(`⤴ ${n.name || 'source'} → +${e.amount ?? 1} ${s.name || 'pool'} = ${a[e.to]}`)
-    }
-  }
-  // converters cascade
-  const fired = new Set()
-  for (let pass = 0; pass < nodes.length; pass++) {
-    let any = false
-    for (const n of nodes) {
-      if (n.kind !== 'converter' || fired.has(n.id)) continue
-      const ins = flows.filter((e) => e.to === n.id)
-      const outs = flows.filter((e) => e.from === n.id)
-      if (!ins.length || ins.some((e) => !pool(e.from))) continue
-      if (ins.some((e) => (a[e.from] || 0) < (e.amount ?? 1))) continue
-      fired.add(n.id)
-      any = true
-      for (const e of ins) a[e.from] -= e.amount ?? 1
-      for (const e of outs) {
-        const s = pool(e.to)
-        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      }
-      log.push(`⚗ ${n.name || 'converter'}: in ${ins.map((e) => e.amount ?? 1).join('+')} → out ${outs.map((e) => e.amount ?? 1).join('+') || '—'}`)
-    }
-    if (!any) break
-  }
-  // counted / array loops first, so downstream nodes see their fresh tokens in the same step
-  for (const n of nodes) {
-    if (n.kind !== 'for' && n.kind !== 'foreach') continue
-    const loops = (mem.loops = mem.loops || {})
-    const st = loops[n.id]
-    const ins = flows.filter((e) => e.to === n.id)
-    const outs = flows.filter((e) => e.from === n.id)
-    const srcOk = (id) => nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
+  const outsOf = (id) => flows.filter((e) => e.from === id)
+  const insOf = (id) => flows.filter((e) => e.to === id)
+  // fed pools are windows, not buckets — chain arithmetic never touches them
+  const fed = new Set(
+    links.filter((l) => l.kind === 'data' && l.toPort === '__in__').map((l) => l.to),
+  )
+  const p = (id) => (byId[id] && byId[id].kind === 'pool' && !fed.has(id) ? byId[id] : null)
+  const hasPorts = (n) => ((kindMeta(n).ports || (() => []))(n) || []).length > 0
 
-    if (st && st.left > 0) {
-      st.left -= 1
-      st.i += 1
-      for (const e of outs) {
-        if (e.fromPort === 'end') continue
-        const s = pool(e.to)
-        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      }
-      const cur = (mem.cur = mem.cur || {})[n.id] = n.kind === 'for' ? { i: st.i } : { item: st.arr[st.i - 1], index: st.i - 1 }
-      log.push(n.kind === 'for' ? `↻ ${n.name || 'for'} ${st.i}/${st.total} →` : `≡ ${n.name || 'foreach'} ${st.i}/${st.total} item="${cur.item}" →`)
-      continue
-    }
-
-    // exhausted → pulse the end port once until a trigger restarts the loop
-    if (st && st.left === 0 && !st.ended) {
-      st.ended = true
-      const ends = outs.filter((e) => e.fromPort === 'end')
-      for (const e of ends) {
-        const s = pool(e.to)
-        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      }
-      const ic = n.kind === 'for' ? '↻' : '≡'
-      log.push(`${ic} ${n.name || n.kind} finished (${st.total})${ends.length ? ` end ⤳ ${ends.length}` : ''}`)
-    }
-
-    // idle: consume a full trigger to start (restarts if a previous run completed)
-    if (!ins.length || ins.some((e) => !pool(e.from) && !srcOk(e.from))) continue
-    if (ins.some((e) => pool(e.from) && (a[e.from] || 0) < (e.amount ?? 1))) continue
-    if (n.kind === 'for') {
-      const d = dataValue(nodes, links, a, mem, n.id, '__to__')
-      const count = d && d.val !== null && Number.isFinite(Number(d.val)) ? Math.floor(Number(d.val)) : null
-      if (count === null || count <= 0) {
-        if (!((mem.loopWarn = mem.loopWarn = mem.loopWarn || {})[n.id])) {
-          mem.loopWarn[n.id] = true
-          log.push(`⚠ ${n.name || 'for'} — ⇣ to:int is ${d ? 'not a number' : 'unwired'}`)
-        }
-        continue
-      }
-      for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
-      loops[n.id] = { left: count, total: count, i: 0 }
-      log.push(`↻ ${n.name || 'for'}: loaded ${count} iterations`)
-    } else {
-      const d = dataValue(nodes, links, a, mem, n.id, '__arr__')
-      const arr = d && Array.isArray(d.val) ? d.val : null
-      if (!arr || !arr.length) {
-        if (!((mem.loopWarn = mem.loopWarn || {})[n.id])) {
-          mem.loopWarn[n.id] = true
-          log.push(`⚠ ${n.name || 'foreach'} — ⇣ arr is ${d ? 'not a wired array' : 'unwired'}`)
-        }
-        continue
-      }
-      for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
-      loops[n.id] = { left: arr.length, total: arr.length, i: 0, arr }
-      log.push(`≡ ${n.name || 'foreach'}: loaded [${arr.join(', ')}]`)
-    }
-  }
-  // fed pools are live windows onto their origin value: re-seed whenever the
-  // origin moves (a new foreach iteration = new key), then all token math in
-  // this step acts on the value itself; written back through the wire below
+  // fed pools are live windows onto their origin value: seed here, write
+  // back at the end of the step
   const windows = []
   for (const n of nodes) {
     if (n.kind !== 'pool') continue
@@ -229,125 +147,241 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     windows.push({ n, ref })
     const k = ref.key()
     const v = ref.get()
-    if (!ref.set || mem.fedKey?.[n.id] !== k) {
+    if (!ref.set || (mem.fedKey || {})[n.id] !== k) {
       if (typeof v === 'number' && Number.isFinite(v)) a[n.id] = v
     }
     ;(mem.fedKey = mem.fedKey || {})[n.id] = k
   }
-  // flow nodes
-  for (const n of nodes) {
-    if (!['gate', 'randgate', 'trader', 'delay', 'queue', 'register', 'syscall'].includes(n.kind)) continue
-    const ins = flows.filter((e) => e.to === n.id)
-    const outs = flows.filter((e) => e.from === n.id)
 
-    if (n.kind === 'syscall') {
-      const srcOk = (id) => nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
-      if (!ins.length || ins.some((e) => !pool(e.from) && !srcOk(e.from))) continue
-      if (ins.some((e) => pool(e.from) && (a[e.from] || 0) < (e.amount ?? 1))) {
-        if (!((mem.waited = mem.waited || {})[n.id])) {
-          mem.waited[n.id] = true
-          log.push(`⏸ sys call "${n.name || ''}" waiting — trigger pool is empty`)
-        }
+  // an entry fires whenever none of its chains are in flight
+  mem.tseq = mem.tseq || 0
+  const toks = (mem.tokens = mem.tokens || [])
+  for (const e of nodes)
+    if (e.kind !== 'drain' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
+      toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
+
+  const qBudget = {}
+  for (const n of nodes) if (n.kind === 'queue') qBudget[n.id] = n.rate ?? 1
+
+  const kill = (t) => {
+    // a dead iteration token frees its loop to advance
+    if (t.owner && (mem.loops || {})[t.owner]) mem.loops[t.owner].body = Math.max(0, (mem.loops[t.owner].body || 0) - 1)
+  }
+  const put = (t) => {
+    if (toks.length < 300) toks.push(t)
+    else {
+      if (!mem.boomed) {
+        mem.boomed = true
+        log.push('⚠ 300 chains in flight — check for runaway forks')
+      }
+      kill(t)
+    }
+  }
+  const advance = (t, n, port, arith = true) => {
+    if (arith) for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
+    const outs = outsOf(n.id).filter((e) => (port ? e.fromPort === port : e.fromPort !== 'end'))
+    for (const e of outs) if (p(e.to)) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
+    if (!outs.length) {
+      log.push(`◇ ${n.name || n.kind} — chain end`)
+      kill(t)
+      return
+    }
+    for (const e of outs) put({ id: 't' + mem.tseq++, node: e.to, entry: t.entry, owner: t.owner })
+  }
+
+  const live = toks.splice(0, toks.length)
+  for (const t of live) {
+    const n = byId[t.node]
+    if (!n) {
+      kill(t)
+      continue
+    }
+    if (t.wait) {
+      if (!t.ready) {
+        put(t)
         continue
       }
+      t.wait = null
+    }
+    if (!t.did) {
+      t.did = true
+      put(t)
+      continue // landed this step — it acts on the next one
+    }
+
+    // click-gated parts: actions wait to fire; blocking sys calls stay
+    // "opened" until clicked — the chain freezes right here
+    if (n.kind === 'action' || (n.kind === 'syscall' && n.block)) {
+      if (!t.armed) {
+        t.armed = true
+        t.wait = n.kind === 'action' ? 'click' : 'block'
+        log.push(
+          n.kind === 'action'
+            ? `▶ ${n.name || 'action'} — waiting for click`
+            : `⏳ sys call "${n.name || ''}" opened — click to return`,
+        )
+        put(t)
+        continue
+      }
+      if (n.kind === 'action') {
+        if (insOf(n.id).some((e) => p(e.from) && (a[e.from] || 0) < (e.amount ?? 1))) {
+          if (mem.short !== n.id) log.push(`▶ ${n.name || 'action'} — not enough pool tokens to fire`)
+          mem.short = n.id
+          put(t)
+          continue
+        }
+        mem.short = null
+        log.push(`▶ ${n.name || 'action'} fired`)
+      } else {
+        callSystem(n, nodes, links, a, mem, log, assets)
+      }
+      advance(t, n)
+      continue
+    }
+
+    if (n.kind === 'syscall') {
       callSystem(n, nodes, links, a, mem, log, assets)
-      for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
-      for (const e of outs) {
-        const s = pool(e.to)
-        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      }
+      advance(t, n)
       continue
     }
 
-    if (!ins.length || ins.some((e) => !pool(e.from))) continue
-    const ready = !ins.some((e) => (a[e.from] || 0) < (e.amount ?? 1))
-
-    if (n.kind === 'gate' || n.kind === 'randgate' || n.kind === 'trader') {
-      const icon = (KINDS[n.kind]?.label || '').slice(0, 1)
-      let take = 0
-      if (ready) take = Math.min(...ins.map((e) => e.amount ?? 1))
-      else if (n.kind === 'trader') take = Math.min(...ins.map((e) => Math.min(a[e.from] || 0, e.amount ?? 1)))
-      if (take <= 0) continue
-      if (n.kind === 'randgate' && Math.random() < 0.5) continue
-      for (const e of ins) a[e.from] = Math.max(0, (a[e.from] || 0) - Math.min(take, e.amount ?? 1))
-      for (const e of outs) {
-        const s = pool(e.to)
-        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-      }
-      log.push(`${icon} ${n.name || n.kind}: ${take} in → ${outs.map((e) => e.amount ?? 1).join('+') || '—'} out`)
-      continue
-    }
-
-    const m = (mem[n.id] = mem[n.id] || { items: [], count: 0 })
-    if (!ready) continue
-    const take = Math.min(...ins.map((e) => e.amount ?? 1))
-    for (const e of ins) a[e.from] -= take
     if (n.kind === 'delay') {
-      const hold = n.delay ?? 3
-      m.items.push({ amt: take, age: 0 })
-      const due = m.items.filter((it) => it.age >= hold).reduce((s, it) => s + it.amt, 0)
-      m.items = m.items.filter((it) => it.age < hold)
-      m.items.forEach((it) => (it.age += 1))
-      if (due > 0) {
-        for (const e of outs) {
-          const s = pool(e.to)
-          if (s) a[e.to] = (a[e.to] || 0) + due
-        }
-        log.push(`⏳ ${n.name || 'delay'} released ${due} (held ${hold} steps)`)
+      if (!t.armed) {
+        t.armed = true
+        t.hold = Math.max(1, n.delay ?? 3)
       }
-    } else if (n.kind === 'queue') {
-      m.items.push({ amt: take, age: 0 })
-      let released = Math.min(m.items.reduce((s, it) => s + it.amt, 0), n.rate ?? 1)
-      let left = released
-      while (left > 0 && m.items.length) {
-        const used = Math.min(m.items[0].amt, left)
-        m.items[0].amt -= used
-        left -= used
-        if (m.items[0].amt === 0) m.items.shift()
+      if (t.hold > 0) {
+        t.hold -= 1
+        put(t)
+        continue
       }
-      if (released > 0) {
-        for (const e of outs) {
-          const s = pool(e.to)
-          if (s) a[e.to] = (a[e.to] || 0) + released
-        }
-        log.push(`📥 ${n.name || 'queue'} released ${released} (holding ${m.items.reduce((s, it) => s + it.amt, 0)})`)
-      }
-    } else if (n.kind === 'register') {
-      m.count += take
-      if (m.count >= (n.countTo ?? 2)) {
-        m.count -= n.countTo ?? 2
-        for (const e of outs) {
-          const s = pool(e.to)
-          if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-        }
-        log.push(`🔢 ${n.name || 'register'} pulsed 1 (every ${n.countTo ?? 2})`)
-      }
+      log.push(`⏳ ${n.name || 'delay'} released`)
+      advance(t, n)
+      continue
     }
+
+    if (n.kind === 'queue') {
+      if ((qBudget[n.id] || 0) > 0) {
+        qBudget[n.id] -= 1
+        advance(t, n)
+      } else put(t) // backed up — waits its turn
+      continue
+    }
+
+    if (n.kind === 'register') {
+      const r = (mem.reg = mem.reg || {})
+      r[n.id] = (r[n.id] || 0) + 1
+      if (r[n.id] >= (n.countTo ?? 2)) {
+        r[n.id] = 0
+        log.push(`🔢 ${n.name || 'register'} pulsed (every ${n.countTo ?? 2})`)
+        advance(t, n)
+      } else kill(t) // absorbed until the count fills
+      continue
+    }
+
+    if (n.kind === 'randgate') {
+      if (Math.random() < 0.5) {
+        log.push(`🎲 ${n.name || 'rand gate'} closed — chain dropped`)
+        kill(t)
+        continue
+      }
+      advance(t, n)
+      continue
+    }
+
+    if (n.kind === 'drain') {
+      // chain end — removes its amount from every upstream pool (fed ⇣ in:int dictates)
+      const fedIn = links.some((l) => l.kind === 'data' && l.to === n.id && l.toPort === '__in__')
+      let want = n.drain ?? null
+      if (fedIn) {
+        const d = dataValue(nodes, links, a, mem, n.id, '__in__')
+        const x = d && Number.isFinite(Number(d.val)) ? Number(d.val) : 0
+        want = Math.max(0, Math.floor(x))
+      }
+      for (const e of insOf(n.id)) {
+        const s = byId[e.from] && byId[e.from].kind === 'pool' ? byId[e.from] : null
+        if (!s) continue
+        const take = Math.min(a[e.from] || 0, want ?? e.amount ?? 1)
+        if (take > 0) {
+          a[e.from] -= take
+          log.push(`🕳 ${n.name || 'drain'} ⟵ −${take} ${s.name || 'pool'} = ${a[e.from]}`)
+        }
+      }
+      kill(t) // the drain is an end of the chain
+      continue
+    }
+
+    if (n.kind === 'for' || n.kind === 'foreach') {
+      const loops = (mem.loops = mem.loops || {})
+      const st = loops[n.id]
+      if (st && st.left > 0) {
+        if ((st.body || 0) > 0) {
+          // previous iteration's body chain still walking — one iteration at a time,
+          // so pool windows never bleed across iterations
+          put(t)
+          continue
+        }
+        st.left -= 1
+        st.i += 1
+        const cur = ((mem.cur = mem.cur || {})[n.id] =
+          n.kind === 'for' ? { i: st.i } : { item: st.arr[st.i - 1], index: st.i - 1 })
+        log.push(
+          n.kind === 'for'
+            ? `↻ ${n.name || 'for'} ${st.i}/${st.total} →`
+            : `≡ ${n.name || 'foreach'} ${st.i}/${st.total} item="${cur.item}" →`,
+        )
+        const body = outsOf(n.id).filter((e) => e.fromPort !== 'end')
+        for (const e of body) if (p(e.to)) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
+        st.body = (st.body || 0) + body.length
+        for (const e of body) put({ id: 't' + mem.tseq++, node: e.to, entry: t.entry, owner: n.id })
+        put(t) // the loop keeps its token until exhausted
+        continue
+      }
+      if (st && st.left === 0 && !st.ended) {
+        if ((st.body || 0) > 0) {
+          put(t) // wait for the last body chain to finish before pulsing end
+          continue
+        }
+        st.ended = true
+        log.push(`${n.kind === 'for' ? '↻' : '≡'} ${n.name || n.kind} finished (${st.total}) — end ⤳`)
+        advance(t, n, 'end', false)
+        continue
+      }
+      // fresh trigger (first, or restarting after a completed run) — load it
+      if (n.kind === 'for') {
+        const d = dataValue(nodes, links, a, mem, n.id, '__to__')
+        const count = d && d.val !== null && Number.isFinite(Number(d.val)) ? Math.floor(Number(d.val)) : null
+        if (!count || count <= 0) {
+          log.push(`⚠ ${n.name || 'for'} — ⇣ to:int is ${d ? 'not a number' : 'unwired'} — chain dropped`)
+          kill(t)
+          continue
+        }
+        for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
+        loops[n.id] = { left: count, total: count, i: 0, body: 0 }
+        log.push(`↻ ${n.name || 'for'}: loaded ${count} iterations`)
+        put(t)
+      } else {
+        const d = dataValue(nodes, links, a, mem, n.id, '__arr__')
+        const arr = d && Array.isArray(d.val) && d.val.length ? d.val : null
+        if (!arr) {
+          log.push(`⚠ ${n.name || 'foreach'} — ⇣ arr is ${d ? 'not a wired array' : 'unwired'} — chain dropped`)
+          kill(t)
+          continue
+        }
+        for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
+        loops[n.id] = { left: arr.length, total: arr.length, i: 0, arr, body: 0 }
+        log.push(`≡ ${n.name || 'foreach'}: loaded [${arr.join(', ')}]`)
+        put(t)
+      }
+      continue
+    }
+
+    // everything else passes the chain through: source, pool, converter, gate, trader
+    advance(t, n)
   }
-  // drains
-  for (const n of nodes) {
-    if (n.kind !== 'drain' || n.auto === false) continue
-    // ⇣ in:int dictates the amount when wired; otherwise the card field,
-    // falling back to the per-link circle
-    const fed = links.some((l) => l.kind === 'data' && l.to === n.id && l.toPort === '__in__')
-    let want = n.drain ?? null
-    if (fed) {
-      const d = dataValue(nodes, links, a, mem, n.id, '__in__')
-      const x = d && Number.isFinite(Number(d.val)) ? Number(d.val) : 0
-      want = Math.max(0, Math.floor(x))
-    }
-    for (const e of flows.filter((e) => e.to === n.id)) {
-      const s = pool(e.from)
-      if (!s) continue
-      const take = Math.min(a[e.from] || 0, want ?? e.amount ?? 1)
-      if (take > 0) {
-        a[e.from] -= take
-        log.push(`🕳 ${n.name || 'drain'} ⟵ −${take} ${s.name || 'pool'} = ${a[e.from]}`)
-      }
-    }
-  }
-  // write the pool windows back into their origins — the value is always
-  // written back, so the next read anywhere sees the change
+
+  // write pool windows back into their origins — the value is always written
+  // back, so the next read anywhere sees the change
   for (const { n, ref } of windows) {
     if (!ref.set) continue
     const v = a[n.id]
@@ -356,26 +390,6 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     ref.set(Math.round(v * 1e6) / 1e6)
     log.push(`✎ ${n.name || 'pool'} ⇢ origin = ${Math.round(v * 1e6) / 1e6}`)
   }
-  return a
-}
-
-function fireAction(nodes, links, prev, nodeId, log) {
-  const a = { ...prev }
-  const n = nodes.find((x) => x.id === nodeId)
-  if (!n) return a
-  const pool = (id) => nodes.find((x) => x.id === id && x.kind === 'pool')
-  const ins = links.filter((e) => e.kind !== 'data' && e.to === n.id)
-  const outs = links.filter((e) => e.kind !== 'data' && e.from === n.id)
-  if (ins.some((e) => pool(e.from) && (a[e.from] || 0) < (e.amount ?? 1))) {
-    log.push(`▶ ${n.name || 'action'} — not enough resources`)
-    return a
-  }
-  for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
-  for (const e of outs) {
-    const s = pool(e.to)
-    if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
-  }
-  log.push(`▶ ${n.name || 'action'} fired — tick +1`)
   return a
 }
 
@@ -599,21 +613,22 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
   // ---- sim controls ----------------------------------------------------------
   const diagnostics = () => {
     const out = []
-    const srcOk = (id) => graphRef.current.nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
-    for (const n of graphRef.current.nodes.filter((x) => x.kind === 'syscall')) {
-      const ins = graphRef.current.links.filter((l) => l.kind !== 'data' && l.to === n.id)
+    const g = graphRef.current
+    const flows = g.links.filter((l) => l.kind !== 'data')
+    const entries = g.nodes.filter(
+      (n) => n.kind !== 'drain' && ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 && !flows.some((l) => l.to === n.id),
+    )
+    if (!entries.length) out.push('⚠ nothing to run — parts with no flow input are chain entry points')
+    else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
+    for (const n of g.nodes.filter((x) => x.kind === 'syscall'))
       if (!resolveCall((n.calls || [])[0], assets)) out.push(`⚠ sys call "${n.name || ''}" has no system fn selected`)
-      if (!ins.length) out.push(`⚠ sys call "${n.name || ''}" has no flow input — it will never be called`)
-      else if (ins.some((e) => !srcOk(e.from) && !graphRef.current.nodes.some((x) => x.id === e.from && x.kind === 'pool')))
-        out.push(`⚠ sys call "${n.name || ''}" — flow inputs must come from pools or sources`)
-    }
     return out
   }
   const startSim = () =>
     setSim({
       amounts: Object.fromEntries(graphRef.current.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])),
-      mem: {},
-      log: ['— simulation started —', ...diagnostics()],
+      mem: { tokens: [] },
+      log: ['— chain simulation started —', ...diagnostics()],
       steps: 0,
     })
   const stepN = (k = 1) =>
@@ -629,16 +644,21 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       }
       return { amounts, mem, log: log.slice(-400), steps: s.steps + k }
     })
+  // clicking a part releases the chain token waiting there (action / ⏳ block)
   const clickNode = (id) => {
-    const g = graphRef.current
-    const n = g.nodes.find((x) => x.id === id)
-    if (!simRef.current || !n || n.kind !== 'action') return
+    if (!simRef.current) return
     setSim((s) => {
-      const log = [...s.log]
+      if (!s) return s
+      const g = graphRef.current
       const mem = JSON.parse(JSON.stringify(s.mem || {}))
-      let amounts = fireAction(g.nodes, g.links, s.amounts, id, log)
-      amounts = stepOnce(g.nodes, g.links, amounts, log, mem, assets)
-      return { ...s, amounts, mem, log: log.slice(-400), steps: s.steps + 1 }
+      const toks = (mem.tokens || []).filter((t) => t.node === id && t.wait)
+      if (!toks.length) return s
+      toks.forEach((t) => {
+        t.ready = true
+      })
+      const log = [...s.log]
+      const amounts = stepOnce(g.nodes, g.links, s.amounts, log, mem, assets)
+      return { amounts, mem, log: log.slice(-400), steps: s.steps + 1 }
     })
   }
 
@@ -655,7 +675,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">drag ▢ out → part = flow · click ○ = amount · click part/line + Del = remove</span>
+        <span className="tb-hint">chains run from unconnected parts · drag ▢ out → part · click ○ = amount · click ⏳/▶ part to continue · Del removes selection</span>
         <span className="spacer" />
         {sim ? (
           <>
@@ -794,7 +814,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
                     CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
-                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data · loops pulse their end port when done · pools with ⇣ in write back to their origin.</p>
+                  <p>chain sim — every part with no flow input is an entry point; chains walk downstream one hop per step and the entry re-runs when its chains end · click ○ = amount · teal squares wire typed data · click ⏳/▶ parts to continue a frozen chain · pools with ⇣ in write back to their origin.</p>
                 </div>
               )}
             </div>
