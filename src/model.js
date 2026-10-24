@@ -197,12 +197,15 @@ export const KINDS = {
     mode: 'machine',
     label: 'POOL',
     cls: 'mc-pool',
-    hint: 'a pool of resource tokens — its amount is ⇡ int data',
+    hint: 'a pool of resource tokens — its amount is ⇡ int data · wire ⇣ in:int to mirror another value instead',
     ports: () => [
       { id: 'in', dir: 'in', label: '' },
       { id: 'out', dir: 'out', label: '' },
     ],
-    data: () => ({ in: [], out: [{ id: '__int__', type: 'int', name: 'amount' }] }),
+    data: () => ({
+      in: [{ id: '__in__', type: 'int', name: 'in' }],
+      out: [{ id: '__int__', type: 'int', name: 'amount' }],
+    }),
   },
   converter: {
     mode: 'machine',
@@ -282,8 +285,8 @@ export const KINDS = {
     mode: 'machine',
     label: 'INSPECT',
     cls: 'mc-inspect',
-    hint: 'destructure — wire ⇣ obj any value; you get one ⇡ per field of its declared type',
-    ports: flowIO(),
+    hint: 'pure data — no flow needed · ⇣ obj any value; one ⇡ per field of its declared type',
+    ports: () => [],
     data: (n) => ({
       in: [{ id: '__obj__', type: n.objType || 'any', name: 'obj' }],
       out: (n.fields || []).map((f) => ({ id: f.id, type: f.typeId, name: f.name || 'field' })),

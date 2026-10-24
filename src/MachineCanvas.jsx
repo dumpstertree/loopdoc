@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -14,12 +14,18 @@ const fmt = (v) =>
       ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(', ')} }`
       : v
 
-function dataValue(nodes, links, amounts, mem, nodeId, varId) {
+function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
+  if (depth > 12) return null
   const w = links.find((l) => l.kind === 'data' && l.to === nodeId && l.toPort === varId)
   if (!w) return null
   const src = nodes.find((n) => n.id === w.from)
   if (!src) return null
-  if (src.kind === 'pool') return { val: amounts[w.from] ?? 0, from: src.name || 'pool' }
+  if (src.kind === 'pool') {
+    // a pool fed by ⇣ in:int just mirrors that value
+    const fed = links.some((l) => l.kind === 'data' && l.to === src.id && l.toPort === '__in__')
+    if (fed) return dataValue(nodes, links, amounts, mem, src.id, '__in__', depth + 1)
+    return { val: amounts[w.from] ?? 0, from: src.name || 'pool' }
+  }
   const cur = (mem.cur || {})[w.from]
   if (src.kind === 'for') return { val: cur?.i ?? null, from: src.name || 'for' }
   if (src.kind === 'foreach') {
@@ -27,7 +33,7 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId) {
     return { val: v === undefined ? null : v, from: src.name || 'foreach' }
   }
   if (src.kind === 'inspect') {
-    const o = dataValue(nodes, links, amounts, mem, src.id, '__obj__')
+    const o = dataValue(nodes, links, amounts, mem, src.id, '__obj__', depth + 1)
     const obj = o && typeof o.val === 'object' && o.val !== null && !Array.isArray(o.val) ? o.val : null
     const f = (src.fields || []).find((x) => x.id === w.fromPort)
     const v = obj && f ? obj[f.name || 'field'] : null
@@ -356,22 +362,24 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     }))
   }
 
-  // keep inspect field ports in sync with the declared type — picks up
-  // fields declared after the wire was dropped, renames, and legacy nodes
+  // keep inspect in sync with the type registry (fields declared or edited
+  // after wiring, legacy lowercase objTypes) and drop any flow links that
+  // passed through it — inspect is pure data now
   useEffect(() => {
     const g = graphRef.current
-    let changed = false
+    let nodesChanged = false
     let nodes = g.nodes.map((n) => {
       if (n.kind !== 'inspect' || !n.objType || n.objType === 'any') return n
       const f = fieldsOf(types, n.objType)
       if (!f) return n
       if (JSON.stringify(f) === JSON.stringify(n.fields || [])) return n
-      changed = true
-      return { ...n, objType: (types || []).find((t) => (t.name || '').trim().toLowerCase() === n.objType.toLowerCase()).name, fields: f }
+      nodesChanged = true
+      const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === n.objType.toLowerCase())
+      return { ...n, objType: td.name, fields: f }
     })
-    if (!changed) return
-    for (const n of g.nodes) if (n.kind === 'inspect') nodes = pruneLinks({ ...g, nodes }, assets, n.id).nodes
-    onChangeRef.current({ ...g, nodes })
+    let g2 = { ...g, nodes }
+    for (const n of g.nodes) if (n.kind === 'inspect') g2 = pruneLinks(g2, assets, n.id)
+    if (nodesChanged || g2.links.length !== g.links.length) onChangeRef.current(g2)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [types])
 
@@ -389,7 +397,12 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
         const t = el && el.closest('[data-node-id]')
         if (t) {
           const to = t.getAttribute('data-node-id')
-          if (to !== drag.from)
+          const tn = graphRef.current.nodes.find((x) => x.id === to)
+          const noFlowIn =
+            tn && !((kindMeta(tn).ports || (() => []))(tn) || []).some((p) => p.dir === 'in')
+          if (noFlowIn)
+            warn(`⚠ ${(kindMeta(tn).label || tn.kind || '').toUpperCase()} takes no flow — it is pure data`)
+          else if (to !== drag.from)
             mutate((g) => ({
               ...g,
               links: [
@@ -680,7 +693,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
                     CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
-                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data (pool ⇡ int).</p>
+                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data (pool ⇡ int / ⇣ in, INSPECT destructures structs — no flow needed).</p>
                 </div>
               )}
             </div>

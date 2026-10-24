@@ -287,6 +287,9 @@ export default function NodeCard({
   // machine live values
   let amount
   let held
+  // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
+  const poolFed =
+    node.kind === 'pool' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
   if (sim) {
     if (node.kind === 'pool') amount = sim.amounts[node.id] ?? node.init ?? 0
     if (['delay', 'queue', 'register'].includes(node.kind)) {
@@ -308,7 +311,9 @@ export default function NodeCard({
       <div className="nd-head" onPointerDown={(e) => onHeaderDown(e, node.id)}>
         <span className="nd-kind">{meta.label}</span>
         {node.kind === 'pool' && (
-          <span className={`mc-amount ${amount > 0 ? 'full' : ''}`}>{sim ? amount : node.init ?? 0}</span>
+          <span className={`mc-amount ${amount > 0 || poolFed ? 'full' : ''}`} title={poolFed ? 'mirroring ⇣ in:int' : undefined}>
+            {poolFed ? '⇣' : sim ? amount : node.init ?? 0}
+          </span>
         )}
         {held !== undefined && (
           <span className={`mc-amount ${held > 0 ? 'full' : ''}`} title="held / counted">
@@ -486,10 +491,18 @@ export default function NodeCard({
         {node.kind === 'step' && (
           <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
         )}
-        {isMachineKind && !sim && node.kind === 'pool' && (
+        {isMachineKind && !sim && node.kind === 'pool' && !poolFed && (
           <div className="nd-row">
             <span className="nd-sub">initial</span>
             <input className="inp" style={{ width: 52 }} type="number" value={node.init ?? 0} onChange={(e) => onPatch({ init: Math.max(0, Number(e.target.value) || 0) })} />
+          </div>
+        )}
+        {isMachineKind && node.kind === 'pool' && (
+          <div className="dvar" title="wire an int in — the pool mirrors it and drops its own initial">
+            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
+            <span>
+              ⇣ in:<b>int</b>
+            </span>
           </div>
         )}
         {isMachineKind && !sim && node.kind === 'pool' && (
@@ -515,7 +528,7 @@ export default function NodeCard({
             <span>
               ⇡ <b>int</b>
             </span>
-            <span className="dval">{amount}</span>
+            {!poolFed && <span className="dval">{amount}</span>}
             <span
               className="port-data out"
               data-port={portKey(node.id, '__int__', 'out')}
