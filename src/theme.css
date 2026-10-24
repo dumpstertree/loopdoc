@@ -596,6 +596,8 @@ svg.edges .edge {
 .mc-delay { --kc: var(--cyan); }
 .mc-queue { --kc: var(--lime); }
 .mc-register { --kc: #d7dde8; }
+.mc-for { --kc: var(--amber); }
+.mc-foreach { --kc: var(--clay); }
 .mc-action { --kc: var(--amber); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); }

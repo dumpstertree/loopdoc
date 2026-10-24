@@ -41,9 +41,15 @@ graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 
 machine canvas: `SOURCE` · `DRAIN` · `POOL` (its amount is ⇡ `int` data) ·
 `CONVERTER` · `GATE` · `RAND GATE` · `TRADER` · `DELAY` · `QUEUE` ·
-`REGISTER` · `ACTION` (click while simulating → fires + one tick) ·
-`SYS CALL` (calls its system fn whenever flow passes through — never
-clickable) · `TEXT`.
+`REGISTER` · `FOR` (⇣ `to:int` loads a count on trigger; passes 1 flow/step,
+⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array, from a
+sys-call output; passes 1 flow/step, ⇡ `item:T` + ⇡ `index:int`) · `ACTION`
+(click while simulating → fires + one tick) · `SYS CALL` (calls its system
+fn whenever flow passes through — never clickable) · `TEXT`.
+
+Array data: give a system fn an output typed `Foo[]` and edit its sim value
+as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
+`item` output can feed more ⇣ ports.
 
 ## Systems & data wires
 

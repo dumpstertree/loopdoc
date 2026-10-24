@@ -4,7 +4,7 @@
 // so the canvas can measure them for edge routing; out-ports are drag
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
-import { kindMeta, assetIcon, ASSET_KINDS, resolveCall, uid } from './model.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid } from './model.js'
 
 export const NODE_W_FLOW = 216
 export const NODE_W_MC = 184
@@ -111,15 +111,35 @@ function CallsEditor({ node, assets, multiple, simValues, onPatch, onSimOut, onD
                       ⇡ {v.name || '?'}:<b>{v.type || '?'}</b>
                     </span>
                     {onSimOut ? (
-                      <input
-                        className="inp"
-                        style={{ width: 44 }}
-                        type="number"
-                        title="value returned while simulating"
-                        value={node.out?.[v.id] ?? 0}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onChange={(e) => onSimOut(v.id, Number(e.target.value) || 0)}
-                      />
+                      String(v.type || '').includes('[') ? (
+                        <input
+                          className="inp"
+                          style={{ width: 82 }}
+                          placeholder="a, b, c…"
+                          title="list values, comma separated — this is the array the sim publishes"
+                          value={Array.isArray(node.out?.[v.id]) ? node.out[v.id].join(', ') : ''}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onChange={(e) =>
+                            onSimOut(
+                              v.id,
+                              e.target.value
+                                .split(/[,\s]+/)
+                                .filter(Boolean)
+                                .map((s) => (isNaN(s) ? s : Number(s))),
+                            )
+                          }
+                        />
+                      ) : (
+                        <input
+                          className="inp"
+                          style={{ width: 44 }}
+                          type="number"
+                          title="value returned while simulating"
+                          value={node.out?.[v.id] ?? 0}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onChange={(e) => onSimOut(v.id, Number(e.target.value) || 0)}
+                        />
+                      )
                     ) : (
                       simValues && <span className="dval">{simValues[`out:${i}:${v.id}`] ?? '⋯'}</span>
                     )}
@@ -322,6 +342,43 @@ export default function NodeCard({
             onSimOut={(vid, val) => onPatch({ out: { ...(node.out || {}), [vid]: val } })}
           />
         )}
+        {(node.kind === 'for' || node.kind === 'foreach') &&
+          (() => {
+            const dp = dataPorts(node, assets)
+            const cur = sim?.mem?.cur?.[node.id]
+            const live = (pid) =>
+              !cur ? null : pid === '__i__' ? cur.i : pid === '__item__' ? String(cur.item ?? '') : pid === '__idx__' ? cur.index : null
+            return (
+              <>
+                {dp.in.map((p) => (
+                  <div className="dvar" key={p.id} title={`needs ${p.type} data wired in`}>
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                  </div>
+                ))}
+                {dp.out.map((p) => (
+                  <div className="dvar out" key={p.id} title="current loop value — wires read this live">
+                    <span>
+                      ⇡ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {sim && live(p.id) !== null && <span className="dval">{live(p.id)}</span>}
+                    <span
+                      className="port-data out"
+                      data-port={portKey(node.id, p.id, 'out')}
+                      title="drag to feed a ⇣ of the same type"
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        onDataPortDown(e, node.id, p.id)
+                      }}
+                    />
+                  </div>
+                ))}
+              </>
+            )
+          })()}
         {node.kind === 'condition' && (
           <input className="inp" placeholder="if… (the test)" value={node.cond || ''} onChange={(e) => onPatch({ cond: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
         )}

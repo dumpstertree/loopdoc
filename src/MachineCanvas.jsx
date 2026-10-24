@@ -7,12 +7,20 @@ import NodeCard from './NodeCard.jsx'
 import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
+const fmt = (v) => (Array.isArray(v) ? `[${v.join(', ')}]` : v)
+
 function dataValue(nodes, links, amounts, mem, nodeId, varId) {
   const w = links.find((l) => l.kind === 'data' && l.to === nodeId && l.toPort === varId)
   if (!w) return null
   const src = nodes.find((n) => n.id === w.from)
   if (!src) return null
   if (src.kind === 'pool') return { val: amounts[w.from] ?? 0, from: src.name || 'pool' }
+  const cur = (mem.cur || {})[w.from]
+  if (src.kind === 'for') return { val: cur?.i ?? null, from: src.name || 'for' }
+  if (src.kind === 'foreach') {
+    const v = w.fromPort === '__item__' ? cur?.item : w.fromPort === '__idx__' ? cur?.index : null
+    return { val: v === undefined ? null : v, from: src.name || 'foreach' }
+  }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
 }
@@ -30,11 +38,11 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
     const d = dataValue(nodes, links, a, mem, n.id, v.id)
     if (!d) log.push(`    ⚠ in ${v.name || '?'}:${v.type || '?'} — no data wire`)
     else if (d.val === null) log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ⋯ ("${d.from}" never fired)`)
-    else log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${d.val} ← "${d.from}"`)
+    else log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${fmt(d.val)} ← "${d.from}"`)
   }
   for (const v of r.fn.outputs || []) {
     made[v.id] = n.out?.[v.id] ?? 0
-    log.push(`    ⇡ ${v.name || '?'}:${v.type || '?'} = ${made[v.id]} (sim value)`)
+    log.push(`    ⇡ ${v.name || '?'}:${v.type || '?'} = ${fmt(made[v.id])} (sim value)`)
   }
 }
 
@@ -72,6 +80,59 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       log.push(`⚗ ${n.name || 'converter'}: in ${ins.map((e) => e.amount ?? 1).join('+')} → out ${outs.map((e) => e.amount ?? 1).join('+') || '—'}`)
     }
     if (!any) break
+  }
+  // counted / array loops first, so downstream nodes see their fresh tokens in the same step
+  for (const n of nodes) {
+    if (n.kind !== 'for' && n.kind !== 'foreach') continue
+    const loops = (mem.loops = mem.loops || {})
+    const st = loops[n.id]
+    const ins = flows.filter((e) => e.to === n.id)
+    const outs = flows.filter((e) => e.from === n.id)
+    const srcOk = (id) => nodes.some((x) => x.id === id && x.kind === 'source' && x.auto !== false)
+
+    if (st && st.left > 0) {
+      st.left -= 1
+      st.i += 1
+      for (const e of outs) {
+        const s = pool(e.to)
+        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
+      }
+      const cur = (mem.cur = mem.cur || {})[n.id] = n.kind === 'for' ? { i: st.i } : { item: st.arr[st.i - 1], index: st.i - 1 }
+      log.push(n.kind === 'for' ? `↻ ${n.name || 'for'} ${st.i}/${st.total} →` : `≡ ${n.name || 'foreach'} ${st.i}/${st.total} item="${cur.item}" →`)
+      if (st.left === 0) log.push(`${n.kind === 'for' ? '↻' : '≡'} ${n.name || n.kind} finished (${st.total})`)
+      continue
+    }
+
+    // idle: consume a full trigger to start (restarts if a previous run completed)
+    if (!ins.length || ins.some((e) => !pool(e.from) && !srcOk(e.from))) continue
+    if (ins.some((e) => pool(e.from) && (a[e.from] || 0) < (e.amount ?? 1))) continue
+    if (n.kind === 'for') {
+      const d = dataValue(nodes, links, a, mem, n.id, '__to__')
+      const count = d && d.val !== null && Number.isFinite(Number(d.val)) ? Math.floor(Number(d.val)) : null
+      if (count === null || count <= 0) {
+        if (!((mem.loopWarn = mem.loopWarn = mem.loopWarn || {})[n.id])) {
+          mem.loopWarn[n.id] = true
+          log.push(`⚠ ${n.name || 'for'} — ⇣ to:int is ${d ? 'not a number' : 'unwired'}`)
+        }
+        continue
+      }
+      for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
+      loops[n.id] = { left: count, total: count, i: 0 }
+      log.push(`↻ ${n.name || 'for'}: loaded ${count} iterations`)
+    } else {
+      const d = dataValue(nodes, links, a, mem, n.id, '__arr__')
+      const arr = d && Array.isArray(d.val) ? d.val : null
+      if (!arr || !arr.length) {
+        if (!((mem.loopWarn = mem.loopWarn || {})[n.id])) {
+          mem.loopWarn[n.id] = true
+          log.push(`⚠ ${n.name || 'foreach'} — ⇣ arr is ${d ? 'not a wired array' : 'unwired'}`)
+        }
+        continue
+      }
+      for (const e of ins) if (pool(e.from)) a[e.from] -= e.amount ?? 1
+      loops[n.id] = { left: arr.length, total: arr.length, i: 0, arr }
+      log.push(`≡ ${n.name || 'foreach'}: loaded [${arr.join(', ')}]`)
+    }
   }
   // flow nodes
   for (const n of nodes) {
@@ -260,13 +321,18 @@ export default function MachineCanvas({ graph, assets, onChange }) {
     const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
     const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
     if (!ta || !tb) return warn('⚠ that data port no longer exists')
-    if (ta !== tb) return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
+    if (!(ta === tb || (tb === 'array' && ta.includes('[]')))) return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
     mutate((g) => ({
       ...g,
       links: [
         ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
         { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
       ],
+      // foreach learns its item type from the array wired in
+      nodes:
+        toPort === '__arr__'
+          ? g.nodes.map((n) => (n.id === to && n.kind === 'foreach' ? { ...n, itemType: ta.replace('[]', '') } : n))
+          : g.nodes,
     }))
   }
 

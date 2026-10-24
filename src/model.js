@@ -209,6 +209,31 @@ export const KINDS = {
     hint: 'counts tokens; emits 1 every N counted',
     ports: flowIO(),
   },
+  for: {
+    mode: 'machine',
+    label: 'FOR',
+    cls: 'mc-for',
+    hint: 'counted loop — flow trigger loads ⇣ to:int, then passes 1 flow per step while publishing ⇡ i:int',
+    ports: flowIO(),
+    data: () => ({
+      in: [{ id: '__to__', type: 'int', name: 'to' }],
+      out: [{ id: '__i__', type: 'int', name: 'i' }],
+    }),
+  },
+  foreach: {
+    mode: 'machine',
+    label: 'FOREACH',
+    cls: 'mc-foreach',
+    hint: 'array loop — flow trigger loads ⇣ arr (from a Foo[] sys-call output), passes 1 flow per step, publishing ⇡ item and ⇡ index',
+    ports: flowIO(),
+    data: (n) => ({
+      in: [{ id: '__arr__', type: 'array', name: 'arr' }],
+      out: [
+        { id: '__item__', type: n.itemType || '?', name: 'item' },
+        { id: '__idx__', type: 'int', name: 'index' },
+      ],
+    }),
+  },
   action: {
     mode: 'machine',
     label: 'ACTION',
@@ -286,6 +311,7 @@ export function newNode(kind, x, y) {
   if (kind === 'delay') n.delay = 3
   if (kind === 'queue') n.rate = 1
   if (kind === 'register') n.countTo = 2
+  if (kind === 'foreach') n.itemType = '?'
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}
   return n
