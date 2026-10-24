@@ -314,8 +314,8 @@ export default function NodeCard({
       <div className="nd-head" onPointerDown={(e) => onHeaderDown(e, node.id)}>
         <span className="nd-kind">{meta.label}</span>
         {node.kind === 'pool' && (
-          <span className={`mc-amount ${amount > 0 || poolFed ? 'full' : ''}`} title={poolFed ? 'mirroring ⇣ in:int' : undefined}>
-            {poolFed ? '⇣' : sim ? amount : node.init ?? 0}
+          <span className={`mc-amount ${(amount > 0 && sim) || poolFed ? 'full' : ''}`} title={poolFed ? 'window onto the wired value — changes write back to its origin' : undefined}>
+            {sim ? amount : poolFed ? '⇣' : node.init ?? 0}
           </span>
         )}
         {held !== undefined && (
@@ -558,7 +558,7 @@ export default function NodeCard({
             <span>
               ⇡ <b>int</b>
             </span>
-            {!poolFed && <span className="dval">{amount}</span>}
+            <span className="dval">{amount}</span>
             <span
               className="port-data out"
               data-port={portKey(node.id, '__int__', 'out')}
@@ -604,12 +604,13 @@ export default function NodeCard({
 
         {/* flow exit ports — rows on the flow canvas, pinned top-right on machine parts */}
         {mode === 'machine'
-          ? flowOuts.map((p) => (
+          ? flowOuts.map((p, i) => (
               <span
                 key={p.id}
                 className="port port-flow-out port-out-mc"
+                style={i ? { top: 8 + i * 13 } : undefined}
                 data-port={portKey(node.id, p.id, 'out')}
-                title="drag to connect"
+                title={p.id === 'end' ? 'loop completion pulse — drag to connect' : 'drag to connect'}
                 onPointerDown={(e) => {
                   e.stopPropagation()
                   e.preventDefault()

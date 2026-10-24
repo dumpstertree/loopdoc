@@ -198,7 +198,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'POOL',
     cls: 'mc-pool',
-    hint: 'a pool of resource tokens — its amount is ⇡ int data · wire ⇣ in:int to mirror another value instead',
+    hint: 'token pool ⇡ int data · wire ⇣ in:int = live window onto that value — drains/sources edit it and write back to the origin',
     ports: () => [
       { id: 'in', dir: 'in', label: '' },
       { id: 'out', dir: 'out', label: '' },
@@ -261,8 +261,12 @@ export const KINDS = {
     mode: 'machine',
     label: 'FOR',
     cls: 'mc-for',
-    hint: 'counted loop — flow trigger loads ⇣ to:int, then passes 1 flow per step while publishing ⇡ i:int',
-    ports: flowIO(),
+    hint: 'counted loop — flow trigger loads ⇣ to:int, iter out passes 1 flow/step while publishing ⇡ i:int · end pulses once when the loop completes',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: 'iter' },
+      { id: 'end', dir: 'out', label: 'end' },
+    ],
     data: () => ({
       in: [{ id: '__to__', type: 'int', name: 'to' }],
       out: [{ id: '__i__', type: 'int', name: 'i' }],
@@ -272,8 +276,12 @@ export const KINDS = {
     mode: 'machine',
     label: 'FOREACH',
     cls: 'mc-foreach',
-    hint: 'array loop — flow trigger loads ⇣ arr (from a Foo[] sys-call output), passes 1 flow per step, publishing ⇡ item and ⇡ index',
-    ports: flowIO(),
+    hint: 'array loop — flow trigger loads ⇣ arr, iter out passes 1 flow/step publishing ⇡ item + ⇡ index · end pulses once when the loop completes',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: 'iter' },
+      { id: 'end', dir: 'out', label: 'end' },
+    ],
     data: (n) => ({
       in: [{ id: '__arr__', type: 'array', name: 'arr' }],
       out: [

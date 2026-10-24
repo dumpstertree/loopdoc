@@ -20,12 +20,7 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
   if (!w) return null
   const src = nodes.find((n) => n.id === w.from)
   if (!src) return null
-  if (src.kind === 'pool') {
-    // a pool fed by ⇣ in:int just mirrors that value
-    const fed = links.some((l) => l.kind === 'data' && l.to === src.id && l.toPort === '__in__')
-    if (fed) return dataValue(nodes, links, amounts, mem, src.id, '__in__', depth + 1)
-    return { val: amounts[w.from] ?? 0, from: src.name || 'pool' }
-  }
+  if (src.kind === 'pool') return { val: amounts[w.from] ?? 0, from: src.name || 'pool' }
   const cur = (mem.cur || {})[w.from]
   if (src.kind === 'for') return { val: cur?.i ?? null, from: src.name || 'for' }
   if (src.kind === 'foreach') {
@@ -41,6 +36,65 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
   }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
+}
+
+// Trace where a ⇣ value comes from and return its mutable cell:
+//   { key(), get(), set?(v) }
+// key identifies the origin value — a new foreach iteration means a new key
+// (re-seed). set exists when the machine may write the value back to origin.
+function originRef(nodes, links, a, mem, nodeId, varId, depth = 0) {
+  if (depth > 12) return null
+  const w = links.find((l) => l.kind === 'data' && l.to === nodeId && l.toPort === varId)
+  if (!w) return null
+  const src = nodes.find((n) => n.id === w.from)
+  if (!src) return null
+  if (src.kind === 'pool') {
+    return { key: () => 'pl:' + src.id, get: () => a[src.id] ?? 0, set: (v) => { a[src.id] = v } }
+  }
+  if (src.kind === 'for') {
+    const c = (mem.cur || {})[src.id]
+    return c ? { key: () => 'for:' + src.id, get: () => c.i } : null
+  }
+  if (src.kind === 'foreach') {
+    const m = (mem.loops || {})[src.id]
+    if (!m || !Array.isArray(m.arr) || m.i < 1) return null
+    const idx = m.i - 1 // pinned — write back to THIS element even if the loop advances
+    if (w.fromPort === '__idx__') return { key: () => `fe:${src.id}:${idx}`, get: () => idx }
+    return { key: () => `fe:${src.id}:${idx}`, get: () => m.arr[idx], set: (v) => { m.arr[idx] = v } }
+  }
+  if (src.kind === 'inspect') {
+    const f = (src.fields || []).find((x) => x.id === w.fromPort)
+    if (!f) return null
+    const parent = originRef(nodes, links, a, mem, src.id, '__obj__', depth + 1)
+    if (!parent) return null
+    const name = f.name || 'field'
+    const obj = () => {
+      const o = parent.get()
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : null
+    }
+    return {
+      key: () => parent.key() + ':' + f.id,
+      get: () => {
+        const o = obj()
+        return o ? o[name] : null
+      },
+      set: parent.set
+        ? (v) => {
+            const o = obj()
+            if (o) o[name] = v
+          }
+        : undefined,
+    }
+  }
+  // sys call output — its current value cell, writable until the call re-fires
+  return {
+    key: () => 'call:' + src.id + ':' + w.fromPort,
+    get: () => (mem.call || {})[src.id]?.[w.fromPort],
+    set: (v) => {
+      mem.call = mem.call || {}
+      ;(mem.call[src.id] = mem.call[src.id] || {})[w.fromPort] = v
+    },
+  }
 }
 
 function callSystem(n, nodes, links, a, mem, log, assets) {
@@ -112,13 +166,25 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       st.left -= 1
       st.i += 1
       for (const e of outs) {
+        if (e.fromPort === 'end') continue
         const s = pool(e.to)
         if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
       }
       const cur = (mem.cur = mem.cur || {})[n.id] = n.kind === 'for' ? { i: st.i } : { item: st.arr[st.i - 1], index: st.i - 1 }
       log.push(n.kind === 'for' ? `↻ ${n.name || 'for'} ${st.i}/${st.total} →` : `≡ ${n.name || 'foreach'} ${st.i}/${st.total} item="${cur.item}" →`)
-      if (st.left === 0) log.push(`${n.kind === 'for' ? '↻' : '≡'} ${n.name || n.kind} finished (${st.total})`)
       continue
+    }
+
+    // exhausted → pulse the end port once until a trigger restarts the loop
+    if (st && st.left === 0 && !st.ended) {
+      st.ended = true
+      const ends = outs.filter((e) => e.fromPort === 'end')
+      for (const e of ends) {
+        const s = pool(e.to)
+        if (s) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
+      }
+      const ic = n.kind === 'for' ? '↻' : '≡'
+      log.push(`${ic} ${n.name || n.kind} finished (${st.total})${ends.length ? ` end ⤳ ${ends.length}` : ''}`)
     }
 
     // idle: consume a full trigger to start (restarts if a previous run completed)
@@ -151,6 +217,22 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       loops[n.id] = { left: arr.length, total: arr.length, i: 0, arr }
       log.push(`≡ ${n.name || 'foreach'}: loaded [${arr.join(', ')}]`)
     }
+  }
+  // fed pools are live windows onto their origin value: re-seed whenever the
+  // origin moves (a new foreach iteration = new key), then all token math in
+  // this step acts on the value itself; written back through the wire below
+  const windows = []
+  for (const n of nodes) {
+    if (n.kind !== 'pool') continue
+    const ref = originRef(nodes, links, a, mem, n.id, '__in__')
+    if (!ref) continue
+    windows.push({ n, ref })
+    const k = ref.key()
+    const v = ref.get()
+    if (!ref.set || mem.fedKey?.[n.id] !== k) {
+      if (typeof v === 'number' && Number.isFinite(v)) a[n.id] = v
+    }
+    ;(mem.fedKey = mem.fedKey || {})[n.id] = k
   }
   // flow nodes
   for (const n of nodes) {
@@ -264,6 +346,16 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       }
     }
   }
+  // write the pool windows back into their origins — the value is always
+  // written back, so the next read anywhere sees the change
+  for (const { n, ref } of windows) {
+    if (!ref.set) continue
+    const v = a[n.id]
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue
+    if (ref.get() === v) continue
+    ref.set(Math.round(v * 1e6) / 1e6)
+    log.push(`✎ ${n.name || 'pool'} ⇢ origin = ${Math.round(v * 1e6) / 1e6}`)
+  }
   return a
 }
 
@@ -336,9 +428,9 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     const p = surfacePoint(e)
     setDrag({ kind: 'node', id, dx: p.x - n.x, dy: p.y - n.y })
   }
-  const onPortDown = (e, id) => {
+  const onPortDown = (e, id, portId) => {
     const p = surfacePoint(e)
-    setDrag({ kind: 'flow', from: id, x: p.x, y: p.y })
+    setDrag({ kind: 'flow', from: id, port: portId || 'out', x: p.x, y: p.y })
   }
   const onDataPortDown = (e, id, portId) => {
     const p = surfacePoint(e)
@@ -416,7 +508,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
               ...g,
               links: [
                 ...g.links.filter((l) => l.kind === 'data' || !(l.from === drag.from && l.to === to)),
-                { id: uid('lk'), kind: 'flow', from: drag.from, fromPort: 'out', to, toPort: 'in', amount: 1 },
+                { id: uid('lk'), kind: 'flow', from: drag.from, fromPort: drag.port || 'out', to, toPort: 'in', amount: 1 },
               ],
             }))
         }
@@ -702,7 +794,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
                     CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
-                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data (pool ⇡ int / ⇣ in, INSPECT destructures structs — no flow needed).</p>
+                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data · loops pulse their end port when done · pools with ⇣ in write back to their origin.</p>
                 </div>
               )}
             </div>

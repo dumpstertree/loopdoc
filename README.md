@@ -41,15 +41,21 @@ graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 
 machine canvas: `SOURCE` · `DRAIN` (drains `n` tokens/pool/step — set it on
 the card, or wire ⇣ `in:int` and the field hides) · `POOL` (its amount is ⇡
-`int` data —
-wire ⇣ `in:int` to mirror another value; the initial field disappears then) ·
+`int` data — wire ⇣ `in:int` for a write-back window, see below) ·
 `CONVERTER` · `GATE` · `RAND GATE` · `TRADER` · `DELAY` · `QUEUE` ·
 `REGISTER` · `FOR` (⇣ `to:int` loads a count on trigger; passes 1 flow/step,
 ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array, from a
-sys-call output; passes 1 flow/step, ⇡ `item:T` + ⇡ `index:int`) · `ACTION`
-(click while simulating → fires + one tick) · `SYS CALL` (calls its system
+sys-call output; passes 1 flow/step, ⇡ `item:T` + ⇡ `index:int`; **end** out
+pulses once when the loop completes) · `ACTION` (click while simulating →
+fires + one tick) · `SYS CALL` (calls its system
 fn whenever flow passes through — never clickable) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT`.
+
+Pool windows: wire a value into a pool's ⇣ `in:int` and it becomes a live
+window onto that value — drains, sources and converters edit the number, and
+at the end of every step it is **written back to its origin** (e.g. the
+`Entity` inside a foreach's array), so the next read anywhere — next
+iteration, next round — sees the change. The sim log marks writes with ✎.
 
 Array data: give a system fn an output typed `Foo[]` and edit its sim value
 as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
