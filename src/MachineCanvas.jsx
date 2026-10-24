@@ -113,7 +113,9 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
     else log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${fmt(d.val)} ← "${d.from}"`)
   }
   for (const v of r.fn.outputs || []) {
-    made[v.id] = n.out?.[v.id] ?? 0
+    // array-typed outputs default to an empty list, not 0 — the comma-list
+    // on the card is what fills it
+    made[v.id] = n.out?.[v.id] ?? (String(v.type || '').toLowerCase().endsWith('[]') ? [] : 0)
     log.push(`    ⇡ ${v.name || '?'}:${v.type || '?'} = ${fmt(made[v.id])} (sim value)`)
   }
 }
@@ -350,9 +352,22 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       // fresh trigger (first, or restarting after a completed run) — load it
       if (n.kind === 'for') {
         const d = dataValue(nodes, links, a, mem, n.id, '__to__')
-        const count = d && d.val !== null && Number.isFinite(Number(d.val)) ? Math.floor(Number(d.val)) : null
+        if (!d) {
+          log.push(`⚠ ${n.name || 'for'} — nothing wired to ⇣ to:int — chain dropped`)
+          kill(t)
+          continue
+        }
+        if (d.val === null) {
+          if (!t.armed) {
+            t.armed = true
+            log.push(`⏳ ${n.name || 'for'} holding — ⇣ to:int from "${d.from}" hasn't a value yet`)
+          }
+          put(t) // wait and retry — the producer may still be down the chain
+          continue
+        }
+        const count = Number.isFinite(Number(d.val)) ? Math.floor(Number(d.val)) : null
         if (!count || count <= 0) {
-          log.push(`⚠ ${n.name || 'for'} — ⇣ to:int is ${d ? 'not a number' : 'unwired'} — chain dropped`)
+          log.push(`⚠ ${n.name || 'for'} — ⇣ to:int from "${d.from}" is ${fmt(d.val)} — chain dropped`)
           kill(t)
           continue
         }
@@ -362,9 +377,30 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
         put(t)
       } else {
         const d = dataValue(nodes, links, a, mem, n.id, '__arr__')
-        const arr = d && Array.isArray(d.val) && d.val.length ? d.val : null
+        if (!d) {
+          log.push(`⚠ ${n.name || 'foreach'} — nothing wired to ⇣ arr — chain dropped`)
+          kill(t)
+          continue
+        }
+        if (d.val === null) {
+          if (!t.armed) {
+            t.armed = true
+            log.push(`⏳ ${n.name || 'foreach'} holding — ⇣ arr from "${d.from}" hasn't fired yet`)
+          }
+          put(t) // wait and retry — the producer may still be down the chain
+          continue
+        }
+        const arr = Array.isArray(d.val) ? d.val : null
         if (!arr) {
-          log.push(`⚠ ${n.name || 'foreach'} — ⇣ arr is ${d ? 'not a wired array' : 'unwired'} — chain dropped`)
+          log.push(
+            `⚠ ${n.name || 'foreach'} — ⇣ arr from "${d.from}" is not an array (${fmt(d.val)}) — ` +
+              `edit the ⇡ list on "${d.from}"'s card`,
+          )
+          kill(t)
+          continue
+        }
+        if (!arr.length) {
+          log.push(`⚠ ${n.name || 'foreach'} — ⇣ arr from "${d.from}" is empty — add items to the producer's ⇡ list`)
           kill(t)
           continue
         }
