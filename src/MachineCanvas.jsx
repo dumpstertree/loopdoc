@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -347,22 +347,33 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
         toPort === '__arr__'
           ? g.nodes.map((n) => (n.id === to && n.kind === 'foreach' ? { ...n, itemType: ta.replace('[]', '') } : n))
           : toPort === '__obj__'
-            ? g.nodes.map((n) =>
-                n.id === to && n.kind === 'inspect'
-                  ? {
-                      ...n,
-                      objType: ta,
-                      fields: ((types || []).find((t) => t.name === ta)?.fields || []).map((f) => ({
-                        id: f.id,
-                        name: f.name || 'field',
-                        typeId: f.typeId,
-                      })),
-                    }
-                  : n,
-              )
+            ? g.nodes.map((n) => {
+                if (n.id !== to || n.kind !== 'inspect') return n
+                const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
+                return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
+              })
             : g.nodes,
     }))
   }
+
+  // keep inspect field ports in sync with the declared type — picks up
+  // fields declared after the wire was dropped, renames, and legacy nodes
+  useEffect(() => {
+    const g = graphRef.current
+    let changed = false
+    let nodes = g.nodes.map((n) => {
+      if (n.kind !== 'inspect' || !n.objType || n.objType === 'any') return n
+      const f = fieldsOf(types, n.objType)
+      if (!f) return n
+      if (JSON.stringify(f) === JSON.stringify(n.fields || [])) return n
+      changed = true
+      return { ...n, objType: (types || []).find((t) => (t.name || '').trim().toLowerCase() === n.objType.toLowerCase()).name, fields: f }
+    })
+    if (!changed) return
+    for (const n of g.nodes) if (n.kind === 'inspect') nodes = pruneLinks({ ...g, nodes }, assets, n.id).nodes
+    onChangeRef.current({ ...g, nodes })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [types])
 
   useEffect(() => {
     if (!drag) return

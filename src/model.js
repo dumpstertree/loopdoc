@@ -53,6 +53,14 @@ export function typeNames(types) {
   return seen
 }
 
+// fields of a declared type by (lowercased) name — inspect port snapshot
+export function fieldsOf(types, typeName) {
+  if (!typeName || typeName === 'any') return null
+  const t = (types || []).find((x) => (x.name || '').trim().toLowerCase() === typeName.toLowerCase())
+  if (!t) return null
+  return (t.fields || []).map((f) => ({ id: f.id, name: f.name || 'field', typeId: f.typeId }))
+}
+
 // rename a type everywhere it is referenced (fn vars, foreach item types)
 export function renameTypeInDoc(doc, oldName, newName) {
   const d = JSON.parse(JSON.stringify(doc))
