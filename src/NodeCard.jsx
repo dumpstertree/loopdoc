@@ -33,7 +33,7 @@ function ExitRow({ node, port, onPortDown }) {
 
 // system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
 // pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
-function CallsEditor({ node, assets, multiple, simValues, onPatch, onSimOut, onDataOut }) {
+function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimOut, onDataOut }) {
   const calls = node.calls || []
   const systems = assets.filter((a) => a.kind === 'system')
   const patch = (next) => onPatch({ calls: next })
@@ -111,7 +111,9 @@ function CallsEditor({ node, assets, multiple, simValues, onPatch, onSimOut, onD
                       ⇡ {v.name || '?'}:<b>{v.type || '?'}</b>
                     </span>
                     {onSimOut ? (
-                      String(v.type || '').includes('[') ? (
+                      (types || []).some((t) => t.name === v.type) ? (
+                        <StructInputs v={v} node={node} types={types} onSimOut={onSimOut} />
+                      ) : String(v.type || '').includes('[') ? (
                         <input
                           className="inp"
                           style={{ width: 82 }}
@@ -167,6 +169,30 @@ function CallsEditor({ node, assets, multiple, simValues, onPatch, onSimOut, onD
         </button>
       )}
     </>
+  )
+}
+
+function StructInputs({ v, node, types, onSimOut }) {
+  const tdef = (types || []).find((t) => t.name === v.type)
+  const val = (node.out || {})[v.id] || {}
+  const setField = (fname, raw) =>
+    onSimOut(v.id, { ...val, [fname]: raw !== '' && !isNaN(raw) ? Number(raw) : raw })
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, width: '100%' }}>
+      {(tdef.fields || []).map((f) => (
+        <div className="nd-row" key={f.id}>
+          <span className="nd-sub" style={{ width: 52, textAlign: 'right' }}>{f.name || '·'}</span>
+          <input
+            className="inp"
+            style={{ flex: 1 }}
+            title={`${f.typeId}`}
+            value={val[f.name || 'field'] ?? ''}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => setField(f.name || 'field', e.target.value)}
+          />
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -236,6 +262,7 @@ export default function NodeCard({
   node,
   graph, // the owning graph (needed for data port lookups / sub counts)
   assets, // registry visible here (plus local generated assets, __local: true)
+  types, // declared doc data types (struct value editing)
   selected,
   isEntry,
   sim, // machine sim state for display, or null
@@ -336,13 +363,14 @@ export default function NodeCard({
           <CallsEditor
             node={node}
             assets={assets}
+            types={types}
             multiple={false}
             onDataOut={onDataPortDown}
             onPatch={onPatch}
             onSimOut={(vid, val) => onPatch({ out: { ...(node.out || {}), [vid]: val } })}
           />
         )}
-        {(node.kind === 'for' || node.kind === 'foreach') &&
+        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect') &&
           (() => {
             const dp = dataPorts(node, assets)
             const cur = sim?.mem?.cur?.[node.id]

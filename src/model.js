@@ -270,6 +270,17 @@ export const KINDS = {
       ],
     }),
   },
+  inspect: {
+    mode: 'machine',
+    label: 'INSPECT',
+    cls: 'mc-inspect',
+    hint: 'destructure — wire ⇣ obj any value; you get one ⇡ per field of its declared type',
+    ports: flowIO(),
+    data: (n) => ({
+      in: [{ id: '__obj__', type: n.objType || 'any', name: 'obj' }],
+      out: (n.fields || []).map((f) => ({ id: f.id, type: f.typeId, name: f.name || 'field' })),
+    }),
+  },
   action: {
     mode: 'machine',
     label: 'ACTION',
@@ -348,6 +359,7 @@ export function newNode(kind, x, y) {
   if (kind === 'queue') n.rate = 1
   if (kind === 'register') n.countTo = 2
   if (kind === 'foreach') n.itemType = '?'
+  if (kind === 'inspect') n.objType = 'any'
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}
   return n

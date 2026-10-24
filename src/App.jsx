@@ -249,7 +249,7 @@ export default function App() {
           {tab === 'design' ? (
             <>
               {graph.mode === 'machine' ? (
-                <MachineCanvas graph={graph} assets={doc.assets} onChange={updateGraph} />
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} onChange={updateGraph} />
               ) : (
                 <GraphCanvas
                   graph={graph}

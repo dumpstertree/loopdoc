@@ -598,6 +598,7 @@ svg.edges .edge {
 .mc-register { --kc: #d7dde8; }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
+.mc-inspect { --kc: #9ad0ff; }
 .mc-action { --kc: var(--amber); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); }

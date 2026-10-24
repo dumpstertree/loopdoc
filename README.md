@@ -45,11 +45,14 @@ machine canvas: `SOURCE` · `DRAIN` · `POOL` (its amount is ⇡ `int` data) ·
 ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array, from a
 sys-call output; passes 1 flow/step, ⇡ `item:T` + ⇡ `index:int`) · `ACTION`
 (click while simulating → fires + one tick) · `SYS CALL` (calls its system
-fn whenever flow passes through — never clickable) · `TEXT`.
+fn whenever flow passes through — never clickable) · `INSPECT` (⇣ `obj` of
+any declared type → grows one ⇡ per field of that type) · `TEXT`.
 
 Array data: give a system fn an output typed `Foo[]` and edit its sim value
 as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
-`item` output can feed more ⇣ ports.
+`item` output can feed more ⇣ ports. Struct-typed outputs (`Foe`) grow a
+mini-form with one input per declared field — wire that output into an
+INSPECT node and it explodes into `⇡ name`, `⇡ hp`, … for each field.
 
 ## Systems & data wires
 

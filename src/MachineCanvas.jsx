@@ -7,7 +7,12 @@ import NodeCard from './NodeCard.jsx'
 import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
-const fmt = (v) => (Array.isArray(v) ? `[${v.join(', ')}]` : v)
+const fmt = (v) =>
+  Array.isArray(v)
+    ? `[${v.join(', ')}]`
+    : v && typeof v === 'object'
+      ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(', ')} }`
+      : v
 
 function dataValue(nodes, links, amounts, mem, nodeId, varId) {
   const w = links.find((l) => l.kind === 'data' && l.to === nodeId && l.toPort === varId)
@@ -20,6 +25,13 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId) {
   if (src.kind === 'foreach') {
     const v = w.fromPort === '__item__' ? cur?.item : w.fromPort === '__idx__' ? cur?.index : null
     return { val: v === undefined ? null : v, from: src.name || 'foreach' }
+  }
+  if (src.kind === 'inspect') {
+    const o = dataValue(nodes, links, amounts, mem, src.id, '__obj__')
+    const obj = o && typeof o.val === 'object' && o.val !== null && !Array.isArray(o.val) ? o.val : null
+    const f = (src.fields || []).find((x) => x.id === w.fromPort)
+    const v = obj && f ? obj[f.name || 'field'] : null
+    return { val: v === undefined ? null : v, from: `${src.name || 'inspect'}.${f?.name || '?'}` }
   }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
@@ -268,7 +280,7 @@ const orth = (sx, sy, tx, ty) => {
   return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
 }
 
-export default function MachineCanvas({ graph, assets, onChange }) {
+export default function MachineCanvas({ graph, assets, types, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const [sel, setSel] = useState(null) // selected link id
@@ -321,18 +333,34 @@ export default function MachineCanvas({ graph, assets, onChange }) {
     const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
     const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
     if (!ta || !tb) return warn('⚠ that data port no longer exists')
-    if (!(ta === tb || (tb === 'array' && ta.includes('[]')))) return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
+    if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]'))))
+      return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
     mutate((g) => ({
       ...g,
       links: [
         ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
         { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
       ],
-      // foreach learns its item type from the array wired in
+      // foreach learns its item type from the array wired in;
+      // inspect learns its type and grows one ⇡ per field
       nodes:
         toPort === '__arr__'
           ? g.nodes.map((n) => (n.id === to && n.kind === 'foreach' ? { ...n, itemType: ta.replace('[]', '') } : n))
-          : g.nodes,
+          : toPort === '__obj__'
+            ? g.nodes.map((n) =>
+                n.id === to && n.kind === 'inspect'
+                  ? {
+                      ...n,
+                      objType: ta,
+                      fields: ((types || []).find((t) => t.name === ta)?.fields || []).map((f) => ({
+                        id: f.id,
+                        name: f.name || 'field',
+                        typeId: f.typeId,
+                      })),
+                    }
+                  : n,
+              )
+            : g.nodes,
     }))
   }
 
@@ -393,7 +421,20 @@ export default function MachineCanvas({ graph, assets, onChange }) {
         if (selRef.current) {
           const id = selRef.current
           setSel(null)
-          onChangeRef.current({ ...graphRef.current, links: graphRef.current.links.filter((l) => l.id !== id) })
+          const g = graphRef.current
+          const dead = g.links.find((l) => l.id === id)
+          let nodes = g.nodes
+          let links = g.links.filter((l) => l.id !== id)
+          // unwiring obj resets inspect — its field ports disappear with it
+          const t =
+            dead && dead.kind === 'data' && dead.toPort === '__obj__'
+              ? g.nodes.find((n) => n.id === dead.to && n.kind === 'inspect')
+              : null
+          if (t) {
+            nodes = nodes.map((n) => (n.id === t.id ? { ...n, objType: 'any', fields: [] } : n))
+            links = links.filter((l) => !(l.kind === 'data' && l.from === t.id))
+          }
+          onChangeRef.current({ ...g, nodes, links })
         } else {
           const id = selNodeRef.current
           setSelNode(null)
@@ -604,6 +645,7 @@ export default function MachineCanvas({ graph, assets, onChange }) {
                   node={n}
                   graph={graph}
                   assets={assets}
+                  types={types}
                   selected={selNode === n.id}
                   isEntry={false}
                   sim={sim}
