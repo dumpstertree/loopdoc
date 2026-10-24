@@ -213,11 +213,16 @@ export default function MachineCanvas({ graph, assets, onChange }) {
   const [sel, setSel] = useState(null) // selected link id
   const selRef = useRef(sel)
   selRef.current = sel
+  const [selNode, setSelNode] = useState(null) // selected node id
+  const selNodeRef = useRef(selNode)
+  selNodeRef.current = selNode
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
   const graphRef = useRef(graph)
   graphRef.current = graph
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
   const simRef = useRef(sim)
   simRef.current = sim
 
@@ -309,17 +314,29 @@ export default function MachineCanvas({ graph, assets, onChange }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag && drag.kind, drag && drag.id, drag && drag.from])
 
-  // Del removes the selected link, Esc deselects
+  // Del removes the selected link or node, Esc deselects
   useEffect(() => {
     const onKey = (e) => {
       const el = document.activeElement
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
-      if (e.key === 'Escape') setSel(null)
-      else if ((e.key === 'Delete' || e.key === 'Backspace') && selRef.current) {
-        e.preventDefault()
-        const id = selRef.current
+      if (e.key === 'Escape') {
         setSel(null)
-        onChange({ ...graphRef.current, links: graphRef.current.links.filter((l) => l.id !== id) })
+        setSelNode(null)
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selRef.current || selNodeRef.current)) {
+        e.preventDefault()
+        if (selRef.current) {
+          const id = selRef.current
+          setSel(null)
+          onChangeRef.current({ ...graphRef.current, links: graphRef.current.links.filter((l) => l.id !== id) })
+        } else {
+          const id = selNodeRef.current
+          setSelNode(null)
+          onChangeRef.current({
+            ...graphRef.current,
+            nodes: graphRef.current.nodes.filter((n) => n.id !== id),
+            links: graphRef.current.links.filter((l) => l.from !== id && l.to !== id),
+          })
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -406,7 +423,7 @@ export default function MachineCanvas({ graph, assets, onChange }) {
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">drag ▢ out → part = flow · click ○ = amount · click line + Del = remove</span>
+        <span className="tb-hint">drag ▢ out → part = flow · click ○ = amount · click part/line + Del = remove</span>
         <span className="spacer" />
         {sim ? (
           <>
@@ -425,7 +442,7 @@ export default function MachineCanvas({ graph, assets, onChange }) {
       <div className="machine-view">
         <div className="canvas-wrap">
           <div className="canvas-scroll">
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={(e) => { if (!e.target.closest('.edge') && !e.target.closest('.nd')) setSel(null) }}>
+            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={(e) => { if (!e.target.closest('.edge') && !e.target.closest('.nd')) { setSel(null); setSelNode(null) } }}>
               <svg className="edges" width={2600} height={1800}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -521,13 +538,16 @@ export default function MachineCanvas({ graph, assets, onChange }) {
                   node={n}
                   graph={graph}
                   assets={assets}
-                  selected={false}
+                  selected={selNode === n.id}
                   isEntry={false}
                   sim={sim}
                   onCardClick={clickNode}
                   onPatch={(p) => patch(n.id, p)}
                   onDelete={delNode}
-                  onSelect={() => {}}
+                  onSelect={(id) => {
+                    setSelNode(id)
+                    setSel(null)
+                  }}
                   onToggleEntry={() => {}}
                   onOpenGraph={() => {}}
                   onPortDown={onPortDown}

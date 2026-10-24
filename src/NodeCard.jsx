@@ -288,9 +288,11 @@ export default function NodeCard({
             ▶
           </button>
         )}
-        <button className="icon-btn" title="delete node" onPointerDown={(e) => e.stopPropagation()} onClick={() => onDelete(node.id)}>
-          ×
-        </button>
+        {mode === 'flow' && (
+          <button className="icon-btn" title="delete node" onPointerDown={(e) => e.stopPropagation()} onClick={() => onDelete(node.id)}>
+            ×
+          </button>
+        )}
       </div>
 
       <div className="nd-body" onPointerDown={(e) => e.stopPropagation()}>
