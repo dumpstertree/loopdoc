@@ -4,7 +4,6 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { bezier } from './GraphCanvas.jsx'
 import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
@@ -201,9 +200,19 @@ function fireAction(nodes, links, prev, nodeId, log) {
 }
 
 // ---- editor ------------------------------------------------------------------
+// straight lines with 90° turns: horizontal → vertical → horizontal,
+// plus the midpoint of the (vertical) leg where the amount circle sits
+const orth = (sx, sy, tx, ty) => {
+  const mx = sx + Math.max(30, (tx - sx) / 2)
+  return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
+}
+
 export default function MachineCanvas({ graph, assets, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
+  const [sel, setSel] = useState(null) // selected link id
+  const selRef = useRef(sel)
+  selRef.current = sel
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
@@ -300,6 +309,24 @@ export default function MachineCanvas({ graph, assets, onChange }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag && drag.kind, drag && drag.id, drag && drag.from])
 
+  // Del removes the selected link, Esc deselects
+  useEffect(() => {
+    const onKey = (e) => {
+      const el = document.activeElement
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (e.key === 'Escape') setSel(null)
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && selRef.current) {
+        e.preventDefault()
+        const id = selRef.current
+        setSel(null)
+        onChange({ ...graphRef.current, links: graphRef.current.links.filter((l) => l.id !== id) })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // measure flow + data ports
   const portPosRef = useRef(portXY)
   const measure = () => {
@@ -379,6 +406,7 @@ export default function MachineCanvas({ graph, assets, onChange }) {
             {KINDS[k].label}
           </button>
         ))}
+        <span className="tb-hint">drag ▢ out → part = flow · click ○ = amount · click line + Del = remove</span>
         <span className="spacer" />
         {sim ? (
           <>
@@ -397,11 +425,14 @@ export default function MachineCanvas({ graph, assets, onChange }) {
       <div className="machine-view">
         <div className="canvas-wrap">
           <div className="canvas-scroll">
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }}>
+            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={(e) => { if (!e.target.closest('.edge') && !e.target.closest('.nd')) setSel(null) }}>
               <svg className="edges" width={2600} height={1800}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-flow" />
+                  </marker>
+                  <marker id="marw-sel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-sel" />
                   </marker>
                   <marker id="marw-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-data" />
@@ -412,24 +443,38 @@ export default function MachineCanvas({ graph, assets, onChange }) {
                   const a = startOf(l)
                   const b = endOf(l)
                   if (!a || !b) return null
-                  const d = bezier(a.x, a.y, b.x, b.y)
+                  const { d, mid } = orth(a.x, a.y, b.x, b.y)
+                  const isSel = sel === l.id
                   return (
                     <g
                       key={l.id}
-                      className="edge"
+                      className={`edge ${isSel ? 'edge-sel' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation()
-                        const v = window.prompt('tokens transferred per flow:', String(l.amount ?? 1))
-                        if (v === null) return
-                        const n = Number(v)
-                        if (Number.isFinite(n) && n >= 0) mutate((g) => ({ ...g, links: g.links.map((x) => (x.id === l.id ? { ...x, amount: n } : x)) }))
+                        setSel(l.id)
                       }}
                     >
-                      <title>flow — click sets amount</title>
+                      <title>flow — click selects · Del removes</title>
                       <path d={d} className="edge-hit" />
-                      <path d={d} className="edge-line" markerEnd="url(#marw)" />
-                      <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 6} className="edge-weight">
-                        ×{l.amount ?? 1}
+                      <path d={d} className="edge-line" markerEnd={isSel ? 'url(#marw-sel)' : 'url(#marw)'} />
+                      <circle
+                        className="edge-amt"
+                        cx={mid.x}
+                        cy={mid.y}
+                        r={9}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSel(l.id)
+                          const v = window.prompt('tokens transferred per flow:', String(l.amount ?? 1))
+                          if (v === null) return
+                          const n = Number(v)
+                          if (Number.isFinite(n) && n >= 0) mutate((g) => ({ ...g, links: g.links.map((x) => (x.id === l.id ? { ...x, amount: n } : x)) }))
+                        }}
+                      >
+                        <title>amount — click to change</title>
+                      </circle>
+                      <text className="edge-amt-text" x={mid.x} y={mid.y + 3.5} textAnchor="middle">
+                        {l.amount ?? 1}
                       </text>
                     </g>
                   )
@@ -439,30 +484,32 @@ export default function MachineCanvas({ graph, assets, onChange }) {
                   const a = portXY[`${l.from}:${l.fromPort}:out`]
                   const b = portXY[`${l.to}:${l.toPort}:in`]
                   if (!a || !b) return null
-                  const d = bezier(a.x, a.y, b.x, b.y)
+                  const { d } = orth(a.x, a.y, b.x, b.y)
                   return (
                     <g
                       key={l.id}
-                      className="edge edge-data"
+                      className={`edge edge-data ${sel === l.id ? 'edge-sel' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (window.confirm('remove this data wire?')) mutate((g) => ({ ...g, links: g.links.filter((x) => x.id !== l.id) }))
+                        setSel(l.id)
                       }}
                     >
-                      <title>data wire — click removes</title>
+                      <title>data wire — click selects · Del removes</title>
                       <path d={d} className="edge-hit" />
-                      <path d={d} className="edge-line" markerEnd="url(#marw-data)" />
+                      <path d={d} className="edge-line" markerEnd={sel === l.id ? 'url(#marw-sel)' : 'url(#marw-data)'} />
                     </g>
                   )
                 })}
                 {drag && (drag.kind === 'flow' || drag.kind === 'data') && portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`] && (
                   <path
-                    d={bezier(
-                      portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].x,
-                      portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].y,
-                      drag.x,
-                      drag.y,
-                    )}
+                    d={
+                      orth(
+                        portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].x,
+                        portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].y,
+                        drag.x,
+                        drag.y,
+                      ).d
+                    }
                     className="edge-temp"
                     stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                   />
@@ -494,7 +541,7 @@ export default function MachineCanvas({ graph, assets, onChange }) {
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
                     CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
-                  <p>drag ▢ out → part = flow · click a flow to set the token amount · teal squares wire typed data (pool ⇡ int).</p>
+                  <p>drag ▢ out → part = flow · click the ○ on a line to set its token amount · click a line + Del to remove it · teal squares wire typed data (pool ⇡ int).</p>
                 </div>
               )}
             </div>
