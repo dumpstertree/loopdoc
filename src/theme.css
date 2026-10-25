@@ -307,8 +307,13 @@ select.inp {
 }
 .canvas-surface {
   position: relative;
-  background-image: radial-gradient(var(--bg-4) 1px, transparent 1px);
-  background-size: 26px 26px;
+  /* light dots on the 26px snap grid + a softly glowing magenta major dot
+     every 5th intersection for coarse alignment — both follow the pan
+     origin (backgroundPosition is set inline on the flow canvas) */
+  background-image:
+    radial-gradient(rgba(242, 159, 245, 0.16) 1.6px, transparent 2.2px),
+    radial-gradient(rgba(230, 215, 232, 0.2) 1px, transparent 1.4px);
+  background-size: 130px 130px, 26px 26px;
 }
 .canvas-dragging {
   cursor: grabbing;
