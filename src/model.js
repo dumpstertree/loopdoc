@@ -550,11 +550,27 @@ export function serializeDoc(doc) {
   return JSON.stringify(doc, null, 2)
 }
 
+// repair per graph: unique node/link ids (copies made by the pre-fix paste
+// bug shared ids with their originals → ghost renders, shared move/delete)
+function dedupeIds(g) {
+  const seenN = new Set()
+  for (const n of g.nodes || []) {
+    if (seenN.has(n.id)) n.id = uid('nd')
+    seenN.add(n.id)
+  }
+  const seenL = new Set()
+  for (const l of g.links || []) {
+    if (seenL.has(l.id)) l.id = uid('lk')
+    seenL.add(l.id)
+  }
+}
+
 export function parseDoc(text) {
   const d = JSON.parse(text)
   if (!d || d.app !== 'loopdoc-composer' || !d.design) throw new Error('not a loopdoc composer file')
   d.notes = { business: '', mood: '', ...(d.notes || {}) }
   d.assets = d.assets || []
   d.types = d.types || []
+  walkGraphs(d.design, dedupeIds) // heal any doc corrupted by the old paste bug
   return d
 }
