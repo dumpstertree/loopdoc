@@ -356,9 +356,10 @@ export default function NodeCard({
   // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
   const poolFed =
     node.kind === 'pool' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
-  // drain whose per-step amount comes from a wired int instead of the field
+  // drain/add whose per-step amount comes from a wired int instead of the field
   const drainFed =
-    node.kind === 'drain' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
+    (node.kind === 'drain' || node.kind === 'add') &&
+    (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
   if (sim) {
     if (node.kind === 'pool') amount = sim.amounts[node.id] ?? node.init ?? 0
     const tk = ((sim.mem || {}).tokens || []).filter((t) => t.node === node.id)
@@ -400,6 +401,11 @@ export default function NodeCard({
         {isMachineKind && node.kind === 'drain' && (
           <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'tokens removed from each upstream pool per step'}>
             {drainFed ? '⇣' : `−${node.drain ?? 1}`}
+          </span>
+        )}
+        {isMachineKind && node.kind === 'add' && (
+          <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'value added to each upstream pool per pass — negative subtracts'}>
+            {drainFed ? '⇣' : `${(node.gain ?? 1) >= 0 ? '+' : ''}${node.gain ?? 1}`}
           </span>
         )}
         {sim && tokHere > 0 && !['register', 'delay', 'queue'].includes(node.kind) && (
@@ -676,8 +682,30 @@ export default function NodeCard({
             <span className="nd-sub">/step</span>
           </div>
         )}
+        {isMachineKind && node.kind === 'add' && !drainFed && (
+          <div className="nd-row">
+            <span className="nd-sub">add</span>
+            <input
+              className="inp"
+              style={{ width: 52 }}
+              type="number"
+              title="value added to each upstream pool per pass — negative subtracts (e.g. −1 for ascend)"
+              value={node.gain ?? 1}
+              onChange={(e) => onPatch({ gain: Number(e.target.value) || 0 })}
+            />
+            <span className="nd-sub">/pass</span>
+          </div>
+        )}
         {isMachineKind && node.kind === 'drain' && (
           <div className="dvar" title="wire an int in — the drain removes that many per pool each step (field hides)">
+            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
+            <span>
+              ⇣ in:<b>int</b>
+            </span>
+          </div>
+        )}
+        {isMachineKind && node.kind === 'add' && (
+          <div className="dvar" title="wire an int in — the add applies that many per pool each pass, signed (field hides)">
             <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
             <span>
               ⇣ in:<b>int</b>

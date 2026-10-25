@@ -621,6 +621,7 @@ svg.edges .edge {
 .nd-machine { --kc: var(--mint); border-style: double; border-width: 3px; }
 .mc-source { --kc: var(--lime); }
 .mc-drain { --kc: var(--urgent); }
+.mc-add { --kc: var(--lime); }
 .mc-pool { --kc: var(--cyan); }
 .mc-converter { --kc: var(--magenta); }
 .mc-gate { --kc: var(--mint); }

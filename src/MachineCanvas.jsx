@@ -164,7 +164,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   mem.tseq = mem.tseq || 0
   const toks = (mem.tokens = mem.tokens || [])
   for (const e of nodes)
-    if (e.kind !== 'drain' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
+    if (e.kind !== 'drain' && e.kind !== 'add' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
       toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
   const qBudget = {}
@@ -185,8 +185,8 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     }
   }
   const advance = (t, n, port, arith = true) => {
-    // drains subtract with their own rules — never double-charge on pass-through
-    if (arith && n.kind !== 'drain') for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
+    // drains/adds subtract or add with their own rules — never double-charge on pass-through
+    if (arith && n.kind !== 'drain' && n.kind !== 'add') for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
     const outs = outsOf(n.id).filter((e) => (port ? e.fromPort === port : e.fromPort !== 'end'))
     for (const e of outs) if (p(e.to)) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
     if (!outs.length) {
@@ -363,6 +363,24 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
         }
       }
       advance(t, n) // the chain continues out — what follows reads the drained value
+      continue
+    }
+
+    if (n.kind === 'add') {
+      // drain's mirror — adds its (possibly negative) amount to every upstream pool
+      const fedIn = links.some((l) => l.kind === 'data' && l.to === n.id && l.toPort === '__in__')
+      let want = n.gain ?? 1
+      if (fedIn) {
+        const d = dataValue(nodes, links, a, mem, n.id, '__in__')
+        want = d && Number.isFinite(Number(d.val)) ? Math.round(Number(d.val)) : 0
+      }
+      for (const e of insOf(n.id)) {
+        const s = byId[e.from] && byId[e.from].kind === 'pool' ? byId[e.from] : null
+        if (!s) continue
+        a[e.from] = (a[e.from] || 0) + want
+        log.push(`⊕ ${n.name || 'add'} ⟶ ${want >= 0 ? '+' : ''}${want} ${s.name || 'pool'} = ${a[e.from]}`)
+      }
+      advance(t, n)
       continue
     }
 
@@ -926,6 +944,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     const entries = g.nodes.filter(
       (n) =>
         n.kind !== 'drain' &&
+        n.kind !== 'add' &&
         n.kind !== 'exit' &&
         ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 &&
         !flows.some((l) => l.to === n.id),

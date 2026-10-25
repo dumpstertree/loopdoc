@@ -202,6 +202,17 @@ export const KINDS = {
     ],
     data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
   },
+  add: {
+    mode: 'machine',
+    label: 'ADD',
+    cls: 'mc-add',
+    hint: 'drain’s mirror — adds its amount to upstream pools (negative subtracts, e.g. −1) · chain continues out so what follows reads the new value · wire ⇣ in:int to dictate the amount',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: '' },
+    ],
+    data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
+  },
   pool: {
     mode: 'machine',
     label: 'POOL',
@@ -468,6 +479,7 @@ export function newNode(kind, x, y) {
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'pool') n.init = 10
   if (kind === 'drain') n.drain = 1
+  if (kind === 'add') n.gain = 1
   if (kind === 'source' || kind === 'drain') n.auto = true
   if (kind === 'delay') n.delay = 3
   if (kind === 'queue') n.rate = 1

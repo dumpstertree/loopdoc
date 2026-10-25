@@ -86,7 +86,7 @@ function scanGraph(g, assets, types, add) {
 
   // ---- machine rules -----------------------------------------------------------
   const entryNodes = nodes.filter(
-    (n) => n.kind !== 'drain' && n.kind !== 'exit' && portsOf(n).length > 0 && !hasIn(n.id),
+    (n) => n.kind !== 'drain' && n.kind !== 'add' && n.kind !== 'exit' && portsOf(n).length > 0 && !hasIn(n.id),
   )
   if (nodes.length && !entryNodes.length && (g.links || []).length)
     add('error', '', 'nothing can run — every part has a flow input (closed cycle, no entry)')
@@ -149,12 +149,12 @@ function scanGraph(g, assets, types, add) {
     }
   }
 
-  // drain vs reader race: a pool forked into a drain AND another part at once
-  for (const d of nodes.filter((x) => x.kind === 'drain')) {
+  // mutate vs reader race: a pool forked into a drain/add AND another part at once
+  for (const d of nodes.filter((x) => x.kind === 'drain' || x.kind === 'add')) {
     for (const e of flows.filter((l) => l.to === d.id)) {
       const pool = byId[e.from]
       if (!pool || pool.kind !== 'pool') continue
-      const others = flows.filter((l) => l.from === pool.id && byId[l.to] && byId[l.to].kind !== 'drain')
+      const others = flows.filter((l) => l.from === pool.id && byId[l.to] && byId[l.to].kind !== 'drain' && byId[l.to].kind !== 'add')
       if (others.length)
         add(
           'warn',
