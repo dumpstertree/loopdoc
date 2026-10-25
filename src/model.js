@@ -175,8 +175,13 @@ export const KINDS = {
     mode: 'flow',
     label: 'MACHINE',
     cls: 'nd-machine',
-    hint: 'nested machine — chains run its economy',
-    ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
+    hint: 'nested machine — chains run its economy · its EXIT parts become named output ports here',
+    ports: (n) => {
+      const xs = ((n.graph || {}).nodes || []).filter((x) => x.kind === 'exit')
+      return xs.length
+        ? xs.map((x) => ({ id: x.id, dir: 'out', label: x.name || 'exit' }))
+        : [{ id: 'out', dir: 'out', label: 'out' }]
+    },
   },
   // ---- machine nodes ----------------------------------------------------------
   source: {
@@ -321,6 +326,13 @@ export const KINDS = {
     cls: 'mc-text',
     hint: 'annotation — no ports, no sim effect',
     ports: () => [],
+  },
+  exit: {
+    mode: 'machine',
+    label: 'EXIT',
+    cls: 'mc-exit',
+    hint: 'the machine ends here — named exits become output ports on the MACHINE node in the parent graph',
+    ports: () => [{ id: 'in', dir: 'in', label: 'exit' }],
   },
 }
 function flowIO() {

@@ -160,7 +160,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   mem.tseq = mem.tseq || 0
   const toks = (mem.tokens = mem.tokens || [])
   for (const e of nodes)
-    if (e.kind !== 'drain' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
+    if (e.kind !== 'drain' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
       toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
   const qBudget = {}
@@ -413,6 +413,15 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       continue
     }
 
+    if (n.kind === 'exit') {
+      // the machine ends through this door — the parent graph continues from
+      // the matching named port on the MACHINE node
+      mem.lastExit = n.name || 'exit'
+      log.push(`⏏ ${n.name || 'exit'} — machine exit`)
+      kill(t)
+      continue
+    }
+
     // everything else passes the chain through: source, pool, converter, gate, trader
     advance(t, n)
   }
@@ -653,10 +662,16 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     const g = graphRef.current
     const flows = g.links.filter((l) => l.kind !== 'data')
     const entries = g.nodes.filter(
-      (n) => n.kind !== 'drain' && ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 && !flows.some((l) => l.to === n.id),
+      (n) =>
+        n.kind !== 'drain' &&
+        n.kind !== 'exit' &&
+        ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 &&
+        !flows.some((l) => l.to === n.id),
     )
     if (!entries.length) out.push('⚠ nothing to run — parts with no flow input are chain entry points')
     else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
+    if (!g.nodes.some((x) => x.kind === 'exit'))
+      out.push('ℹ no EXIT part yet — add one per ending (e.g. victory, defeat) and the MACHINE node grows a port for it')
     for (const n of g.nodes.filter((x) => x.kind === 'syscall'))
       if (!resolveCall((n.calls || [])[0], assets)) out.push(`⚠ sys call "${n.name || ''}" has no system fn selected`)
     return out

@@ -679,6 +679,18 @@ export default function NodeCard({
             ⏳ can block — chain waits until clicked to return
           </label>
         )}
+        {node.kind === 'exit' && !sim && (
+          <input
+            className="inp"
+            style={{ width: '100%' }}
+            placeholder="exit name — victory, defeat…"
+            title="the MACHINE node in the parent graph grows an output port with this name"
+            value={node.name || ''}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => onPatch({ name: e.target.value })}
+          />
+        )}
+        {sim && node.kind === 'exit' && <div className="mc-click info">⏏ ends the machine here</div>}
 
         {/* flow exit ports — rows on the flow canvas, pinned top-right on machine parts */}
         {mode === 'machine'

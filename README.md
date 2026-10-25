@@ -38,7 +38,8 @@ to a ⇣ input **of the same type** (types compare case-insensitively).
 canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
 graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 `LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
-(nested machine — opens full-screen like any nested graph).
+(nested machine — opens full-screen like any nested graph; the machine's
+EXIT parts appear here as named output ports).
 
 machine canvas: `SOURCE` (chain entry) · `DRAIN` (chain end — removes its
 amount from upstream pools; set `n` on the card, or wire ⇣ `in:int` and the
@@ -56,7 +57,9 @@ from a sys-call output; one iteration per step, ⇡ `item:T` + ⇡ `index:int`;
 pools are short) · `SYS CALL` (calls its system fn as the chain
 passes · tick **⏳ can block** and it stays *opened* — the chain freezes
 until you click it to return) · `INSPECT` (pure data —
-no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT`.
+no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT` ·
+`EXIT` (the machine ends here; name it — `victory`, `defeat`, `flee` — and the
+parent graph's MACHINE node grows a matching output port to continue from).
 
 Chain sim visuals: parts with a chain token in flight glow teal; waiting
 parts (⏳ ACTION / blocked SYS CALL) pulse amber and are clickable.

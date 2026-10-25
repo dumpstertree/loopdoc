@@ -618,6 +618,7 @@ svg.edges .edge {
 .mc-action { --kc: var(--amber); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); }
+.mc-exit { --kc: var(--urgent); border-style: double; border-width: 3px; }
 .mc-text { border-style: dashed; background: transparent; }
 .mc-amount {
   font-size: 12px;
