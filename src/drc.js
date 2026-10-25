@@ -45,7 +45,12 @@ function scanGraph(g, assets, types, add) {
   const declared = new Set((types || []).map((t) => (t.name || '').toLowerCase()).filter(Boolean))
   const isDeclared = (t) => declared.has(String(t || '').toLowerCase())
 
-  // ---- both modes: dangling data wires & orphan type references -------------
+  // ---- both modes: wires into deleted nodes & dangling data ports -----------
+  for (const l of g.links || [])
+    if (!byId[l.from] || !byId[l.to]) {
+      const other = byId[l.from] || byId[l.to]
+      add('error', label(other || { kind: 'wire' }), 'a wire connects to a deleted part — remove or rewire it')
+    }
   for (const l of data) {
     if (byId[l.from] && !dataPortType(g, assets, l.from, l.fromPort, 'out'))
       add('error', label(byId[l.to]), `data wire ⇣ ${l.toPort} is dangling — ${label(byId[l.from])} no longer outputs that port`)
