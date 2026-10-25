@@ -345,7 +345,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'TEXT',
     cls: 'mc-text',
-    hint: 'annotation — no ports, no sim effect',
+    hint: 'annotation — no ports, no sim effect · drag its corner grip to size it over as many cells as it describes',
     ports: () => [],
   },
   exit: {

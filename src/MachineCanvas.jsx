@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -115,10 +115,13 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
     else log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${fmt(d.val)} ← "${d.from}"`)
   }
   for (const v of r.fn.outputs || []) {
-    // array-typed outputs default to an empty list, not 0 — the comma-list
-    // on the card is what fills it
-    made[v.id] = n.out?.[v.id] ?? (String(v.type || '').toLowerCase().endsWith('[]') ? [] : 0)
-    log.push(`    ⇡ ${v.name || '?'}:${v.type || '?'} = ${fmt(made[v.id])} (sim value)`)
+    // answers typed on the card during sim (mem.callEdits) win over the
+    // type default — a blocking call re-opened next round keeps your answer
+    // until you change it, exactly like the old edit-time defaults used to
+    const edits = (mem.callEdits || {})[n.id]
+    const manual = edits && Object.prototype.hasOwnProperty.call(edits, v.id)
+    made[v.id] = manual ? edits[v.id] : n.out?.[v.id] ?? (String(v.type || '').toLowerCase().endsWith('[]') ? [] : 0)
+    log.push(`    ⇡ ${v.name || '?'}:${v.type || '?'} = ${fmt(made[v.id])}${manual ? ' (your value)' : ' (sim value)'}`)
   }
 }
 
@@ -496,15 +499,31 @@ const orth = (sx, sy, tx, ty) => {
   return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
 }
 
+// a wire's path: straight through dropped anchors when present, else the
+// default orthogonal elbow. mid lands on the whole run for the amount badge.
+const routePath = (a, b, anchors) => {
+  if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
+  const pts = [a, ...anchors, b]
+  let d = `M ${pts[0].x} ${pts[0].y}`
+  for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`
+  const m = pts[Math.floor(pts.length / 2)]
+  return { d, mid: { x: m.x, y: m.y } }
+}
+
 export default function MachineCanvas({ graph, assets, types, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const [sel, setSel] = useState(null) // selected link id
   const selRef = useRef(sel)
   selRef.current = sel
-  const [selNode, setSelNode] = useState(null) // selected node id
-  const selNodeRef = useRef(selNode)
-  selNodeRef.current = selNode
+  const [selection, setSelection] = useState([]) // multi-select of node ids (click/shift/box)
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  const [selAnchor, setSelAnchor] = useState(null) // { link, idx } — selected wire anchor
+  const selAnchorRef = useRef(selAnchor)
+  selAnchorRef.current = selAnchor
+  const clipboardRef = useRef(null) // machine copy/paste { nodes, links }
+  const lastPointerRef = useRef(null) // where to drop a paste
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
@@ -534,8 +553,76 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
   const onHeaderDown = (e, id) => {
     if (e.button !== 0) return
     const n = graphRef.current.nodes.find((x) => x.id === id)
+    if (!n) return
     const p = surfacePoint(e)
-    setDrag({ kind: 'node', id, dx: p.x - n.x, dy: p.y - n.y })
+    lastPointerRef.current = p
+    // clicking one of many selected parts drags the whole group; a plain click
+    // outside a selection collapses it to the clicked node
+    if (!(e.shiftKey || e.ctrlKey || e.metaKey) && !selectionRef.current.includes(id)) setSelection([id])
+    const group = selectionRef.current.length > 1 && selectionRef.current.includes(id) ? [...selectionRef.current] : null
+    const starts = {}
+    if (group) graphRef.current.nodes.forEach((x) => (starts[x.id] = { x: x.x, y: x.y }))
+    setDrag({ kind: 'node', id, group, starts, dx: p.x - n.x, dy: p.y - n.y, sx: p.x, sy: p.y })
+  }
+  const onResizeDown = (e, id) => {
+    const n = graphRef.current.nodes.find((x) => x.id === id)
+    if (!n) return
+    const p = surfacePoint(e)
+    const el = e.target.closest('[data-node-id]')
+    setDrag({ kind: 'resize', id, sx: p.x, sy: p.y, sw: n.w || (el ? el.offsetWidth : 184), sh: n.h || (el ? el.offsetHeight : 60) })
+  }
+  // pressing empty canvas starts a box-select — a click without drag just clears
+  const onSurfaceDown = (e) => {
+    if (e.button !== 0) return
+    if (e.target.closest('.nd') || e.target.closest('.edge') || e.target.closest('.edge-anchor')) return
+    const p = surfacePoint(e)
+    lastPointerRef.current = p
+    setDrag({ kind: 'box', x0: p.x, y0: p.y, x1: p.x, y1: p.y, shift: e.shiftKey })
+  }
+
+  // ---- copy / cut / paste ------------------------------------------------------
+  const copySel = (cut) => {
+    const ids = selectionRef.current
+    if (!ids.length) return
+    const g = graphRef.current
+    const nodes = g.nodes.filter((n) => ids.includes(n.id))
+    const links = g.links.filter((l) => ids.includes(l.from) && ids.includes(l.to))
+    clipboardRef.current = JSON.parse(JSON.stringify({ nodes, links }))
+    if (cut) {
+      mutate((gg) => ({
+        ...gg,
+        nodes: gg.nodes.filter((n) => !ids.includes(n.id)),
+        links: gg.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
+      }))
+      setSelection([])
+    } else warn(`⧉ ${ids.length} part${ids.length > 1 ? 's' : ''} copied`)
+  }
+  const paste = () => {
+    const clip = clipboardRef.current
+    if (!clip || !clip.nodes.length) return
+    const fresh = reidGraph({
+      id: uid('g'),
+      mode: 'machine',
+      name: '',
+      entry: null,
+      nodes: JSON.parse(JSON.stringify(clip.nodes)),
+      links: JSON.parse(JSON.stringify(clip.links)),
+    })
+    const pt = lastPointerRef.current
+    if (pt) {
+      const minx = Math.min(...fresh.nodes.map((n) => n.x))
+      const miny = Math.min(...fresh.nodes.map((n) => n.y))
+      fresh.nodes.forEach((n) => {
+        n.x = Math.max(0, Math.round(n.x + pt.x - minx))
+        n.y = Math.max(0, Math.round(n.y + pt.y - miny))
+      })
+    } else
+      fresh.nodes.forEach((n) => {
+        n.x += 30
+        n.y += 30
+      })
+    mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
+    setSelection(fresh.nodes.map((n) => n.id))
   }
   const onPortDown = (e, id, portId) => {
     const p = surfacePoint(e)
@@ -608,7 +695,37 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     const onMove = (e) => {
       const p = surfacePoint(e)
       if (drag.kind === 'node')
-        mutate((g) => ({ ...g, nodes: g.nodes.map((n) => (n.id === drag.id ? { ...n, x: Math.max(0, p.x - drag.dx), y: Math.max(0, p.y - drag.dy) } : n)) }))
+        mutate((g) => ({
+          ...g,
+          nodes: g.nodes.map((n) => {
+            if (drag.group) {
+              const s = drag.starts[n.id]
+              return drag.group.includes(n.id) && s
+                ? { ...n, x: Math.max(0, Math.round(s.x + p.x - drag.sx)), y: Math.max(0, Math.round(s.y + p.y - drag.sy)) }
+                : n
+            }
+            return n.id === drag.id ? { ...n, x: Math.max(0, p.x - drag.dx), y: Math.max(0, p.y - drag.dy) } : n
+          }),
+        }))
+      else if (drag.kind === 'resize')
+        mutate((g) => ({
+          ...g,
+          nodes: g.nodes.map((n) =>
+            n.id === drag.id
+              ? { ...n, w: Math.max(150, Math.round(drag.sw + p.x - drag.sx)), h: Math.max(48, Math.round(drag.sh + p.y - drag.sy)) }
+              : n,
+          ),
+        }))
+      else if (drag.kind === 'anchor')
+        mutate((g) => ({
+          ...g,
+          links: g.links.map((l) =>
+            l.id === drag.link && Array.isArray(l.anchors)
+              ? { ...l, anchors: l.anchors.map((a, i) => (i === drag.idx ? { x: Math.round(p.x), y: Math.round(p.y) } : a)) }
+              : l,
+          ),
+        }))
+      else if (drag.kind === 'box') setDrag((d) => ({ ...d, x1: p.x, y1: p.y }))
       else setDrag((d) => ({ ...d, x: p.x, y: p.y }))
     }
     const onUp = (e) => {
@@ -640,6 +757,26 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
           else if (toNode === drag.from) warn('⚠ a part cannot feed itself')
           else addDataLink(drag.from, drag.port, toNode, toPort)
         }
+      } else if (drag.kind === 'box') {
+        const end = surfacePoint(e)
+        if (Math.abs(end.x - drag.x0) < 4 && Math.abs(end.y - drag.y0) < 4) {
+          setSelection([])
+          setSel(null)
+          setSelAnchor(null)
+        } else {
+          const r = surfaceRef.current.getBoundingClientRect()
+          const bx0 = Math.min(drag.x0, end.x) + r.left
+          const by0 = Math.min(drag.y0, end.y) + r.top
+          const bx1 = Math.max(drag.x0, end.x) + r.left
+          const by1 = Math.max(drag.y0, end.y) + r.top
+          const hit = [...surfaceRef.current.querySelectorAll('[data-node-id]')]
+            .filter((el) => {
+              const b = el.getBoundingClientRect()
+              return b.left < bx1 && b.right > bx0 && b.top < by1 && b.bottom > by0
+            })
+            .map((el) => el.getAttribute('data-node-id'))
+          setSelection(drag.shift ? [...new Set([...selectionRef.current, ...hit])] : hit)
+        }
       }
       setDrag(null)
     }
@@ -650,7 +787,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       window.removeEventListener('pointerup', onUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag && drag.kind, drag && drag.id, drag && drag.from])
+  }, [drag && drag.kind, drag && drag.id, drag && drag.from, drag && drag.link])
 
   // Del removes the selected link or node, Esc deselects
   useEffect(() => {
@@ -659,10 +796,26 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       if (e.key === 'Escape') {
         setSel(null)
-        setSelNode(null)
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selRef.current || selNodeRef.current)) {
+        setSelAnchor(null)
+        setSelection([])
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) copySel(false)
+      else if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) copySel(true)
+      else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) paste()
+      else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault()
-        if (selRef.current) {
+        setSelection(graphRef.current.nodes.map((n) => n.id))
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selAnchorRef.current || selRef.current || selectionRef.current.length)) {
+        e.preventDefault()
+        if (selAnchorRef.current) {
+          const { link, idx } = selAnchorRef.current
+          setSelAnchor(null)
+          mutate((g) => ({
+            ...g,
+            links: g.links.map((l) =>
+              l.id === link && Array.isArray(l.anchors) ? { ...l, anchors: l.anchors.filter((_, i) => i !== idx) } : l,
+            ),
+          }))
+        } else if (selRef.current) {
           const id = selRef.current
           setSel(null)
           const g = graphRef.current
@@ -689,12 +842,12 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
           }
           onChangeRef.current({ ...g, nodes, links })
         } else {
-          const id = selNodeRef.current
-          setSelNode(null)
+          const ids = selectionRef.current
+          setSelection([])
           onChangeRef.current({
             ...graphRef.current,
-            nodes: graphRef.current.nodes.filter((n) => n.id !== id),
-            links: graphRef.current.links.filter((l) => l.from !== id && l.to !== id),
+            nodes: graphRef.current.nodes.filter((n) => !ids.includes(n.id)),
+            links: graphRef.current.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
           })
         }
       }
@@ -782,6 +935,19 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     })
   }
 
+  // typing a sys call's ⇡ answer while simulating — writes the live value
+  // AND records it in callEdits, so the answer survives the call re-firing
+  const setSimCallValue = (nodeId, vid, val) =>
+    setSim((s) => {
+      if (!s) return s
+      const mem = JSON.parse(JSON.stringify(s.mem || {}))
+      mem.call = mem.call || {}
+      mem.call[nodeId] = { ...(mem.call[nodeId] || {}), [vid]: val }
+      mem.callEdits = mem.callEdits || {}
+      mem.callEdits[nodeId] = { ...(mem.callEdits[nodeId] || {}), [vid]: val }
+      return { ...s, mem }
+    })
+
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
   const endOf = (l) => portXY[`${l.to}:${l.toPort}:in`] || (byId[l.to] ? { x: byId[l.to].x, y: byId[l.to].y + 16 } : null)
@@ -795,7 +961,11 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">chains run from unconnected parts · drag ▢ out → part · click ○ = amount · click ⏳/▶ part to continue · Del removes selection</span>
+        <span className="tb-sep" />
+        <button className="tb-btn" title="copy selected parts (Ctrl+C)" onClick={() => copySel(false)}>⧉ COPY</button>
+        <button className="tb-btn" title="cut selected parts (Ctrl+X)" onClick={() => copySel(true)}>✂ CUT</button>
+        <button className="tb-btn" title="paste at cursor (Ctrl+V)" onClick={paste}>⎘ PASTE</button>
+        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire to drop a steering anchor · chains run from unconnected parts · click ⏳/▶ part to continue · Del removes selection</span>
         <span className="spacer" />
         {sim ? (
           <>
@@ -814,7 +984,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       <div className="machine-view">
         <div className="canvas-wrap">
           <div className="canvas-scroll">
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={(e) => { if (!e.target.closest('.edge') && !e.target.closest('.nd')) { setSel(null); setSelNode(null) } }}>
+            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={onSurfaceDown}>
               <svg className="edges" width={2600} height={1800}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -832,7 +1002,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                   const a = startOf(l)
                   const b = endOf(l)
                   if (!a || !b) return null
-                  const { d, mid } = orth(a.x, a.y, b.x, b.y)
+                  const { d, mid } = routePath(a, b, l.anchors)
                   const isSel = sel === l.id
                   return (
                     <g
@@ -841,9 +1011,20 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                       onClick={(e) => {
                         e.stopPropagation()
                         setSel(l.id)
+                        setSelAnchor(null)
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        const p = surfacePoint(e)
+                        mutate((g) => ({
+                          ...g,
+                          links: g.links.map((x) =>
+                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x), y: Math.round(p.y) }] } : x,
+                          ),
+                        }))
                       }}
                     >
-                      <title>flow — click selects · Del removes</title>
+                      <title>flow — click selects · dbl-click drops an anchor to steer the line · Del removes</title>
                       <path d={d} className="edge-hit" />
                       <path d={d} className="edge-line" markerEnd={isSel ? 'url(#marw-sel)' : 'url(#marw)'} />
                       <circle
@@ -873,7 +1054,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                   const a = portXY[`${l.from}:${l.fromPort}:out`]
                   const b = portXY[`${l.to}:${l.toPort}:in`]
                   if (!a || !b) return null
-                  const { d } = orth(a.x, a.y, b.x, b.y)
+                  const { d } = routePath(a, b, l.anchors)
                   return (
                     <g
                       key={l.id}
@@ -881,14 +1062,46 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                       onClick={(e) => {
                         e.stopPropagation()
                         setSel(l.id)
+                        setSelAnchor(null)
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        const p = surfacePoint(e)
+                        mutate((g) => ({
+                          ...g,
+                          links: g.links.map((x) =>
+                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x), y: Math.round(p.y) }] } : x,
+                          ),
+                        }))
                       }}
                     >
-                      <title>data wire — click selects · Del removes</title>
+                      <title>data wire — click selects · dbl-click drops an anchor · Del removes</title>
                       <path d={d} className="edge-hit" />
                       <path d={d} className="edge-line" markerEnd={sel === l.id ? 'url(#marw-sel)' : 'url(#marw-data)'} />
                     </g>
                   )
                 })}
+                {/* dropped anchors — drag to steer, select + Del to remove */}
+                {graph.links.map((l) =>
+                  (l.anchors || []).map((ap, i) => (
+                    <circle
+                      key={`${l.id}:a${i}`}
+                      className={`edge-anchor ${selAnchor && selAnchor.link === l.id && selAnchor.idx === i ? 'edge-anchor-sel' : ''}`}
+                      cx={ap.x}
+                      cy={ap.y}
+                      r={5}
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        setSel(null)
+                        setSelAnchor({ link: l.id, idx: i })
+                        setDrag({ kind: 'anchor', link: l.id, idx: i })
+                      }}
+                    >
+                      <title>wire anchor — drag to move · Del removes</title>
+                    </circle>
+                  )),
+                )}
                 {drag && (drag.kind === 'flow' || drag.kind === 'data') && portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`] && (
                   <path
                     d={
@@ -911,23 +1124,37 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                   graph={graph}
                   assets={assets}
                   types={types}
-                  selected={selNode === n.id}
+                  selected={selection.includes(n.id)}
                   isEntry={false}
                   sim={sim}
                   onCardClick={clickNode}
                   onPatch={(p) => patch(n.id, p)}
                   onDelete={delNode}
-                  onSelect={(id) => {
-                    setSelNode(id)
+                  onSelect={(id, shift) => {
                     setSel(null)
+                    setSelAnchor(null)
+                    setSelection((s) => (shift ? (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]) : [id]))
                   }}
                   onToggleEntry={() => {}}
                   onOpenGraph={() => {}}
                   onPortDown={onPortDown}
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
+                  onResizeDown={onResizeDown}
+                  onSimCall={(vid, val) => setSimCallValue(n.id, vid, val)}
                 />
               ))}
+              {drag && drag.kind === 'box' && (
+                <div
+                  className="select-box"
+                  style={{
+                    left: Math.min(drag.x0, drag.x1),
+                    top: Math.min(drag.y0, drag.y1),
+                    width: Math.abs(drag.x1 - drag.x0),
+                    height: Math.abs(drag.y1 - drag.y0),
+                  }}
+                />
+              )}
               {graph.nodes.length === 0 && (
                 <div className="canvas-empty">
                   <p>

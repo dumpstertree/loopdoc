@@ -635,6 +635,27 @@ svg.edges .edge {
 .port-out-mc.pt-true { background: var(--lime); border-color: var(--lime); }
 .port-out-mc.pt-false { background: var(--urgent); border-color: var(--urgent); }
 .mc-text { border-style: dashed; background: transparent; }
+.nd-resize {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 11px;
+  height: 11px;
+  cursor: nwse-resize;
+  border-right: 2px solid var(--kc, var(--cyan));
+  border-bottom: 2px solid var(--kc, var(--cyan));
+  opacity: 0.5;
+}
+.nd-resize:hover {
+  opacity: 1;
+}
+.tb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 4px;
+  flex: none;
+}
 .mc-amount {
   font-size: 12px;
   font-weight: 700;

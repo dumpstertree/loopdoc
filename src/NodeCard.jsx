@@ -8,6 +8,7 @@ import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid } from '.
 
 export const NODE_W_FLOW = 216
 export const NODE_W_MC = 184
+const EMPTY_CALL = {} // stable empty while a call hasn't fired yet this sim
 export const PORT_Y = 16
 
 const portKey = (nodeId, portId, dir) => `${nodeId}:${portId}:${dir}`
@@ -33,7 +34,7 @@ function ExitRow({ node, port, onPortDown }) {
 
 // system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
 // pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
-function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimOut, onDataOut }) {
+function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut, onDataOut }) {
   const calls = node.calls || []
   const systems = assets.filter((a) => a.kind === 'system')
   const patch = (next) => onPatch({ calls: next })
@@ -102,7 +103,6 @@ function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimO
                     <span>
                       ⇣ {v.name || '?'}:<b>{v.type || '?'}</b>
                     </span>
-                    {simValues && <span className="dval">{simValues[`${i}:${v.id}`] ?? '∅'}</span>}
                   </div>
                 ))}
                 {(fn.outputs || []).map((v) => (
@@ -110,22 +110,23 @@ function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimO
                     <span>
                       ⇡ {v.name || '?'}:<b>{v.type || '?'}</b>
                     </span>
-                    {onSimOut ? (
+                    {simCall !== undefined ? (
+                      // simulating — this black box's answer, editable so the machine can be stepped
                       (types || []).some((t) => t.name.toLowerCase() === String(v.type || '').toLowerCase()) ? (
-                        <StructInputs v={v} node={node} types={types} onSimOut={onSimOut} />
+                        <StructInputs v={v} simCall={simCall} types={types} onSimOut={onSimOut} />
                       ) : String(v.type || '').includes('[') &&
                         (types || []).some(
                           (t) =>
                             t.name.toLowerCase() === String(v.type).replace(/\[\s*\]$/, '').trim().toLowerCase(),
                         ) ? (
-                        <StructArrayInputs v={v} node={node} types={types} onSimOut={onSimOut} />
+                        <StructArrayInputs v={v} simCall={simCall} types={types} onSimOut={onSimOut} />
                       ) : String(v.type || '').includes('[') ? (
                         <input
                           className="inp"
                           style={{ width: 82 }}
                           placeholder="a, b, c…"
-                          title="list values, comma separated — this is the array the sim publishes"
-                          value={Array.isArray(node.out?.[v.id]) ? node.out[v.id].join(', ') : ''}
+                          title="answer published while simulating — list values, comma separated"
+                          value={Array.isArray(simCall[v.id]) ? simCall[v.id].join(', ') : ''}
                           onPointerDown={(e) => e.stopPropagation()}
                           onChange={(e) =>
                             onSimOut(
@@ -142,15 +143,13 @@ function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimO
                           className="inp"
                           style={{ width: 44 }}
                           type="number"
-                          title="value returned while simulating"
-                          value={node.out?.[v.id] ?? 0}
+                          title="answer published while simulating"
+                          value={simCall[v.id] ?? 0}
                           onPointerDown={(e) => e.stopPropagation()}
                           onChange={(e) => onSimOut(v.id, Number(e.target.value) || 0)}
                         />
                       )
-                    ) : (
-                      simValues && <span className="dval">{simValues[`out:${i}:${v.id}`] ?? '⋯'}</span>
-                    )}
+                    ) : null}
                     <span
                       className="port-data out"
                       data-port={portKey(node.id, v.id, 'out')}
@@ -178,9 +177,9 @@ function CallsEditor({ node, assets, types, multiple, simValues, onPatch, onSimO
   )
 }
 
-function StructInputs({ v, node, types, onSimOut }) {
+function StructInputs({ v, simCall, types, onSimOut }) {
   const tdef = (types || []).find((t) => t.name === v.type)
-  const val = (node.out || {})[v.id] || {}
+  const val = (simCall || {})[v.id] || {}
   const setField = (fname, raw) =>
     onSimOut(v.id, { ...val, [fname]: raw !== '' && !isNaN(raw) ? Number(raw) : raw })
   return (
@@ -202,10 +201,10 @@ function StructInputs({ v, node, types, onSimOut }) {
   )
 }
 
-function StructArrayInputs({ v, node, types, onSimOut }) {
+function StructArrayInputs({ v, simCall, types, onSimOut }) {
   const base = String(v.type || '').replace(/\[\s*\]$/, '').trim()
   const tdef = (types || []).find((t) => t.name.toLowerCase() === base.toLowerCase())
-  const list = Array.isArray((node.out || {})[v.id]) ? node.out[v.id] : []
+  const list = Array.isArray((simCall || {})[v.id]) ? simCall[v.id] : []
   const set = (next) => onSimOut(v.id, next)
   const blank = () => Object.fromEntries((tdef.fields || []).map((f) => [f.name || 'field', 0]))
   return (
@@ -336,6 +335,8 @@ export default function NodeCard({
   onDataPortDown,
   onHeaderDown,
   onCardClick,
+  onResizeDown, // drag the corner of a text cell
+  onSimCall, // set a live sys-call return value during sim
 }) {
   const meta = kindMeta(node)
   const mode = graph.mode
@@ -343,7 +344,9 @@ export default function NodeCard({
   const ports = (meta.ports && meta.ports(node)) || []
   const flowOuts = ports.filter((p) => p.dir === 'out')
   const hasIn = meta.mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
-  const W = isMachineKind ? NODE_W_MC : NODE_W_FLOW
+  const isText = node.kind === 'text'
+  const W = isText ? node.w || NODE_W_MC : isMachineKind ? NODE_W_MC : NODE_W_FLOW
+  const H = isText ? node.h || undefined : undefined
 
   // machine live values
   let amount
@@ -371,7 +374,7 @@ export default function NodeCard({
         sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''
       }`}
       data-node-id={node.id}
-      style={{ left: node.x, top: node.y, width: W }}
+      style={{ left: node.x, top: node.y, width: W, height: H }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
       onClick={() => onCardClick && onCardClick(node.id)}
     >
@@ -454,7 +457,8 @@ export default function NodeCard({
             multiple={false}
             onDataOut={onDataPortDown}
             onPatch={onPatch}
-            onSimOut={(vid, val) => onPatch({ out: { ...(node.out || {}), [vid]: val } })}
+            simCall={sim ? ((sim.mem || {}).call || {})[node.id] || EMPTY_CALL : undefined}
+            onSimOut={onSimCall}
           />
         )}
         {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect') &&
@@ -797,6 +801,17 @@ export default function NodeCard({
             ))
           : flowOuts.map((p) => <ExitRow key={p.id} node={node} port={p} onPortDown={onPortDown} />)}
       </div>
+      {isText && !sim && onResizeDown && (
+        <span
+          className="nd-resize"
+          title="drag to size the note — cover as many cells as it describes"
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            onResizeDown(e, node.id)
+          }}
+        />
+      )}
     </div>
   )
 }

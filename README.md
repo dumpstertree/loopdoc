@@ -93,14 +93,21 @@ types.
 Define a ⚙️ **system** asset and give it an API: function names with typed
 ⇣ inputs and ⇡ outputs. EVENT nodes and SYS CALL nodes pick a system + fn
 and grow typed port squares. Drag ⇡ → ⇣ to wire data; mismatches are refused
-with a warning. In machines, pools feed `int` into fn inputs; sys calls log
-their exchanged values into the sim log.
+with a warning. In machines, pools feed `int` into fn inputs. A sys call is a
+black box: while **simulating**, its ⇡ rows become editable so you type the
+answer the black box returns (a blocking call stays open until you click it);
+typed answers persist across rounds and show as `(your value)` in the sim log.
 
 ## Interactions
 
 - dbl-click canvas → drop a STEP · drag ◆ out-port onto a node → flow link
 - click link → select (Del removes) · dbl-click link → add anchor, drag it
+- **box-select**: drag on empty canvas (both canvases) · `Shift`-click or
+  box-add to grow a selection · drag one selected node to move the whole group
 - `Ctrl+C/X/V` copy/cut/paste (nested graphs & wires included) · `Ctrl+A`
+- machines mirror all of the above: box-select, group-drag, `Ctrl+C/X/V`,
+  dbl-click a wire to drop **anchors** that steer its route (Del removes)
+- **TEXT** cells resize — drag the corner grip to cover a region of cells
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
 - **Ctrl+S** save / open `.json` (File System Access API; autosaves to
