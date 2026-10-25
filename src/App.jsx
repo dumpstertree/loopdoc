@@ -5,8 +5,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import GraphCanvas from './GraphCanvas.jsx'
 import MachineCanvas from './MachineCanvas.jsx'
 import AssetsPanel from './AssetsPanel.jsx'
+import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs } from './model.js'
+import { runDRC } from './drc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
 
@@ -52,6 +54,8 @@ export default function App() {
   const [path, setPath] = useState([]) // breadcrumb: node ids from design down
   const [showAssets, setShowAssets] = useState(true)
   const [showTraverse, setShowTraverse] = useState(false)
+  const [showDRC, setShowDRC] = useState(false)
+  const [drcScope, setDrcScope] = useState('doc') // 'doc' | 'graph'
   const handleRef = useRef(null)
   const docRef = useRef(doc)
   docRef.current = doc
@@ -197,6 +201,11 @@ export default function App() {
     return c
   })()
 
+  // design rule check — recomputed live while the panel is open
+  const drc = useMemo(() => (showDRC ? runDRC(doc, drcScope === 'graph' ? path : null) : []), [doc, showDRC, drcScope, path])
+  const drcErr = drc.filter((f) => f.sev === 'error').length
+  const drcWarn = drc.filter((f) => f.sev === 'warn').length
+
   return (
     <div className="app">
       <header className="topbar">
@@ -235,6 +244,20 @@ export default function App() {
           </button>
         </div>
         <div className="topbar-block">
+          <button
+            className={`btn ${showDRC ? 'btn-hi' : ''}`}
+            onClick={() => setShowDRC(!showDRC)}
+            title="design rule check — scans the open graph or the whole doc"
+          >
+            ⚑ check
+            {showDRC && drc.length > 0 && (
+              <span className="drc-badge">
+                {drcErr ? <b className="drc-err">✕{drcErr}</b> : null}
+                {drcWarn ? <b className="drc-warn">⚠{drcWarn}</b> : null}
+              </span>
+            )}
+            {showDRC && drc.length === 0 && <span className="drc-badge drc-clean-badge">✓</span>}
+          </button>
           <button className={`btn ${showTraverse ? 'btn-hi' : ''}`} onClick={() => setShowTraverse(!showTraverse)}>
             ▶ traverse
           </button>
@@ -293,6 +316,18 @@ export default function App() {
           )}
         </div>
 
+        {tab === 'design' && showDRC && (
+          <DRCPanel
+            findings={drc}
+            scope={drcScope}
+            onScope={setDrcScope}
+            onJump={(p) => {
+              setTab('design')
+              setPath(p)
+            }}
+            onClose={() => setShowDRC(false)}
+          />
+        )}
         {tab === 'design' && showAssets && (
           <AssetsPanel
             doc={doc}

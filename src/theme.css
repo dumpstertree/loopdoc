@@ -729,6 +729,121 @@ svg.edges .edge {
   white-space: pre-wrap;
 }
 
+/* ---- design rule check panel ------------------------------------------------- */
+.drc-panel {
+  width: 340px;
+  flex: none;
+  background: var(--bg-2);
+  border-left: 1px solid var(--line-hi);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.drc-controls {
+  display: flex;
+  gap: 4px;
+  padding: 5px 10px 0;
+  flex: none;
+}
+.drc-controls .tb-btn {
+  padding: 2px 8px;
+  font-size: 10px;
+}
+.tb-btn-on {
+  border-color: var(--cyan) !important;
+  color: var(--cyan);
+}
+.drc-scope {
+  display: flex;
+  gap: 4px;
+  border: none !important;
+  background: none !important;
+  padding: 0 !important;
+}
+.drc-list {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.drc-graph {
+  color: var(--clay, var(--dim));
+  font-size: 10px;
+  letter-spacing: 1px;
+  margin: 8px 0 2px;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drc-row {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  padding: 3px 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: inherit;
+}
+.drc-row:hover {
+  border-color: var(--line-hi);
+  background: var(--bg-3, var(--bg));
+}
+.drc-sev {
+  flex: none;
+  font-weight: 700;
+}
+.drc-err .drc-sev {
+  color: var(--urgent);
+}
+.drc-warn .drc-sev {
+  color: var(--amber);
+}
+.drc-info .drc-sev {
+  color: var(--cyan);
+}
+.drc-err b {
+  color: var(--urgent);
+}
+.drc-warn b {
+  color: var(--amber);
+}
+.drc-info b {
+  color: var(--mint);
+}
+.drc-text {
+  min-width: 0;
+  word-break: break-word;
+}
+.drc-clean {
+  color: var(--mint);
+  font-size: 12px;
+  padding: 10px 4px;
+}
+.drc-badge {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 7px;
+  font-size: 10px;
+}
+.drc-badge .drc-err {
+  color: var(--urgent);
+}
+.drc-badge .drc-warn {
+  color: var(--amber);
+}
+.drc-clean-badge {
+  color: var(--mint);
+}
+
 /* ---- assets panel (docked) ------------------------------------------------------ */
 .assets-panel {
   width: 320px;

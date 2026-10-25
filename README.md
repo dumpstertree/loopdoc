@@ -110,6 +110,11 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 - **TEXT** cells resize — drag the corner grip to cover a region of cells
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
+- **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
+  graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
+  loop body, no entry), last-iteration item reads on end chains, drain vs
+  reader races, unreachable exits, dangling data wires, deleted-type drift;
+  ✕ errors · ⚠ warnings · ℹ info, click a finding to jump to its graph
 - **Ctrl+S** save / open `.json` (File System Access API; autosaves to
   localStorage meanwhile)
 
@@ -117,6 +122,8 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 
 ```
 src/model.js         schema, kind registry, factories, graph ops — single source of truth
+src/drc.js           design rule check — pure static analysis over graphs/doc
+src/DRCPanel.jsx     docked live DRC results with scope + severity filters
 src/NodeCard.jsx     the node renderer shared by both canvases
 src/GraphCanvas.jsx  flow canvas: drag/connect/select/paste/data wires
 src/MachineCanvas.jsx machine canvas: full-screen editor + chain simulation
