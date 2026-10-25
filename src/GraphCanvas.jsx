@@ -3,7 +3,7 @@
 // reuses the same vocabulary and the bezier helpers below.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
-import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType } from './model.js'
+import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto } from './model.js'
 
 export const bezier = (sx, sy, tx, ty) => {
   const dx = Math.max(40, Math.abs(tx - sx) / 2)
@@ -119,7 +119,12 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     const p = surfacePoint(e.clientX, e.clientY)
     const n = graphRef.current.nodes.find((x) => x.id === id)
     if (!n) return
-    const group = selectionRef.current.length > 1 && selectionRef.current.includes(id) ? [...selectionRef.current] : null
+    let group = selectionRef.current.length > 1 && selectionRef.current.includes(id) ? [...selectionRef.current] : null
+    // dragging a TEXT frame carries everything grouped inside it
+    if (n.kind === 'text') {
+      const kin = [...groupKin(graphRef.current, id)]
+      if (kin.length > 1) group = group ? [...new Set([...group, ...kin])] : kin
+    }
     const starts = {}
     if (group) graphRef.current.nodes.forEach((x) => (starts[x.id] = { x: x.x, y: x.y }))
     setDrag({
@@ -137,6 +142,21 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     const p = surfacePoint(e.clientX, e.clientY)
     setDrag({ kind: 'flow', from: id, port: portId, x: p.x, y: p.y })
   }
+  // TEXT card corner grip
+  const onResizeDown = (e, id) => {
+    const n = graphRef.current.nodes.find((x) => x.id === id)
+    if (!n) return
+    const p = surfacePoint(e.clientX, e.clientY)
+    const el = e.target.closest('[data-node-id]')
+    setDrag({
+      kind: 'resize',
+      id,
+      sx: p.x - originRef.current.x,
+      sy: p.y - originRef.current.y,
+      sw: n.w || (el ? el.offsetWidth : 184),
+      sh: n.h || (el ? el.offsetHeight : 60),
+    })
+  }
   // data ports use the same attribute — the card marks ⇡ ones with onPointerDown
   const onDataPortDown = (e, id, portId) => {
     const p = surfacePoint(e.clientX, e.clientY)
@@ -147,7 +167,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     if (!drag) return
     const onMove = (e) => {
       const p0 = surfacePoint(e.clientX, e.clientY)
-      const p = ['node', 'flow', 'data', 'anchor'].includes(drag.kind) ? growCheck(p0) : p0
+      const p = ['node', 'flow', 'data', 'anchor', 'resize'].includes(drag.kind) ? growCheck(p0) : p0
       if (drag.kind === 'node') {
         const ps = { x: p.x - originRef.current.x, y: p.y - originRef.current.y }
         mutate((g) => ({
@@ -159,6 +179,16 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
                 : n
             return n.id === drag.id ? { ...n, x: Math.round(ps.x - drag.dx), y: Math.round(ps.y - drag.dy) } : n
           }),
+        }))
+      } else if (drag.kind === 'resize') {
+        const ps = { x: p.x - originRef.current.x, y: p.y - originRef.current.y }
+        mutate((g) => ({
+          ...g,
+          nodes: g.nodes.map((n) =>
+            n.id === drag.id
+              ? { ...n, w: Math.max(150, Math.round(drag.sw + ps.x - drag.sx)), h: Math.max(48, Math.round(drag.sh + ps.y - drag.sy)) }
+              : n,
+          ),
         }))
       } else if (drag.kind === 'flow' || drag.kind === 'data') {
         setDrag((d) => ({ ...d, x: p.x, y: p.y }))
@@ -210,6 +240,10 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
             .map((el) => el.getAttribute('data-node-id'))
           setSelection(drag.shift ? [...new Set([...selectionRef.current, ...hit])] : hit)
         }
+      } else if (drag.kind === 'node') {
+        // dropped — adopt/unadopt the moved parts against TEXT frames
+        const moved = drag.group || [drag.id]
+        mutate((g) => ({ ...g, nodes: adoptInto(g, moved) }))
       }
       setDrag(null)
     }
@@ -482,7 +516,10 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
               )}
             </svg>
             <div style={{ transform: `translate(${origin.x}px, ${origin.y}px)` }}>
-              {graph.nodes.map((n) => (
+              {/* TEXT frames render first so they sit behind their grouped parts */}
+              {[...graph.nodes]
+                .sort((a, b) => (a.kind === 'text' ? 0 : 1) - (b.kind === 'text' ? 0 : 1))
+                .map((n) => (
                 <NodeCard
                   key={n.id}
                   node={n}
@@ -499,6 +536,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
                   onPortDown={onPortDown}
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
+                  onResizeDown={onResizeDown}
                 />
               ))}
             </div>

@@ -342,10 +342,10 @@ export const KINDS = {
     ports: flowIO(),
   },
   text: {
-    mode: 'machine',
+    mode: 'both',
     label: 'TEXT',
     cls: 'mc-text',
-    hint: 'annotation — no ports, no sim effect · drag its corner grip to size it over as many cells as it describes',
+    hint: 'annotation + group frame — drop other parts inside it and they move with the frame · drag its corner grip to size it over everything it labels',
     ports: () => [],
   },
   exit: {
@@ -363,7 +363,65 @@ function flowIO() {
   ]
 }
 
-export const kindsFor = (mode) => Object.keys(KINDS).filter((k) => KINDS[k].mode === mode)
+export const kindsFor = (mode) =>
+  Object.keys(KINDS).filter((k) => KINDS[k].mode === mode || KINDS[k].mode === 'both')
+
+// ---- text-frame grouping ---------------------------------------------------------
+// A TEXT node is a group frame: parts dropped so their anchor lands inside it are
+// adopted (n.parent = frame id), and dragging the frame carries its children — and
+// their children — along. Adoption is sticky: a part keeps its current frame as
+// long as it stays inside it, so overlapping frames never steal members.
+export function textFrame(n) {
+  return { x: n.x, y: n.y, w: n.w || 184, h: n.h || 88 }
+}
+const inFrame = (f, n) => n.x >= f.x && n.x <= f.x + f.w && n.y >= f.y && n.y <= f.y + f.h
+
+// the node plus every descendant through parent links
+export function groupKin(g, id) {
+  const out = new Set([id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of g.nodes || [])
+      if (n.parent && out.has(n.parent) && !out.has(n.id)) {
+        out.add(n.id)
+        grew = true
+      }
+  }
+  return out
+}
+
+// re-home each moved node to the smallest text frame holding its anchor — never
+// one of its own descendants (cycle guard). Returns a fresh nodes array, or the
+// same one when nothing changed
+export function adoptInto(g, ids) {
+  const frames = (g.nodes || []).filter((n) => n.kind === 'text')
+  if (!frames.length) return g.nodes
+  let changed = false
+  const nodes = (g.nodes || []).map((n) => {
+    if (!ids.includes(n.id)) return n
+    const cur = n.parent ? frames.find((t) => t.id === n.parent) : null
+    if (cur && cur.id !== n.id && inFrame(textFrame(cur), n)) return n // sticky — stays put
+    const mine = groupKin(g, n.id)
+    let best = null
+    let bestArea = Infinity
+    for (const t of frames) {
+      if (t.id === n.id || mine.has(t.id)) continue
+      const f = textFrame(t)
+      if (!inFrame(f, n)) continue
+      const area = f.w * f.h
+      if (area < bestArea) {
+        best = t
+        bestArea = area
+      }
+    }
+    const np = best ? best.id : undefined
+    if ((n.parent || undefined) === np) return n
+    changed = true
+    return { ...n, parent: np }
+  })
+  return changed ? nodes : g.nodes
+}
 export const kindMeta = (node) => KINDS[node.kind] || {}
 
 // Data ports of a node: { in: [{id,type,name}], out: [...] }
@@ -445,7 +503,9 @@ export function patchNode(graph, id, patch) {
 export function removeNode(graph, id) {
   return {
     ...graph,
-    nodes: graph.nodes.filter((n) => n.id !== id),
+    nodes: graph.nodes
+      .filter((n) => n.id !== id)
+      .map((n) => (n.parent === id ? { ...n, parent: undefined } : n)), // orphan the frame's children
     links: graph.links.filter((l) => l.from !== id && l.to !== id),
     entry: graph.entry === id ? null : graph.entry,
   }
@@ -533,6 +593,11 @@ export function reidGraph(graph, map = new Map()) {
   // ones, otherwise pastes keep duplicate ids (shared moves/deletes, ghost
   // React keys) while links point at ids that no longer exist
   graph.nodes = graph.nodes.map((n) => reidNode(n, map))
+  // group frames inside a paste keep their children — remap parent; when the
+  // frame itself was not part of the clipboard map.get misses and it clears
+  graph.nodes.forEach((n) => {
+    if (n.parent) n.parent = map.get(n.parent)
+  })
   graph.links = (graph.links || []).map((l) => ({
     ...l,
     id: uid('lk'),

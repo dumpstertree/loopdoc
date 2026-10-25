@@ -634,7 +634,7 @@ svg.edges .edge {
 .mc-ifb { --kc: var(--amber); }
 .port-out-mc.pt-true { background: var(--lime); border-color: var(--lime); }
 .port-out-mc.pt-false { background: var(--urgent); border-color: var(--urgent); }
-.mc-text { border-style: dashed; background: transparent; }
+.mc-text { border-style: dashed; background: color-mix(in srgb, var(--clay) 6%, transparent); }
 .nd-resize {
   position: absolute;
   right: 1px;

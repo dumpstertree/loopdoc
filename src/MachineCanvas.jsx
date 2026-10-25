@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -548,7 +548,13 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
   const addNode = (kind) =>
     mutate((g) => ({ ...g, nodes: [...g.nodes, newNode(kind, 140 + Math.random() * 180, 100 + Math.random() * 140)] }))
   const delNode = (id) =>
-    mutate((g) => ({ ...g, nodes: g.nodes.filter((n) => n.id !== id), links: g.links.filter((l) => l.from !== id && l.to !== id) }))
+    mutate((g) => ({
+      ...g,
+      nodes: g.nodes
+        .filter((n) => n.id !== id)
+        .map((n) => (n.parent === id ? { ...n, parent: undefined } : n)), // free the frame's children
+      links: g.links.filter((l) => l.from !== id && l.to !== id),
+    }))
 
   const onHeaderDown = (e, id) => {
     if (e.button !== 0) return
@@ -559,7 +565,12 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     // clicking one of many selected parts drags the whole group; a plain click
     // outside a selection collapses it to the clicked node
     if (!(e.shiftKey || e.ctrlKey || e.metaKey) && !selectionRef.current.includes(id)) setSelection([id])
-    const group = selectionRef.current.length > 1 && selectionRef.current.includes(id) ? [...selectionRef.current] : null
+    let group = selectionRef.current.length > 1 && selectionRef.current.includes(id) ? [...selectionRef.current] : null
+    // dragging a TEXT frame carries everything grouped inside it
+    if (n.kind === 'text') {
+      const kin = [...groupKin(graphRef.current, id)]
+      if (kin.length > 1) group = group ? [...new Set([...group, ...kin])] : kin
+    }
     const starts = {}
     if (group) graphRef.current.nodes.forEach((x) => (starts[x.id] = { x: x.x, y: x.y }))
     setDrag({ kind: 'node', id, group, starts, dx: p.x - n.x, dy: p.y - n.y, sx: p.x, sy: p.y })
@@ -777,6 +788,10 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
             .map((el) => el.getAttribute('data-node-id'))
           setSelection(drag.shift ? [...new Set([...selectionRef.current, ...hit])] : hit)
         }
+      } else if (drag.kind === 'node') {
+        // dropped — adopt/unadopt the moved parts against TEXT frames
+        const moved = drag.group || [drag.id]
+        mutate((g) => ({ ...g, nodes: adoptInto(g, moved) }))
       }
       setDrag(null)
     }
@@ -1117,7 +1132,10 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                   />
                 )}
               </svg>
-              {graph.nodes.map((n) => (
+              {/* TEXT frames render first so they sit behind their grouped parts */}
+              {[...graph.nodes]
+                .sort((a, b) => (a.kind === 'text' ? 0 : 1) - (b.kind === 'text' ? 0 : 1))
+                .map((n) => (
                 <NodeCard
                   key={n.id}
                   node={n}

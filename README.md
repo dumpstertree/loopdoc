@@ -107,7 +107,10 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 - `Ctrl+C/X/V` copy/cut/paste (nested graphs & wires included) · `Ctrl+A`
 - machines mirror all of the above: box-select, group-drag, `Ctrl+C/X/V`,
   dbl-click a wire to drop **anchors** that steer its route (Del removes)
-- **TEXT** cells resize — drag the corner grip to cover a region of cells
+- **TEXT** frames (flow *and* machine canvases) resize via the corner grip and
+  work as **group containers**: drop parts inside one and they parent to it —
+  dragging the frame carries everything grouped inside (nested frames too;
+  copy/paste keeps groups, deleting a frame frees its children)
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open

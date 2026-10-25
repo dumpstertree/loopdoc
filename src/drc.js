@@ -169,7 +169,7 @@ function scanGraph(g, assets, types, add) {
   for (const x of exits)
     if (!allReach.has(x.id) && linked(x.id)) add('warn', label(x), `exit "${x.name || '?'}" is unreachable — no flow path from any entry leads here`)
 
-  for (const n of nodes) if (n.kind !== 'text' && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')
+  for (const n of nodes) if (n.kind !== 'text' && !n.parent && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')
 }
 
 // whole doc ---------------------------------------------------------------------
