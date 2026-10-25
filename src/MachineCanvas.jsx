@@ -294,10 +294,24 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     }
 
     if (n.kind === 'ifb') {
-      const da = dataValue(nodes, links, a, mem, n.id, '__a__')
-      const db = dataValue(nodes, links, a, mem, n.id, '__b__')
+      const side = (port, custom) => {
+        const d = dataValue(nodes, links, a, mem, n.id, port)
+        if (d) return d
+        if (custom === undefined || custom === null || custom === '') return null
+        const v =
+          custom === true || custom === false
+            ? custom
+            : custom === 'true'
+              ? true
+              : custom === 'false'
+                ? false
+                : custom
+        return { val: v, from: 'custom' }
+      }
+      const da = side('__a__', n.aVal)
+      const db = side('__b__', n.bVal)
       if (!da || !db) {
-        log.push(`⚠ ${n.name || 'if'} — ⇣ ${da ? 'b' : 'a'} is unwired — chain dropped`)
+        log.push(`⚠ ${n.name || 'if'} — ⇣ ${da ? 'b' : 'a'} has no wire and no custom value — chain dropped`)
         kill(t)
         continue
       }
@@ -309,10 +323,19 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
         put(t) // producer hasn't fired — wait and retry
         continue
       }
-      const booly = typeof da.val === 'boolean' || typeof db.val === 'boolean'
-      const res = booly ? Boolean(da.val) === Boolean(db.val) : Number(da.val) === Number(db.val)
+      const num = (v) => (typeof v === 'boolean' ? (v ? 1 : 0) : Number(v))
+      const x = num(da.val)
+      const y = num(db.val)
+      const op = n.op || '=='
+      if (Number.isNaN(x) || Number.isNaN(y)) {
+        log.push(`⚠ ${n.name || 'if'} — cannot compare ${fmt(da.val)} ⟨${op}⟩ ${fmt(db.val)} (not int/bool) — chain dropped`)
+        kill(t)
+        continue
+      }
+      const res =
+        op === '<' ? x < y : op === '<=' ? x <= y : op === '>' ? x > y : op === '>=' ? x >= y : op === '!=' ? x !== y : x === y
       ;(mem.ifres = mem.ifres || {})[n.id] = res
-      log.push(`${res ? '✓' : '✗'} ${n.name || 'if'}: ${fmt(da.val)} ${res ? '=' : '≠'} ${fmt(db.val)} → ${res ? 'true' : 'false'}`)
+      log.push(`${res ? '✓' : '✗'} ${n.name || 'if'}: ${fmt(da.val)} ${op} ${fmt(db.val)} → ${res ? 'true' : 'false'}`)
       advance(t, n, res ? 'true' : 'false')
       continue
     }

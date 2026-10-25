@@ -457,24 +457,12 @@ export default function NodeCard({
             onSimOut={(vid, val) => onPatch({ out: { ...(node.out || {}), [vid]: val } })}
           />
         )}
-        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect' || node.kind === 'ifb') &&
+        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect') &&
           (() => {
             const dp = dataPorts(node, assets)
             const cur = sim?.mem?.cur?.[node.id]
             const live = (pid) =>
-              pid === '__bool__'
-                ? (sim?.mem?.ifres || {})[node.id] === null || (sim?.mem?.ifres || {})[node.id] === undefined
-                  ? null
-                  : String((sim?.mem?.ifres || {})[node.id])
-                : !cur
-                  ? null
-                  : pid === '__i__'
-                    ? cur.i
-                    : pid === '__item__'
-                      ? String(cur.item ?? '')
-                      : pid === '__idx__'
-                        ? cur.index
-                        : null
+              !cur ? null : pid === '__i__' ? cur.i : pid === '__item__' ? String(cur.item ?? '') : pid === '__idx__' ? cur.index : null
             return (
               <>
                 {dp.in.map((p) => (
@@ -491,6 +479,85 @@ export default function NodeCard({
                       ⇡ {p.name}:<b>{p.type}</b>
                     </span>
                     {sim && live(p.id) !== null && <span className="dval">{live(p.id)}</span>}
+                    <span
+                      className="port-data out"
+                      data-port={portKey(node.id, p.id, 'out')}
+                      title="drag to feed a ⇣ of the same type"
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        onDataPortDown(e, node.id, p.id)
+                      }}
+                    />
+                  </div>
+                ))}
+              </>
+            )
+          })()}
+        {node.kind === 'ifb' &&
+          (() => {
+            const dp = dataPorts(node, assets)
+            const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+            const res = sim ? (sim.mem?.ifres || {})[node.id] : undefined
+            return (
+              <>
+                {!sim && (
+                  <div className="nd-row" title="the comparison applied between ⇣ a and ⇣ b">
+                    <span className="nd-sub">⇣ a</span>
+                    <select
+                      className="inp"
+                      style={{ width: 56 }}
+                      value={node.op || '=='}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) => onPatch({ op: e.target.value })}
+                    >
+                      {['<', '<=', '==', '!=', '>=', '>'].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="nd-sub">⇣ b</span>
+                  </div>
+                )}
+                {dp.in.map((p) => {
+                  const key = p.id === '__a__' ? 'aVal' : 'bVal'
+                  return (
+                    <div
+                      className="dvar"
+                      key={p.id}
+                      title={
+                        wired(p.id)
+                          ? `reads ${p.type} from the wire`
+                          : `no wire — this ${p.type === 'bool' ? 'true/false' : 'value'} is used instead`
+                      }
+                    >
+                      <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                      <span>
+                        ⇣ {p.name}:<b>{p.type}</b>
+                      </span>
+                      {!wired(p.id) && !sim && (
+                        <input
+                          className="inp"
+                          style={{ flex: 1 }}
+                          placeholder="custom value…"
+                          value={node[key] ?? ''}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onChange={(e) => onPatch({ [key]: e.target.value })}
+                        />
+                      )}
+                      {sim && !wired(p.id) && String(node[key] ?? '') !== '' && (
+                        <span className="dval">{String(node[key])}</span>
+                      )}
+                    </div>
+                  )
+                })}
+                {dp.out.map((p) => (
+                  <div className="dvar out" key={p.id} title="the verdict — other parts can read it">
+                    <span>
+                      ⇡ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {res !== undefined && res !== null && <span className="dval">{String(res)}</span>}
                     <span
                       className="port-data out"
                       data-port={portKey(node.id, p.id, 'out')}

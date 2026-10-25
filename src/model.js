@@ -238,7 +238,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'IF',
     cls: 'mc-ifb',
-    hint: 'a chain arrives and ⇣ a = ⇣ b is tested (int or bool) — chain leaves via true or false · ⇡ result:bool carries the verdict',
+    hint: 'compares ⇣ a ⟨sign⟩ ⇣ b — int or bool, unwired sides take a custom value — chain leaves via true or false · ⇡ result:bool carries the verdict',
     ports: () => [
       { id: 'in', dir: 'in' },
       { id: 'true', dir: 'out', label: 'true' },
