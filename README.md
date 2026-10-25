@@ -41,9 +41,10 @@ graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 (nested machine — opens full-screen like any nested graph; the machine's
 EXIT parts appear here as named output ports).
 
-machine canvas: `SOURCE` (chain entry) · `DRAIN` (chain end — removes its
-amount from upstream pools; set `n` on the card, or wire ⇣ `in:int` and the
-field hides) · `POOL` (its amount is ⇡
+machine canvas: `SOURCE` (chain entry) · `DRAIN` (removes its amount from
+upstream pools — and its `out` lets the chain continue **after** the subtraction,
+so an `IF` placed there reads drained values; set `n` on the card, or wire ⇣
+`in:int` and the field hides) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
 `CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
 `TRADER` · `DELAY` (holds the chain N steps) · `QUEUE` (releases at most

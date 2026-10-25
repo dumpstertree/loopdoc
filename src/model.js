@@ -195,8 +195,11 @@ export const KINDS = {
     mode: 'machine',
     label: 'DRAIN',
     cls: 'mc-drain',
-    hint: 'chain end — removes its amount from upstream pools · wire ⇣ in:int to dictate the amount',
-    ports: () => [{ id: 'in', dir: 'in', label: '' }],
+    hint: 'removes its amount from upstream pools — the chain may continue out, so what follows reads the drained value · wire ⇣ in:int to dictate the amount',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: '' },
+    ],
     data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
   },
   pool: {

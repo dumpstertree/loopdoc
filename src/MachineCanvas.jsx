@@ -182,7 +182,8 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     }
   }
   const advance = (t, n, port, arith = true) => {
-    if (arith) for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
+    // drains subtract with their own rules — never double-charge on pass-through
+    if (arith && n.kind !== 'drain') for (const e of insOf(n.id)) if (p(e.from)) a[e.from] = Math.max(0, (a[e.from] || 0) - (e.amount ?? 1))
     const outs = outsOf(n.id).filter((e) => (port ? e.fromPort === port : e.fromPort !== 'end'))
     for (const e of outs) if (p(e.to)) a[e.to] = (a[e.to] || 0) + (e.amount ?? 1)
     if (!outs.length) {
@@ -358,7 +359,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
           log.push(`🕳 ${n.name || 'drain'} ⟵ −${take} ${s.name || 'pool'} = ${a[e.from]}`)
         }
       }
-      kill(t) // the drain is an end of the chain
+      advance(t, n) // the chain continues out — what follows reads the drained value
       continue
     }
 
