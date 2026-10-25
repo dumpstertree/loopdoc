@@ -168,6 +168,16 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     const onMove = (e) => {
       const p0 = surfacePoint(e.clientX, e.clientY)
       const p = ['node', 'flow', 'data', 'anchor', 'resize'].includes(drag.kind) ? growCheck(p0) : p0
+      // drag toward the right/bottom edge to auto-scroll (growCheck already
+      // handles left/top by extending the origin; box excluded — scrolling
+      // would skew its rect)
+      const sc = scrollRef.current
+      if (sc && drag.kind !== 'box') {
+        const r = sc.getBoundingClientRect()
+        const near = 44
+        if (e.clientX > r.right - near) sc.scrollLeft += 20
+        if (e.clientY > r.bottom - near) sc.scrollTop += 20
+      }
       if (drag.kind === 'node') {
         const ps = { x: p.x - originRef.current.x, y: p.y - originRef.current.y }
         // grid snap: leader lands on the dot grid, group keeps relative offsets
@@ -298,11 +308,17 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     const minx = Math.min(...fresh.nodes.map((n) => n.x))
     const miny = Math.min(...fresh.nodes.map((n) => n.y))
     const pt = lastPointerRef.current || { x: 200, y: 120 }
-    const dx = pt.x - originRef.current.x - minx
-    const dy = pt.y - originRef.current.y - miny
+    // uniform snap-shift: the group's corner lands on the grid, members keep
+    // their offsets, and routed-wire anchors come along (they are absolute
+    // surface coords — left behind they render offset and "stick" in place)
+    const sx = snap(pt.x - originRef.current.x) - minx
+    const sy = snap(pt.y - originRef.current.y) - miny
     fresh.nodes.forEach((n) => {
-      n.x = snap(n.x + dx)
-      n.y = snap(n.y + dy)
+      n.x += sx
+      n.y += sy
+    })
+    fresh.links.forEach((l) => {
+      if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + sx, y: a.y + sy }))
     })
     mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
     setSelection(fresh.nodes.map((n) => n.id))
@@ -375,6 +391,10 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
 
   // ---- render --------------------------------------------------------------------------
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
+  // endless canvas: the surface keeps a generous runway beyond the farthest
+  // node so building toward the right/bottom edge just makes room, never clips
+  const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
+  const surfH = Math.max(size.h, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + origin.y + 600), 0))
   const selSet = new Set(selection)
   const flowEnd = (l) => {
     const key = `${l.to}:in:in`
@@ -414,12 +434,12 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
           <div
             ref={surfaceRef}
             className={`canvas-surface ${drag ? 'canvas-dragging' : ''}`}
-            style={{ width: size.w, height: size.h, backgroundPosition: `${origin.x}px ${origin.y}px` }}
+            style={{ width: surfW, height: surfH, backgroundPosition: `${origin.x}px ${origin.y}px` }}
             onPointerDown={onSurfaceDown}
             onDoubleClick={onDoubleClick}
             onPointerMove={(e) => (lastPointerRef.current = surfacePoint(e.clientX, e.clientY))}
           >
-            <svg className="edges" width={size.w} height={size.h}>
+            <svg className="edges" width={surfW} height={surfH}>
               <defs>
                 <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-flow" />

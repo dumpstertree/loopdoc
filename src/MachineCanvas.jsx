@@ -527,6 +527,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
+  const scrollRef = useRef(null) // the overflow container — auto-scrolled while dragging
   const graphRef = useRef(graph)
   graphRef.current = graph
   const onChangeRef = useRef(onChange)
@@ -629,11 +630,20 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
         n.x = Math.max(0, n.x + dox)
         n.y = Math.max(0, n.y + doy)
       })
-    } else
+      // anchors are absolute surface coords — carry them with the paste or
+      // routed wires render offset and refuse to follow the nodes
+      fresh.links.forEach((l) => {
+        if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + dox, y: a.y + doy }))
+      })
+    } else {
       fresh.nodes.forEach((n) => {
         n.x += 26
         n.y += 26
       })
+      fresh.links.forEach((l) => {
+        if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + 26, y: a.y + 26 }))
+      })
+    }
     mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
     setSelection(fresh.nodes.map((n) => n.id))
   }
@@ -707,6 +717,17 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     if (!drag) return
     const onMove = (e) => {
       const p = surfacePoint(e)
+      // drag toward a viewport edge to auto-scroll, so far reaches stay
+      // reachable (box-select excluded — scrolling would skew its rect)
+      const sc = scrollRef.current
+      if (sc && drag.kind !== 'box') {
+        const r = sc.getBoundingClientRect()
+        const near = 44
+        if (e.clientX > r.right - near) sc.scrollLeft += 20
+        else if (e.clientX < r.left + near) sc.scrollLeft -= 20
+        if (e.clientY > r.bottom - near) sc.scrollTop += 20
+        else if (e.clientY < r.top + near) sc.scrollTop -= 20
+      }
       if (drag.kind === 'node') {
         // grid snap: the dragged part lands on the dot grid; a group snaps via
         // its leader so members keep their relative offsets
@@ -969,6 +990,10 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     })
 
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
+  // endless canvas: the surface always keeps a generous runway beyond the
+  // farthest part, so building toward an edge just makes room, never clips
+  const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
+  const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
   const endOf = (l) => portXY[`${l.to}:${l.toPort}:in`] || (byId[l.to] ? { x: byId[l.to].x, y: byId[l.to].y + 16 } : null)
 
@@ -1003,9 +1028,9 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       </div>
       <div className="machine-view">
         <div className="canvas-wrap">
-          <div className="canvas-scroll">
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: 2600, height: 1800 }} onPointerDown={onSurfaceDown}>
-              <svg className="edges" width={2600} height={1800}>
+          <div className="canvas-scroll" ref={scrollRef}>
+            <div ref={surfaceRef} className="canvas-surface" style={{ width: surfW, height: surfH }} onPointerDown={onSurfaceDown}>
+              <svg className="edges" width={surfW} height={surfH}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-flow" />
