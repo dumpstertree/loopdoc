@@ -14,7 +14,7 @@ export const throughPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} $
 const GROW_STEP = 600
 const GROW_AT = 64
 
-export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, toolbarExtra }) {
+export default function GraphCanvas({ graph, assets, globals = [], onChange, onOpenGraph, toolbarExtra }) {
   const [selection, setSelection] = useState([])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
@@ -549,6 +549,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
                   node={n}
                   graph={graph}
                   assets={assets}
+                  globals={globals}
                   selected={selSet.has(n.id)}
                   isEntry={graph.entry === n.id}
                   sim={null}

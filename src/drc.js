@@ -19,7 +19,7 @@ const label = (n) =>
 const hasVal = (v) => v !== undefined && v !== null && String(v) !== ''
 
 // one graph in isolation -------------------------------------------------------
-function scanGraph(g, assets, types, add) {
+function scanGraph(g, assets, types, globals, add) {
   const nodes = g.nodes || []
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const data = (g.links || []).filter((l) => l.kind === 'data')
@@ -58,6 +58,13 @@ function scanGraph(g, assets, types, add) {
       add('error', label(byId[l.from]), `data wire from ⇡ ${l.fromPort} is dangling — ${label(byId[l.to])} no longer has that input`)
   }
   for (const n of nodes) {
+    if (n.kind === 'getg' || n.kind === 'setg') {
+      if (!n.gRef) add('error', label(n), 'no global variable selected — pick one on the card')
+      else if (globals.length && !globals.some((g) => g.id === n.gRef))
+        add('error', label(n), `global "${n.gName || '?'}" no longer exists — re-pick or remove (manage them in ⚙ GLOBALS)`)
+      if (n.kind === 'setg' && n.gRef && !dataTo(n.id, '__val__'))
+        add('warn', label(n), `⇣ ${n.gName || 'value'} unwired — the global is never actually set`)
+    }
     if (n.kind === 'inspect' && n.objType && n.objType !== 'any' && !isDeclared(n.objType))
       add('warn', label(n), `reads ${n.objType} — no longer a declared type`)
     if (n.kind === 'foreach' && n.itemType && !BASIC_TYPES.includes(n.itemType) && !isDeclared(n.itemType))
@@ -91,7 +98,7 @@ function scanGraph(g, assets, types, add) {
 
   // ---- machine rules -----------------------------------------------------------
   const entryNodes = nodes.filter(
-    (n) => n.kind !== 'drain' && n.kind !== 'add' && n.kind !== 'exit' && portsOf(n).length > 0 && !hasIn(n.id),
+    (n) => n.kind !== 'drain' && n.kind !== 'add' && n.kind !== 'setg' && n.kind !== 'exit' && portsOf(n).length > 0 && !hasIn(n.id),
   )
   if (nodes.length && !entryNodes.length && (g.links || []).length)
     add('error', '', 'nothing can run — every part has a flow input (closed cycle, no entry)')
@@ -180,6 +187,11 @@ function scanGraph(g, assets, types, add) {
 // whole doc ---------------------------------------------------------------------
 function scanDocTypes(doc, add) {
   const declared = new Set((doc.types || []).map((t) => (t.name || '').toLowerCase()).filter(Boolean))
+  for (const v of doc.vars || []) {
+    const ty = String(v.type || 'int')
+    if (!BASIC_TYPES.includes(ty) && !declared.has(ty.toLowerCase()))
+      add('error', `⚙ ${v.name || '(unnamed global)'}`, `type "${ty}" is no longer declared`)
+  }
   for (const a of doc.assets || [])
     for (const f of a.api || [])
       for (const v of [...(f.inputs || []), ...(f.outputs || [])]) {
@@ -199,7 +211,7 @@ export function runDRC(doc, scopePath = null) {
   const scoped = scopePath === null ? graphs : graphs.filter((x) => JSON.stringify(x.path) === JSON.stringify(scopePath))
   for (const { g, path, label: gname } of scoped) {
     const add = (sev, node, text) => findings.push({ sev, path, graph: gname, node, text })
-    scanGraph(g, doc.assets, doc.types || [], add)
+    scanGraph(g, doc.assets, doc.types || [], doc.vars || [], add)
   }
   if (scopePath === null) {
     const add = (sev, node, text) => findings.push({ sev, path: [], graph: 'document', node, text })

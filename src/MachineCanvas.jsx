@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap, globalValue } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -35,6 +35,7 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
     return { val: v === undefined ? null : v, from: `${src.name || 'inspect'}.${f?.name || '?'}` }
   }
   if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
+  if (src.kind === 'getg') return { val: (mem.g || {})[src.gRef] ?? null, from: `⚙ ${src.gName || 'global'}` }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
 }
@@ -164,7 +165,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   mem.tseq = mem.tseq || 0
   const toks = (mem.tokens = mem.tokens || [])
   for (const e of nodes)
-    if (e.kind !== 'drain' && e.kind !== 'add' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
+    if (e.kind !== 'drain' && e.kind !== 'add' && e.kind !== 'setg' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
       toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
   const qBudget = {}
@@ -384,6 +385,22 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       continue
     }
 
+    if (n.kind === 'setg') {
+      // write a global as the chain passes — unwired ⇣ leaves it untouched
+      if (!n.gRef) {
+        log.push(`⚠ ${n.name || 'SET'} — no global selected, chain continues`)
+        advance(t, n)
+        continue
+      }
+      const d = dataValue(nodes, links, a, mem, n.id, '__val__')
+      if (d && d.val !== null && d.val !== undefined) {
+        mem.g[n.gRef] = d.val
+        log.push(`⚙ set ⚙ ${n.gName || 'global'} = ${fmt(d.val)} (from ${d.from})`)
+      } else log.push(`⚠ ${n.name || 'SET'} — ⇣ ${n.gName || 'value'} unwired, ⚙ ${n.gName || 'global'} unchanged`)
+      advance(t, n)
+      continue
+    }
+
     if (n.kind === 'for' || n.kind === 'foreach') {
       const loops = (mem.loops = mem.loops || {})
       const st = loops[n.id]
@@ -528,7 +545,7 @@ const routePath = (a, b, anchors) => {
   return { d, mid: { x: m.x, y: m.y } }
 }
 
-export default function MachineCanvas({ graph, assets, types, onChange }) {
+export default function MachineCanvas({ graph, assets, types, globals = [], onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const [sel, setSel] = useState(null) // selected link id
@@ -945,6 +962,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
       (n) =>
         n.kind !== 'drain' &&
         n.kind !== 'add' &&
+        n.kind !== 'setg' &&
         n.kind !== 'exit' &&
         ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 &&
         !flows.some((l) => l.to === n.id),
@@ -960,7 +978,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
   const startSim = () =>
     setSim({
       amounts: Object.fromEntries(graphRef.current.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])),
-      mem: { tokens: [] },
+      mem: { tokens: [], g: Object.fromEntries((globals || []).map((v) => [v.id, globalValue(v)])) },
       log: ['— chain simulation started —', ...diagnostics()],
       steps: 0,
     })
@@ -1191,6 +1209,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
                   graph={graph}
                   assets={assets}
                   types={types}
+                  globals={globals}
                   selected={selection.includes(n.id)}
                   isEntry={false}
                   sim={sim}

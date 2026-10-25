@@ -272,11 +272,12 @@ export default function App() {
           {tab === 'design' ? (
             <>
               {graph.mode === 'machine' ? (
-                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} onChange={updateGraph} />
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} onChange={updateGraph} />
               ) : (
                 <GraphCanvas
                   graph={graph}
                   assets={scopedAssets}
+                  globals={doc.vars || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
                   toolbarExtra={
@@ -332,6 +333,8 @@ export default function App() {
           <AssetsPanel
             doc={doc}
             types={doc.types || []}
+            globals={doc.vars || []}
+            onGlobals={(next) => commit({ ...docRef.current, vars: next })}
             onTypes={(next) => {
               const prev = docRef.current.types || []
               let d = { ...docRef.current, types: next }

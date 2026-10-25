@@ -45,6 +45,21 @@ export function newType(name = '') {
   return { id: uid('ty'), name, fields: [{ id: uid('f'), name: '', typeId: 'int' }] }
 }
 
+// document-wide global variable — a named, typed value with a default the
+// whole app shares; GLOBAL/SET parts read and write it inside machines
+export function newGlobal(name = '') {
+  return { id: uid('gv'), name, type: 'int', value: '' }
+}
+
+// coerce a global's stored default string into its typed runtime value
+export function globalValue(g) {
+  if (!g) return undefined
+  if (g.type === 'int') return Math.trunc(Number(g.value)) || 0
+  if (g.type === 'float') return Number(g.value) || 0
+  if (g.type === 'bool') return g.value === 'true' || g.value === '1'
+  return g.value ?? ''
+}
+
 // every pickable type name, base first then arrays
 export function typeNames(types) {
   const seen = []
@@ -69,9 +84,14 @@ export function renameTypeInDoc(doc, oldName, newName) {
     for (const f of a.api || [])
       for (const key of ['inputs', 'outputs'])
         for (const v of f[key] || []) v.type = fix(v.type)
+  for (const v of d.vars || []) v.type = fix(v.type)
   const walk = (g) => {
     for (const n of g.nodes) {
       if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
+      if (n.kind === 'getg' || n.kind === 'setg') {
+        n.gType = fix(n.gType || '')
+        if (n.gName === oldName) n.gName = newName
+      }
       if (n.graph) walk(n.graph)
     }
   }
@@ -212,6 +232,25 @@ export const KINDS = {
       { id: 'out', dir: 'out', label: '' },
     ],
     data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
+  },
+  getg: {
+    mode: 'both',
+    label: 'GLOBAL',
+    cls: 'mc-getg',
+    hint: 'reads a document-wide global — pick it here · ⇡ publishes its value (live during sim, the default while editing)',
+    ports: () => [],
+    data: (n) => ({ in: [], out: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }] }),
+  },
+  setg: {
+    mode: 'machine',
+    label: 'SET',
+    cls: 'mc-setg',
+    hint: 'as the chain passes, writes its ⇣ value into a global — every GLOBAL reader (any machine, any round) sees it · unwired ⇣ leaves the global untouched',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: '' },
+    ],
+    data: (n) => ({ in: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }], out: [] }),
   },
   pool: {
     mode: 'machine',
@@ -504,6 +543,7 @@ export function newDoc(name = 'Untitled Design') {
     notes: { business: '', mood: '' },
     assets: [],
     types: [],
+    vars: [],
   }
 }
 
@@ -653,6 +693,7 @@ export function parseDoc(text) {
   d.notes = { business: '', mood: '', ...(d.notes || {}) }
   d.assets = d.assets || []
   d.types = d.types || []
+  d.vars = d.vars || []
   walkGraphs(d.design, dedupeIds) // heal any doc corrupted by the old paste bug
   return d
 }

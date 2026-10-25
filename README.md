@@ -46,7 +46,8 @@ upstream pools — and its `out` lets the chain continue **after** the subtracti
 so an `IF` placed there reads drained values; set `n` on the card, or wire ⇣
 `in:int` and the field hides) · `ADD` (drain's mirror — adds its amount to
 upstream pools per pass, **signed**: `+1` for descend, `−1` for ascend; ⇣
-`in:int` dictates) · `POOL` (its amount is ⇡
+`in:int` dictates) · `GLOBAL` (reads a ⚙ doc-wide variable) · `SET` (writes
+one as the chain passes) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
 `CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
 `TRADER` · `DELAY` (holds the chain N steps) · `QUEUE` (releases at most
@@ -118,6 +119,10 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   are never moved, they snap the next time you touch them
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
+- **⚙ GLOBALS** (assets panel): document-wide named variables with defaults —
+  every machine sim starts from the default; **GLOBAL** parts (flow & machine)
+  read them as typed ⇡ data, **SET** parts (machine) write them as the chain
+  passes, so machines and rounds can share state (score, depth, game flags)
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
   loop body, no entry), last-iteration item reads on end chains, drain vs

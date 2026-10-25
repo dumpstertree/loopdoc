@@ -323,6 +323,7 @@ export default function NodeCard({
   graph, // the owning graph (needed for data port lookups / sub counts)
   assets, // registry visible here (plus local generated assets, __local: true)
   types, // declared doc data types (struct value editing)
+  globals = [], // document-wide global variables (GLOBAL/SET cards)
   selected,
   isEntry,
   sim, // machine sim state for display, or null
@@ -710,6 +711,81 @@ export default function NodeCard({
             <span>
               ⇣ in:<b>int</b>
             </span>
+          </div>
+        )}
+        {node.kind === 'getg' && (
+          <div className="nd-row">
+            <span className="nd-sub">global</span>
+            <select
+              className="inp"
+              style={{ flex: 1 }}
+              value={node.gRef || ''}
+              onChange={(e) => {
+                const g = (globals || []).find((x) => x.id === e.target.value)
+                onPatch(g ? { gRef: g.id, gName: g.name, gType: g.type } : { gRef: null, gName: '', gType: '' })
+              }}
+            >
+              <option value="">— pick a global —</option>
+              {(globals || []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name || '(unnamed)'} : {g.type}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {node.kind === 'getg' && (
+          <div className="dvar out" title="the global's value — readers wire here (default while editing, live during sim)">
+            <span>
+              ⇡ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
+            </span>
+            {node.gRef && (
+              <span className="dval">
+                {String(sim ? (sim.mem.g || {})[node.gRef] : (globals || []).find((g) => g.id === node.gRef)?.value ?? '')}
+              </span>
+            )}
+            {!sim && (
+              <span
+                className="port-data out"
+                data-port={portKey(node.id, '__val__', 'out')}
+                title="drag to feed a ⇣ of the same type"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  onDataPortDown(e, node.id, '__val__')
+                }}
+              />
+            )}
+          </div>
+        )}
+        {node.kind === 'setg' && (
+          <div className="nd-row">
+            <span className="nd-sub">global</span>
+            <select
+              className="inp"
+              style={{ flex: 1 }}
+              value={node.gRef || ''}
+              onChange={(e) => {
+                const g = (globals || []).find((x) => x.id === e.target.value)
+                onPatch(g ? { gRef: g.id, gName: g.name, gType: g.type } : { gRef: null, gName: '', gType: '' })
+              }}
+            >
+              <option value="">— pick a global —</option>
+              {(globals || []).map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name || '(unnamed)'} : {g.type}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {node.kind === 'setg' && (
+          <div className="dvar" title="wire the value to write — the chain carries the write the moment it passes">
+            <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
+            <span>
+              ⇣ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
+            </span>
+            {sim && node.gRef && <span className="dval">{String((sim.mem.g || {})[node.gRef])}</span>}
           </div>
         )}
         {isMachineKind && node.kind === 'pool' && (

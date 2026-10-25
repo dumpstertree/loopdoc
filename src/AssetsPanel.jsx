@@ -3,7 +3,7 @@
 // and for ⚙️ systems the API editor (functions with typed ⇣/⇡ variables)
 // inline in the card. No modals.
 import React, { useState } from 'react'
-import { ASSET_KINDS, assetIcon, newAsset, newFn, newVar, newType, typeNames, walkGraphs } from './model.js'
+import { ASSET_KINDS, assetIcon, newAsset, newFn, newVar, newType, newGlobal, typeNames, walkGraphs } from './model.js'
 
 function useCounts(doc) {
   const counts = {}
@@ -58,6 +58,53 @@ function TypeSelect({ value, onChange, types, title }) {
         </>
       )}
     </select>
+  )
+}
+
+// document-wide global variables: named, typed, with a default the app
+// starts from — GLOBAL parts read them anywhere, SET parts write them
+function GlobalsSection({ globals, onGlobals, types }) {
+  const set = (fn) => onGlobals(fn(globals))
+  const upd = (i, patch) => set((l) => l.map((v, j) => (j === i ? { ...v, ...patch } : v)))
+  return (
+    <div className="types-box">
+      <div className="io-label head">
+        ⚙ GLOBALS — app-wide values · {globals.length}
+        <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={() => set((l) => [...l, newGlobal('newVar')])}>
+          + global
+        </button>
+      </div>
+      {globals.map((v, i) => (
+        <div className="api-var" key={v.id}>
+          <input
+            className="inp"
+            style={{ flex: 1 }}
+            placeholder="name…"
+            value={v.name}
+            onChange={(e) => upd(i, { name: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <select className="inp" title="value type" value={v.type} onChange={(e) => upd(i, { type: e.target.value })}>
+            {typeNames(types).map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+          <input
+            className="inp"
+            style={{ width: 72 }}
+            placeholder="default…"
+            title="default value — every run starts here"
+            value={v.value}
+            onChange={(e) => upd(i, { value: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button className="icon-btn" title="delete global (GLOBAL/SET cards using it get flagged)" onClick={() => set((l) => l.filter((_, j) => j !== i))}>
+            ×
+          </button>
+        </div>
+      ))}
+      {globals.length === 0 && <div className="nd-sub" style={{ padding: '3px 0' }}>named values shared by every graph &amp; machine — read via GLOBAL parts, write via SET</div>}
+    </div>
   )
 }
 
@@ -188,7 +235,7 @@ function ApiEditor({ asset, onChange, types }) {
   )
 }
 
-export default function AssetsPanel({ doc, types, onTypes, onAssets, onRemove, onClose }) {
+export default function AssetsPanel({ doc, types, onTypes, globals = [], onGlobals, onAssets, onRemove, onClose }) {
   const assets = doc.assets || []
   const counts = useCounts(doc)
   const [open, setOpen] = useState(null) // asset id whose card is expanded
@@ -212,6 +259,7 @@ export default function AssetsPanel({ doc, types, onTypes, onAssets, onRemove, o
         </button>
       </div>
       <div className="assets-list">
+        <GlobalsSection globals={globals} onGlobals={onGlobals} types={types} />
         <TypesSection types={types || []} onTypes={onTypes} />
         <div className="io-label head">📦 ASSETS · {assets.length}</div>
         {assets.map((a) => (
