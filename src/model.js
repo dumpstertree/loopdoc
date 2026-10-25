@@ -513,13 +513,26 @@ export function reidNode(node, map) {
     map.set(`${node.id}:${old}`, e.id)
   })
   if (nn.gen) nn.gen = { ...nn.gen, id: uid('asset') }
-  if (nn.graph) reidGraph(nn.graph, map)
+  if (nn.graph) {
+    // MACHINE node: its parent-side ports ARE the nested exit nodes, so
+    // links wired to those ports (fromPort = exit node id) must follow the
+    // exit re-id — register `oldNode:oldExit → newExit` after reidding
+    const oldExits = (nn.graph.nodes || []).filter((x) => x.kind === 'exit').map((x) => x.id)
+    reidGraph(nn.graph, map)
+    for (const old of oldExits) {
+      const nx = map.get(old)
+      if (nx) map.set(`${node.id}:${old}`, nx)
+    }
+  }
   return nn
 }
 
 export function reidGraph(graph, map = new Map()) {
   graph.id = uid('g')
-  graph.nodes.forEach((n) => reidNode(n, map))
+  // reidNode returns a fresh deep copy — the new nodes must REPLACE the old
+  // ones, otherwise pastes keep duplicate ids (shared moves/deletes, ghost
+  // React keys) while links point at ids that no longer exist
+  graph.nodes = graph.nodes.map((n) => reidNode(n, map))
   graph.links = (graph.links || []).map((l) => ({
     ...l,
     id: uid('lk'),
