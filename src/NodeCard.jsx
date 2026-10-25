@@ -457,12 +457,24 @@ export default function NodeCard({
             onSimOut={(vid, val) => onPatch({ out: { ...(node.out || {}), [vid]: val } })}
           />
         )}
-        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect') &&
+        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect' || node.kind === 'ifb') &&
           (() => {
             const dp = dataPorts(node, assets)
             const cur = sim?.mem?.cur?.[node.id]
             const live = (pid) =>
-              !cur ? null : pid === '__i__' ? cur.i : pid === '__item__' ? String(cur.item ?? '') : pid === '__idx__' ? cur.index : null
+              pid === '__bool__'
+                ? (sim?.mem?.ifres || {})[node.id] === null || (sim?.mem?.ifres || {})[node.id] === undefined
+                  ? null
+                  : String((sim?.mem?.ifres || {})[node.id])
+                : !cur
+                  ? null
+                  : pid === '__i__'
+                    ? cur.i
+                    : pid === '__item__'
+                      ? String(cur.item ?? '')
+                      : pid === '__idx__'
+                        ? cur.index
+                        : null
             return (
               <>
                 {dp.in.map((p) => (
@@ -697,10 +709,16 @@ export default function NodeCard({
           ? flowOuts.map((p, i) => (
               <span
                 key={p.id}
-                className="port port-flow-out port-out-mc"
+                className={`port port-flow-out port-out-mc${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
                 style={i ? { top: 8 + i * 13 } : undefined}
                 data-port={portKey(node.id, p.id, 'out')}
-                title={p.id === 'end' ? 'loop completion pulse — drag to connect' : 'drag to connect'}
+                title={
+                  p.label
+                    ? `${p.label} — drag to connect`
+                    : p.id === 'end'
+                      ? 'loop completion pulse — drag to connect'
+                      : 'drag to connect'
+                }
                 onPointerDown={(e) => {
                   e.stopPropagation()
                   e.preventDefault()

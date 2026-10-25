@@ -619,6 +619,9 @@ svg.edges .edge {
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); }
 .mc-exit { --kc: var(--urgent); border-style: double; border-width: 3px; }
+.mc-ifb { --kc: var(--amber); }
+.port-out-mc.pt-true { background: var(--lime); border-color: var(--lime); }
+.port-out-mc.pt-false { background: var(--urgent); border-color: var(--urgent); }
 .mc-text { border-style: dashed; background: transparent; }
 .mc-amount {
   font-size: 12px;

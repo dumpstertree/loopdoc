@@ -234,6 +234,24 @@ export const KINDS = {
     hint: 'coin flip — half the chains that arrive drop here',
     ports: flowIO(),
   },
+  ifb: {
+    mode: 'machine',
+    label: 'IF',
+    cls: 'mc-ifb',
+    hint: 'a chain arrives and ⇣ a = ⇣ b is tested (int or bool) — chain leaves via true or false · ⇡ result:bool carries the verdict',
+    ports: () => [
+      { id: 'in', dir: 'in' },
+      { id: 'true', dir: 'out', label: 'true' },
+      { id: 'false', dir: 'out', label: 'false' },
+    ],
+    data: (n) => ({
+      in: [
+        { id: '__a__', type: n.cmpType || 'any', name: 'a' },
+        { id: '__b__', type: n.cmpType || 'any', name: 'b' },
+      ],
+      out: [{ id: '__bool__', type: 'bool', name: 'result' }],
+    }),
+  },
   trader: {
     mode: 'machine',
     label: 'TRADER',

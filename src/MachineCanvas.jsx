@@ -34,6 +34,7 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
     const v = obj && f ? obj[f.name || 'field'] : null
     return { val: v === undefined ? null : v, from: `${src.name || 'inspect'}.${f?.name || '?'}` }
   }
+  if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
 }
@@ -292,6 +293,30 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       continue
     }
 
+    if (n.kind === 'ifb') {
+      const da = dataValue(nodes, links, a, mem, n.id, '__a__')
+      const db = dataValue(nodes, links, a, mem, n.id, '__b__')
+      if (!da || !db) {
+        log.push(`⚠ ${n.name || 'if'} — ⇣ ${da ? 'b' : 'a'} is unwired — chain dropped`)
+        kill(t)
+        continue
+      }
+      if (da.val === null || db.val === null) {
+        if (!t.armed) {
+          t.armed = true
+          log.push(`⏳ ${n.name || 'if'} holding — operand "${da.val === null ? da.from : db.from}" has no value yet`)
+        }
+        put(t) // producer hasn't fired — wait and retry
+        continue
+      }
+      const booly = typeof da.val === 'boolean' || typeof db.val === 'boolean'
+      const res = booly ? Boolean(da.val) === Boolean(db.val) : Number(da.val) === Number(db.val)
+      ;(mem.ifres = mem.ifres || {})[n.id] = res
+      log.push(`${res ? '✓' : '✗'} ${n.name || 'if'}: ${fmt(da.val)} ${res ? '=' : '≠'} ${fmt(db.val)} → ${res ? 'true' : 'false'}`)
+      advance(t, n, res ? 'true' : 'false')
+      continue
+    }
+
     if (n.kind === 'drain') {
       // chain end — removes its amount from every upstream pool (fed ⇣ in:int dictates)
       const fedIn = links.some((l) => l.kind === 'data' && l.to === n.id && l.toPort === '__in__')
@@ -500,6 +525,16 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
     const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
     if (!ta || !tb) return warn('⚠ that data port no longer exists')
+    const toNode = graphRef.current.nodes.find((n) => n.id === to)
+    if (toNode?.kind === 'ifb' && (toPort === '__a__' || toPort === '__b__')) {
+      // if-operands: int or bool only, and both sides of one if compare like with like
+      if (ta !== 'int' && ta !== 'bool') return warn(`⚠ if-compares take int or bool — not ${ta}`)
+      const otherPort = toPort === '__a__' ? '__b__' : '__a__'
+      const other = graphRef.current.links.find((l) => l.kind === 'data' && l.to === to && l.toPort === otherPort)
+      const ot =
+        other && dataPortType(graphRef.current, assets, other.from, other.fromPort, 'out')
+      if (ot && ot !== ta) return warn(`⚠ if-compares both sides alike — ⇣ ${otherPort} is already ${ot}`)
+    }
     if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]'))))
       return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
     mutate((g) => ({
@@ -509,17 +544,17 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
         { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
       ],
       // foreach learns its item type from the array wired in;
-      // inspect learns its type and grows one ⇡ per field
-      nodes:
-        toPort === '__arr__'
-          ? g.nodes.map((n) => (n.id === to && n.kind === 'foreach' ? { ...n, itemType: ta.replace('[]', '') } : n))
-          : toPort === '__obj__'
-            ? g.nodes.map((n) => {
-                if (n.id !== to || n.kind !== 'inspect') return n
-                const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
-                return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
-              })
-            : g.nodes,
+      // inspect learns its type and grows one ⇡ per field; if learns its compare type
+      nodes: g.nodes.map((n) => {
+        if (n.id !== to) return n
+        if (toPort === '__arr__' && n.kind === 'foreach') return { ...n, itemType: ta.replace('[]', '') }
+        if (toPort === '__obj__' && n.kind === 'inspect') {
+          const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
+          return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
+        }
+        if ((toPort === '__a__' || toPort === '__b__') && n.kind === 'ifb') return { ...n, cmpType: ta }
+        return n
+      }),
     }))
   }
 
@@ -611,13 +646,22 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
           let nodes = g.nodes
           let links = g.links.filter((l) => l.id !== id)
           // unwiring obj resets inspect — its field ports disappear with it
-          const t =
+          let t =
             dead && dead.kind === 'data' && dead.toPort === '__obj__'
               ? g.nodes.find((n) => n.id === dead.to && n.kind === 'inspect')
               : null
           if (t) {
             nodes = nodes.map((n) => (n.id === t.id ? { ...n, objType: 'any', fields: [] } : n))
             links = links.filter((l) => !(l.kind === 'data' && l.from === t.id))
+          }
+          // unwiring an if-operand re-derives its compare type from whatever remains
+          if (dead && dead.kind === 'data' && (dead.toPort === '__a__' || dead.toPort === '__b__')) {
+            const ifn = g.nodes.find((n) => n.id === dead.to && n.kind === 'ifb')
+            if (ifn) {
+              const rest = links.find((l) => l.to === ifn.id && (l.toPort === '__a__' || l.toPort === '__b__'))
+              const ot = rest && dataPortType({ nodes, links }, assets, rest.from, rest.fromPort, 'out')
+              nodes = nodes.map((n) => (n.id === ifn.id ? { ...n, cmpType: ot && ot !== 'any' ? ot : null } : n))
+            }
           }
           onChangeRef.current({ ...g, nodes, links })
         } else {

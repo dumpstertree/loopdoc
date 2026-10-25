@@ -47,7 +47,9 @@ field hides) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
 `CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
 `TRADER` · `DELAY` (holds the chain N steps) · `QUEUE` (releases at most
-rate chains/step) ·
+rate chains/step) · `IF` (a chain arrives, ⇣ `a` and ⇣ `b` — `int` or `bool`,
+both sides alike — are compared for equality; chain leaves via **true** or
+**false**, and ⇡ `result:bool` republishes the verdict) ·
 `REGISTER` (absorbs chains, pulses every N) · `FOR` (⇣ `to:int` loads a
 count on trigger; one iteration per step once the previous body chain has
 ended, ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array,
