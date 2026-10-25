@@ -559,6 +559,18 @@ svg.edges .edge {
   right: -6px;
   top: 8px;
 }
+.port-tag {
+  position: absolute;
+  right: 13px;
+  top: -2px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
 /* chain tokens in flight */
 .nd-tok {
   box-shadow: 0 0 0 1px var(--cyan);

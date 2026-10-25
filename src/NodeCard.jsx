@@ -791,7 +791,9 @@ export default function NodeCard({
                   e.preventDefault()
                   onPortDown(e, node.id, p.id)
                 }}
-              />
+              >
+                {p.label && <span className="port-tag">{p.label}</span>}
+              </span>
             ))
           : flowOuts.map((p) => <ExitRow key={p.id} node={node} port={p} onPortDown={onPortDown} />)}
       </div>
