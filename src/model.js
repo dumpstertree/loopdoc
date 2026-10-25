@@ -563,6 +563,11 @@ export function removeAssetRefs(doc, assetId) {
   return next
 }
 
+// ---- grid ------------------------------------------------------------------------
+// snap pitch — keep in sync with the 26px dot grid in theme.css
+export const GRID = 26
+export const snap = (v) => Math.round(v / GRID) * GRID
+
 // ---- copy/paste re-id ------------------------------------------------------------
 export function reidNode(node, map) {
   const nn = JSON.parse(JSON.stringify(node))

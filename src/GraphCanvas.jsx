@@ -3,7 +3,7 @@
 // reuses the same vocabulary and the bezier helpers below.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
-import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto } from './model.js'
+import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto, snap } from './model.js'
 
 export const bezier = (sx, sy, tx, ty) => {
   const dx = Math.max(40, Math.abs(tx - sx) / 2)
@@ -52,7 +52,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     setSelection([])
   }
   const addNodeAt = (kind, x, y) => {
-    const n = newNode(kind, x, y)
+    const n = newNode(kind, snap(x), snap(y))
     mutate((g) => ({ ...g, nodes: [...g.nodes, n] }))
     setSelection([n.id])
     return n.id
@@ -170,14 +170,18 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
       const p = ['node', 'flow', 'data', 'anchor', 'resize'].includes(drag.kind) ? growCheck(p0) : p0
       if (drag.kind === 'node') {
         const ps = { x: p.x - originRef.current.x, y: p.y - originRef.current.y }
+        // grid snap: leader lands on the dot grid, group keeps relative offsets
+        const l = drag.starts && drag.starts[drag.id] ? drag.starts[drag.id] : { x: drag.sx, y: drag.sy }
+        const ddx = snap(l.x + ps.x - drag.sx) - l.x
+        const ddy = snap(l.y + ps.y - drag.sy) - l.y
         mutate((g) => ({
           ...g,
           nodes: g.nodes.map((n) => {
             if (drag.group)
               return drag.group.includes(n.id) && drag.starts[n.id]
-                ? { ...n, x: Math.round(drag.starts[n.id].x + (ps.x - drag.sx)), y: Math.round(drag.starts[n.id].y + (ps.y - drag.sy)) }
+                ? { ...n, x: drag.starts[n.id].x + ddx, y: drag.starts[n.id].y + ddy }
                 : n
-            return n.id === drag.id ? { ...n, x: Math.round(ps.x - drag.dx), y: Math.round(ps.y - drag.dy) } : n
+            return n.id === drag.id ? { ...n, x: snap(ps.x - drag.dx), y: snap(ps.y - drag.dy) } : n
           }),
         }))
       } else if (drag.kind === 'resize') {
@@ -186,7 +190,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
           ...g,
           nodes: g.nodes.map((n) =>
             n.id === drag.id
-              ? { ...n, w: Math.max(150, Math.round(drag.sw + ps.x - drag.sx)), h: Math.max(48, Math.round(drag.sh + ps.y - drag.sy)) }
+              ? { ...n, w: Math.max(150, snap(drag.sw + ps.x - drag.sx)), h: Math.max(48, snap(drag.sh + ps.y - drag.sy)) }
               : n,
           ),
         }))
@@ -297,8 +301,8 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
     const dx = pt.x - originRef.current.x - minx
     const dy = pt.y - originRef.current.y - miny
     fresh.nodes.forEach((n) => {
-      n.x = Math.round(n.x + dx)
-      n.y = Math.round(n.y + dy)
+      n.x = snap(n.x + dx)
+      n.y = snap(n.y + dy)
     })
     mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
     setSelection(fresh.nodes.map((n) => n.id))
@@ -410,7 +414,7 @@ export default function GraphCanvas({ graph, assets, onChange, onOpenGraph, tool
           <div
             ref={surfaceRef}
             className={`canvas-surface ${drag ? 'canvas-dragging' : ''}`}
-            style={{ width: size.w, height: size.h }}
+            style={{ width: size.w, height: size.h, backgroundPosition: `${origin.x}px ${origin.y}px` }}
             onPointerDown={onSurfaceDown}
             onDoubleClick={onDoubleClick}
             onPointerMove={(e) => (lastPointerRef.current = surfacePoint(e.clientX, e.clientY))}

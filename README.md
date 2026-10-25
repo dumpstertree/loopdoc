@@ -111,6 +111,9 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   work as **group containers**: drop parts inside one and they parent to it —
   dragging the frame carries everything grouped inside (nested frames too;
   copy/paste keeps groups, deleting a frame frees its children)
+- everything **snaps to the 26px dot grid** — drags, group drags (leader-snapped,
+  members keep their offsets), resizes, pastes and new parts; existing positions
+  are never moved, they snap the next time you touch them
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open

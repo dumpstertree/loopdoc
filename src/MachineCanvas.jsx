@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -546,7 +546,7 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
   const addNode = (kind) =>
-    mutate((g) => ({ ...g, nodes: [...g.nodes, newNode(kind, 140 + Math.random() * 180, 100 + Math.random() * 140)] }))
+    mutate((g) => ({ ...g, nodes: [...g.nodes, newNode(kind, snap(140 + Math.random() * 180), snap(100 + Math.random() * 140))] }))
   const delNode = (id) =>
     mutate((g) => ({
       ...g,
@@ -623,14 +623,16 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     if (pt) {
       const minx = Math.min(...fresh.nodes.map((n) => n.x))
       const miny = Math.min(...fresh.nodes.map((n) => n.y))
+      const dox = snap(pt.x - minx)
+      const doy = snap(pt.y - miny)
       fresh.nodes.forEach((n) => {
-        n.x = Math.max(0, Math.round(n.x + pt.x - minx))
-        n.y = Math.max(0, Math.round(n.y + pt.y - miny))
+        n.x = Math.max(0, n.x + dox)
+        n.y = Math.max(0, n.y + doy)
       })
     } else
       fresh.nodes.forEach((n) => {
-        n.x += 30
-        n.y += 30
+        n.x += 26
+        n.y += 26
       })
     mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
     setSelection(fresh.nodes.map((n) => n.id))
@@ -705,25 +707,28 @@ export default function MachineCanvas({ graph, assets, types, onChange }) {
     if (!drag) return
     const onMove = (e) => {
       const p = surfacePoint(e)
-      if (drag.kind === 'node')
+      if (drag.kind === 'node') {
+        // grid snap: the dragged part lands on the dot grid; a group snaps via
+        // its leader so members keep their relative offsets
+        const l = drag.starts && drag.starts[drag.id] ? drag.starts[drag.id] : { x: drag.sx, y: drag.sy }
+        const ddx = snap(l.x + p.x - drag.sx) - l.x
+        const ddy = snap(l.y + p.y - drag.sy) - l.y
         mutate((g) => ({
           ...g,
           nodes: g.nodes.map((n) => {
             if (drag.group) {
               const s = drag.starts[n.id]
-              return drag.group.includes(n.id) && s
-                ? { ...n, x: Math.max(0, Math.round(s.x + p.x - drag.sx)), y: Math.max(0, Math.round(s.y + p.y - drag.sy)) }
-                : n
+              return drag.group.includes(n.id) && s ? { ...n, x: Math.max(0, s.x + ddx), y: Math.max(0, s.y + ddy) } : n
             }
-            return n.id === drag.id ? { ...n, x: Math.max(0, p.x - drag.dx), y: Math.max(0, p.y - drag.dy) } : n
+            return n.id === drag.id ? { ...n, x: Math.max(0, snap(p.x - drag.dx)), y: Math.max(0, snap(p.y - drag.dy)) } : n
           }),
         }))
-      else if (drag.kind === 'resize')
+      } else if (drag.kind === 'resize')
         mutate((g) => ({
           ...g,
           nodes: g.nodes.map((n) =>
             n.id === drag.id
-              ? { ...n, w: Math.max(150, Math.round(drag.sw + p.x - drag.sx)), h: Math.max(48, Math.round(drag.sh + p.y - drag.sy)) }
+              ? { ...n, w: Math.max(150, snap(drag.sw + p.x - drag.sx)), h: Math.max(48, snap(drag.sh + p.y - drag.sy)) }
               : n,
           ),
         }))
