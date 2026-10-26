@@ -3,8 +3,10 @@
 // clipboard, wires, anchors, toolbar — plus the sim driver around it.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
 import { fmt, dataValue, originRef, callSystem, stepOnce } from './engine.js'
+import { isEntryPart, dataCanConnect, compatTargets } from './wireRules.js'
+import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 // ---- editor ------------------------------------------------------------------
 // wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
@@ -15,13 +17,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   const [sel, setSel] = useState(null) // selected link id
   const selRef = useRef(sel)
   selRef.current = sel
-  const [selection, setSelection] = useState([]) // multi-select of node ids (click/shift/box)
-  const selectionRef = useRef(selection)
-  selectionRef.current = selection
   const [selAnchor, setSelAnchor] = useState(null) // { link, idx } — selected wire anchor
   const selAnchorRef = useRef(selAnchor)
   selAnchorRef.current = selAnchor
-  const clipboardRef = useRef(null) // machine copy/paste { nodes, links }
   const lastPointerRef = useRef(null) // where to drop a paste
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
@@ -40,6 +38,16 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   }
 
   const mutate = (fn) => onChange(fn(graphRef.current))
+
+  // selection + clipboard come from the shared canvas editor
+  const { selection, setSelection, selectionRef, clipboardRef, copySel, paste } = useCanvasEditor({
+    graphRef,
+    mutate,
+    mode: 'machine',
+    warn,
+    getPointer: () => lastPointerRef.current,
+    clamp0: true,
+  })
   const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
   const surfacePoint = (e) => {
     const r = surfaceRef.current.getBoundingClientRect()
@@ -90,62 +98,6 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     lastPointerRef.current = p
     setDrag({ kind: 'box', x0: p.x, y0: p.y, x1: p.x, y1: p.y, shift: e.shiftKey })
   }
-
-  // ---- copy / cut / paste ------------------------------------------------------
-  const copySel = (cut) => {
-    const ids = selectionRef.current
-    if (!ids.length) return
-    const g = graphRef.current
-    const nodes = g.nodes.filter((n) => ids.includes(n.id))
-    const links = g.links.filter((l) => ids.includes(l.from) && ids.includes(l.to))
-    clipboardRef.current = JSON.parse(JSON.stringify({ nodes, links }))
-    if (cut) {
-      mutate((gg) => ({
-        ...gg,
-        nodes: gg.nodes.filter((n) => !ids.includes(n.id)),
-        links: gg.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
-      }))
-      setSelection([])
-    } else warn(`⧉ ${ids.length} part${ids.length > 1 ? 's' : ''} copied`)
-  }
-  const paste = () => {
-    const clip = clipboardRef.current
-    if (!clip || !clip.nodes.length) return
-    const fresh = reidGraph({
-      id: uid('g'),
-      mode: 'machine',
-      name: '',
-      entry: null,
-      nodes: JSON.parse(JSON.stringify(clip.nodes)),
-      links: JSON.parse(JSON.stringify(clip.links)),
-    })
-    const pt = lastPointerRef.current
-    if (pt) {
-      const minx = Math.min(...fresh.nodes.map((n) => n.x))
-      const miny = Math.min(...fresh.nodes.map((n) => n.y))
-      const dox = snap(pt.x - minx)
-      const doy = snap(pt.y - miny)
-      fresh.nodes.forEach((n) => {
-        n.x = Math.max(0, n.x + dox)
-        n.y = Math.max(0, n.y + doy)
-      })
-      // anchors are absolute surface coords — carry them with the paste or
-      // routed wires render offset and refuse to follow the nodes
-      fresh.links.forEach((l) => {
-        if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + dox, y: a.y + doy }))
-      })
-    } else {
-      fresh.nodes.forEach((n) => {
-        n.x += 26
-        n.y += 26
-      })
-      fresh.links.forEach((l) => {
-        if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + 26, y: a.y + 26 }))
-      })
-    }
-    mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
-    setSelection(fresh.nodes.map((n) => n.id))
-  }
   const onPortDown = (e, id, portId) => {
     const p = surfacePoint(e)
     setDrag({ kind: 'flow', from: id, port: portId || 'out', x: p.x, y: p.y })
@@ -155,21 +107,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     setDrag({ kind: 'data', from: id, port: portId, x: p.x, y: p.y })
   }
   const addDataLink = (from, fromPort, to, toPort) => {
+    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort)
+    if (!chk.ok) return warn(chk.why)
     const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
-    const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
-    if (!ta || !tb) return warn('⚠ that data port no longer exists')
-    const toNode = graphRef.current.nodes.find((n) => n.id === to)
-    if (toNode?.kind === 'ifb' && (toPort === '__a__' || toPort === '__b__')) {
-      // if-operands: int or bool only, and both sides of one if compare like with like
-      if (ta !== 'int' && ta !== 'bool') return warn(`⚠ if-compares take int or bool — not ${ta}`)
-      const otherPort = toPort === '__a__' ? '__b__' : '__a__'
-      const other = graphRef.current.links.find((l) => l.kind === 'data' && l.to === to && l.toPort === otherPort)
-      const ot =
-        other && dataPortType(graphRef.current, assets, other.from, other.fromPort, 'out')
-      if (ot && ot !== ta) return warn(`⚠ if-compares both sides alike — ⇣ ${otherPort} is already ${ot}`)
-    }
-    if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]'))))
-      return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
     mutate((g) => ({
       ...g,
       links: [
@@ -300,17 +240,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           setSel(null)
           setSelAnchor(null)
         } else {
-          const r = surfaceRef.current.getBoundingClientRect()
-          const bx0 = Math.min(drag.x0, end.x) + r.left
-          const by0 = Math.min(drag.y0, end.y) + r.top
-          const bx1 = Math.max(drag.x0, end.x) + r.left
-          const by1 = Math.max(drag.y0, end.y) + r.top
-          const hit = [...surfaceRef.current.querySelectorAll('[data-node-id]')]
-            .filter((el) => {
-              const b = el.getBoundingClientRect()
-              return b.left < bx1 && b.right > bx0 && b.top < by1 && b.bottom > by0
-            })
-            .map((el) => el.getAttribute('data-node-id'))
+          const hit = boxHits(surfaceRef.current, drag.x0, drag.y0, end.x, end.y)
           setSelection(drag.shift ? [...new Set([...selectionRef.current, ...hit])] : hit)
         }
       } else if (drag.kind === 'node') {
@@ -400,14 +330,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   // measure flow + data ports
   const portPosRef = useRef(portXY)
   const measure = () => {
-    const surf = surfaceRef.current
-    if (!surf) return
-    const r = surf.getBoundingClientRect()
-    const pos = {}
-    surf.querySelectorAll('[data-port]').forEach((el) => {
-      const b = el.getBoundingClientRect()
-      pos[el.getAttribute('data-port')] = { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top }
-    })
+    const pos = measurePorts(surfaceRef.current)
+    if (!pos) return
     const prev = portPosRef.current
     const keys = Object.keys(pos)
     const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] && prev[k].x === pos[k].x && prev[k].y === pos[k].y)
@@ -421,16 +345,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   const diagnostics = () => {
     const out = []
     const g = graphRef.current
-    const flows = g.links.filter((l) => l.kind !== 'data')
-    const entries = g.nodes.filter(
-      (n) =>
-        n.kind !== 'drain' &&
-        n.kind !== 'add' &&
-        n.kind !== 'setg' &&
-        n.kind !== 'exit' &&
-        ((KINDS[n.kind]?.ports || (() => []))(n) || []).length > 0 &&
-        !flows.some((l) => l.to === n.id),
-    )
+    const entries = g.nodes.filter((n) => isEntryPart(n, g.links))
     if (!entries.length) out.push('⚠ nothing to run — parts with no flow input are chain entry points')
     else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
     if (!g.nodes.some((x) => x.kind === 'exit'))
@@ -496,48 +411,16 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   // endless canvas: the surface always keeps a generous runway beyond the
   // farthest part, so building toward an edge just makes room, never clips
   // compatible drop targets while dragging a wire — mirrors the exact drop
-  // rules, so every ⇣ port that WOULD accept the wire glows before you let go
-  let compatPorts = null
-  if (drag && (drag.kind === 'flow' || drag.kind === 'data')) {
-    compatPorts = []
-    const g = graphRef.current
-    const ta = drag.kind === 'data' ? dataPortType(g, assets, drag.from, drag.port, 'out') : null
-    for (const key of Object.keys(portXY)) {
-      const [nid, pid, dir] = key.split(':')
-      if (dir !== 'in' || nid === drag.from) continue
-      const tn = g.nodes.find((x) => x.id === nid)
-      if (!tn) continue
-      if (drag.kind === 'flow') {
-        if (pid === 'in' && ((kindMeta(tn).ports || (() => []))(tn) || []).some((p) => p.dir === 'in')) compatPorts.push(key)
-      } else {
-        const tb = dataPortType(g, assets, nid, pid, 'in')
-        if (!ta || !tb) continue
-        if (tn.kind === 'ifb' && (pid === '__a__' || pid === '__b__')) {
-          if (ta !== 'int' && ta !== 'bool') continue
-          const other = (g.links || []).find((l) => l.kind === 'data' && l.to === nid && l.toPort === (pid === '__a__' ? '__b__' : '__a__'))
-          const ot = other && dataPortType(g, assets, other.from, other.fromPort, 'out')
-          if (ot && ot !== ta) continue
-        } else if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]')))) continue
-        compatPorts.push(key)
-      }
-    }
-  }
+  // rules (wireRules.js), so every ⇣ port that WOULD accept the wire glows
+  // before you let go
+  const compatPorts = drag && (drag.kind === 'flow' || drag.kind === 'data')
+    ? compatTargets(graph, assets, drag, Object.keys(portXY))
+    : null
 
-  // auto-detected entry parts — same rule as the sim and DRC, shown with the
-  // flow canvas's ▶ flag so "where chains begin" reads identically in both
-  const entryIds = new Set(
-    graph.nodes
-      .filter(
-        (n) =>
-          n.kind !== 'drain' &&
-          n.kind !== 'add' &&
-          n.kind !== 'setg' &&
-          n.kind !== 'exit' &&
-          ((kindMeta(n).ports || (() => []))(n) || []).length > 0 &&
-          !(graph.links || []).some((l) => l.kind !== 'data' && l.to === n.id),
-      )
-      .map((n) => n.id),
-  )
+  // auto-detected entry parts — same rule as the sim and DRC (wireRules.js),
+  // shown with the flow canvas's ▶ flag so "where chains begin" reads
+  // identically in both
+  const entryIds = new Set(graph.nodes.filter((n) => isEntryPart(n, graph.links)).map((n) => n.id))
   const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
   const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)

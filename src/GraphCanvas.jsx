@@ -3,15 +3,14 @@
 // canvas vocabulary: orthogonal wires, right-edge exit ports, anchors.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
-import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto, snap, orth, routePath } from './model.js'
+import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath } from './model.js'
+import { dataCanConnect, compatTargets } from './wireRules.js'
+import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 const GROW_STEP = 600
 const GROW_AT = 64
 
 export default function GraphCanvas({ graph, assets, globals = [], onChange, onOpenGraph, toolbarExtra }) {
-  const [selection, setSelection] = useState([])
-  const selectionRef = useRef(selection)
-  selectionRef.current = selection
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
@@ -40,6 +39,19 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
 
   // ---- commit helpers ---------------------------------------------------------
   const mutate = (fn) => onChange(fn(graphRef.current))
+
+  // selection + clipboard come from the shared canvas editor; the flow canvas
+  // pans, so the paste pointer is mapped from viewport to surface coords
+  const { selection, setSelection, selectionRef, clipboardRef, copySel, paste } = useCanvasEditor({
+    graphRef,
+    mutate,
+    mode: graph.mode,
+    warn,
+    getPointer: () => {
+      const pt = lastPointerRef.current || { x: 200, y: 120 }
+      return { x: pt.x - originRef.current.x, y: pt.y - originRef.current.y }
+    },
+  })
   const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
   const del = (id) => {
     mutate((g) => removeNode(g, id))
@@ -92,10 +104,10 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
     })
   }
   const addDataLink = (from, fromPort, to, toPort) => {
-    const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
-    const tb = dataPortType(graphRef.current, assets, to, toPort, 'in')
-    if (!ta || !tb) return warn('⚠ that data port no longer exists')
-    if (ta !== tb) return warn(`⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}`)
+    // same rules as the machine canvas — any feeds everything, arrays feed
+    // ⇣ list, and every mismatch explains itself
+    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort)
+    if (!chk.ok) return warn(chk.why)
     mutate((g) => ({
       ...g,
       // a data input has exactly one producer
@@ -235,17 +247,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
           setSelection([])
           setSel(null)
         } else {
-          const r = surfaceRef.current.getBoundingClientRect()
-          const bx0 = Math.min(drag.x0, end.x) + r.left
-          const by0 = Math.min(drag.y0, end.y) + r.top
-          const bx1 = Math.max(drag.x0, end.x) + r.left
-          const by1 = Math.max(drag.y0, end.y) + r.top
-          const hit = [...surfaceRef.current.querySelectorAll('[data-node-id]')]
-            .filter((el) => {
-              const b = el.getBoundingClientRect()
-              return b.left < bx1 && b.right > bx0 && b.top < by1 && b.bottom > by0
-            })
-            .map((el) => el.getAttribute('data-node-id'))
+          const hit = boxHits(surfaceRef.current, drag.x0, drag.y0, end.x, end.y)
           setSelection(drag.shift ? [...new Set([...selectionRef.current, ...hit])] : hit)
         }
       } else if (drag.kind === 'node') {
@@ -274,48 +276,6 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
     if (e.target.closest('.nd') || e.target.closest('.edge')) return
     const p = surfacePoint(e.clientX, e.clientY)
     addNodeAt('step', p.x - originRef.current.x - 20, p.y - originRef.current.y - 10)
-  }
-
-  // ---- copy / cut / paste ----------------------------------------------------------
-  const clipboardRef = useRef(null)
-  const copySel = (cut) => {
-    const ids = selectionRef.current
-    if (!ids.length) return
-    const g = graphRef.current
-    const nodes = g.nodes.filter((n) => ids.includes(n.id))
-    const links = g.links.filter((l) => ids.includes(l.from) && ids.includes(l.to))
-    clipboardRef.current = JSON.parse(JSON.stringify({ nodes, links }))
-    if (cut) {
-      mutate((gg) => ({
-        ...gg,
-        nodes: gg.nodes.filter((n) => !ids.includes(n.id)),
-        links: gg.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
-        entry: ids.includes(gg.entry) ? null : gg.entry,
-      }))
-      setSelection([])
-    }
-  }
-  const paste = () => {
-    const clip = clipboardRef.current
-    if (!clip || !clip.nodes.length) return
-    const fresh = reidGraph(JSON.parse(JSON.stringify({ id: 0, mode: graph.mode, name: '', entry: null, nodes: clip.nodes, links: clip.links })))
-    const minx = Math.min(...fresh.nodes.map((n) => n.x))
-    const miny = Math.min(...fresh.nodes.map((n) => n.y))
-    const pt = lastPointerRef.current || { x: 200, y: 120 }
-    // uniform snap-shift: the group's corner lands on the grid, members keep
-    // their offsets, and routed-wire anchors come along (they are absolute
-    // surface coords — left behind they render offset and "stick" in place)
-    const sx = snap(pt.x - originRef.current.x) - minx
-    const sy = snap(pt.y - originRef.current.y) - miny
-    fresh.nodes.forEach((n) => {
-      n.x += sx
-      n.y += sy
-    })
-    fresh.links.forEach((l) => {
-      if (Array.isArray(l.anchors) && l.anchors.length) l.anchors = l.anchors.map((a) => ({ x: a.x + sx, y: a.y + sy }))
-    })
-    mutate((g) => ({ ...g, nodes: [...g.nodes, ...fresh.nodes], links: [...g.links, ...fresh.links] }))
-    setSelection(fresh.nodes.map((n) => n.id))
   }
 
   // ---- keyboard ---------------------------------------------------------------------
@@ -358,14 +318,8 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
 
   // ---- measurement -------------------------------------------------------------------
   const measure = () => {
-    const surf = surfaceRef.current
-    if (!surf) return
-    const r = surf.getBoundingClientRect()
-    const pos = {}
-    surf.querySelectorAll('[data-port]').forEach((el) => {
-      const b = el.getBoundingClientRect()
-      pos[el.getAttribute('data-port')] = { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top }
-    })
+    const pos = measurePorts(surfaceRef.current)
+    if (!pos) return
     const prev = portPosRef.current
     const keys = Object.keys(pos)
     const same = keys.length === Object.keys(prev).length && keys.every((k) => prev[k] && prev[k].x === pos[k].x && prev[k].y === pos[k].y)
@@ -390,26 +344,11 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
   const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
   const surfH = Math.max(size.h, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + origin.y + 600), 0))
   const selSet = new Set(selection)
-  // compatible drop targets while dragging a wire — mirrors the exact drop
-  // rules, so every ⇣ port that WOULD accept the wire glows before you let go
-  let compatPorts = null
-  if (drag && (drag.kind === 'flow' || drag.kind === 'data')) {
-    compatPorts = []
-    const g = graphRef.current
-    const ta = drag.kind === 'data' ? dataPortType(g, assets, drag.from, drag.port, 'out') : null
-    for (const key of Object.keys(portPos)) {
-      const [nid, pid, dir] = key.split(':')
-      if (dir !== 'in' || nid === drag.from) continue
-      const tn = g.nodes.find((x) => x.id === nid)
-      if (!tn) continue
-      if (drag.kind === 'flow') {
-        if (pid === 'in') compatPorts.push(key)
-      } else {
-        const tb = dataPortType(g, assets, nid, pid, 'in')
-        if (ta && tb && ta === tb) compatPorts.push(key)
-      }
-    }
-  }
+  // compatible drop targets while dragging a wire — same shared rules as the
+  // machine canvas, so every ⇣ port that WOULD accept the wire glows first
+  const compatPorts = drag && (drag.kind === 'flow' || drag.kind === 'data')
+    ? compatTargets(graph, assets, drag, Object.keys(portPos))
+    : null
   const flowEnd = (l) => {
     const key = `${l.to}:in:in`
     if (portPos[key]) return portPos[key]

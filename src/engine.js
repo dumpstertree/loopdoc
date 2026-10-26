@@ -9,7 +9,8 @@
 // them, link circles add/remove pool amounts, and fed ⇣ in pools are live
 // windows that write back to their origin value (incl. windows onto ⚙
 // globals — the session store object passed as mem.g, shared across machines).
-import { resolveCall, kindMeta, fnSig } from './model.js'
+import { resolveCall, fnSig } from './model.js'
+import { isEntryPart } from './wireRules.js'
 
 const fmt = (v) =>
   Array.isArray(v)
@@ -160,7 +161,6 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     links.filter((l) => l.kind === 'data' && l.toPort === '__in__').map((l) => l.to),
   )
   const p = (id) => (byId[id] && byId[id].kind === 'pool' && !fed.has(id) ? byId[id] : null)
-  const hasPorts = (n) => ((kindMeta(n).ports || (() => []))(n) || []).length > 0
 
   // fed pools are live windows onto their origin value: seed here, write
   // back at the end of the step
@@ -182,7 +182,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   mem.tseq = mem.tseq || 0
   const toks = (mem.tokens = mem.tokens || [])
   for (const e of nodes)
-    if (e.kind !== 'drain' && e.kind !== 'add' && e.kind !== 'setg' && e.kind !== 'exit' && hasPorts(e) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
+    if (isEntryPart(e, links) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
       toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
   const qBudget = {}

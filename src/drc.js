@@ -12,6 +12,7 @@
 // the owning graph, so the panel can jump there.
 // ---------------------------------------------------------------------------
 import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs } from './model.js'
+import { isEntryPart } from './wireRules.js'
 
 const label = (n) =>
   n ? `${kindMeta(n).label || n.kind}${n.name ? ` "${n.name}"` : ''}` : '?'
@@ -97,9 +98,7 @@ function scanGraph(g, assets, types, globals, add) {
   }
 
   // ---- machine rules -----------------------------------------------------------
-  const entryNodes = nodes.filter(
-    (n) => n.kind !== 'drain' && n.kind !== 'add' && n.kind !== 'setg' && n.kind !== 'exit' && portsOf(n).length > 0 && !hasIn(n.id),
-  )
+  const entryNodes = nodes.filter((n) => isEntryPart(n, g.links))
   if (nodes.length && !entryNodes.length && (g.links || []).length)
     add('error', '', 'nothing can run — every part has a flow input (closed cycle, no entry)')
   const allReach = reach(entryNodes.map((n) => n.id))
