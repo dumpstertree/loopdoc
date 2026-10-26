@@ -9,7 +9,7 @@
 // them, link circles add/remove pool amounts, and fed ⇣ in pools are live
 // windows that write back to their origin value (incl. windows onto ⚙
 // globals — the session store object passed as mem.g, shared across machines).
-import { resolveCall, kindMeta } from './model.js'
+import { resolveCall, kindMeta, fnSig } from './model.js'
 
 const fmt = (v) =>
   Array.isArray(v)
@@ -411,7 +411,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       }
       const d = dataValue(nodes, links, a, mem, n.id, '__val__')
       if (d && d.val !== null && d.val !== undefined) {
-        mem.g[n.gRef] = d.val
+        ;(mem.g = mem.g || {})[n.gRef] = d.val
         log.push(`⚙ set ⚙ ${n.gName || 'global'} = ${fmt(d.val)} (from ${d.from})`)
       } else log.push(`⚠ ${n.name || 'SET'} — ⇣ ${n.gName || 'value'} unwired, ⚙ ${n.gName || 'global'} unchanged`)
       advance(t, n)
