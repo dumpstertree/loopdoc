@@ -60,6 +60,26 @@ export function globalValue(g) {
   return g.value ?? ''
 }
 
+// the session store for globals — the game's live state. ONE store per open
+// document: machine sims READ and WRITE it in place (SET, fed-pool write-
+// through), so exploration's depth hands straight through to combat's next
+// run. Pools still reset every run; globals only reset here (↺ / new doc /
+// open file), which is what makes scenes one game instead of one sim each.
+export function makeGlobalsStore() {
+  let g = null
+  return {
+    // the live map, seeded (once) from defaults; new vars join live mid-session
+    vals: (vars) => {
+      if (!g) g = {}
+      for (const v of vars || []) if (!(v.id in g)) g[v.id] = globalValue(v)
+      return g
+    },
+    reset: () => {
+      g = null
+    },
+  }
+}
+
 // ---- shared wire routing -----------------------------------------------------
 // straight lines with 90° turns: horizontal → vertical → horizontal,
 // plus the midpoint of the (vertical) leg where the amount circle sits

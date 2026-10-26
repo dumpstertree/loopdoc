@@ -7,7 +7,7 @@ import MachineCanvas from './MachineCanvas.jsx'
 import AssetsPanel from './AssetsPanel.jsx'
 import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
-import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs } from './model.js'
+import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore } from './model.js'
 import { runDRC } from './drc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
@@ -59,6 +59,10 @@ export default function App() {
   const handleRef = useRef(null)
   const docRef = useRef(doc)
   docRef.current = doc
+  // live session values for ⚙ globals — shared by every machine sim so scene
+  // changes hand state straight through (depth, position, flags). Fresh page
+  // load, new document or open file starts a fresh session from defaults.
+  const gstore = useMemo(makeGlobalsStore, [])
 
   const commit = (next) => {
     setDoc(next)
@@ -145,6 +149,7 @@ export default function App() {
         text = await f.text()
       }
       const d = parseDoc(text)
+      gstore.reset()
       setDoc(d)
       setPath([])
       setTab('design')
@@ -157,6 +162,7 @@ export default function App() {
   const newDocument = () => {
     if (!window.confirm('Start a new empty document? Unsaved changes are lost.')) return
     handleRef.current = null
+    gstore.reset()
     setDoc(newDoc())
     setPath([])
     setDirty(false)
@@ -272,7 +278,7 @@ export default function App() {
           {tab === 'design' ? (
             <>
               {graph.mode === 'machine' ? (
-                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} onChange={updateGraph} />
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} gstore={gstore} onChange={updateGraph} />
               ) : (
                 <GraphCanvas
                   graph={graph}
@@ -334,7 +340,9 @@ export default function App() {
             doc={doc}
             types={doc.types || []}
             globals={doc.vars || []}
+            gstore={gstore}
             onGlobals={(next) => commit({ ...docRef.current, vars: next })}
+            onResetGlobals={() => gstore.reset()}
             onTypes={(next) => {
               const prev = docRef.current.types || []
               let d = { ...docRef.current, types: next }

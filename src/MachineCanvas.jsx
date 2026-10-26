@@ -53,6 +53,19 @@ function originRef(nodes, links, a, mem, nodeId, varId, depth = 0) {
   if (src.kind === 'pool') {
     return { key: () => 'pl:' + src.id, get: () => a[src.id] ?? 0, set: (v) => { a[src.id] = v } }
   }
+  if (src.kind === 'getg') {
+    // a window onto a ⚙ global — writes land in the SESSION store, so a pool
+    // that an ADD pushes through permanently moves the global across machines
+    if (!src.gRef) return null
+    return {
+      key: () => 'g:' + src.gRef,
+      get: () => (mem.g || {})[src.gRef],
+      set: (v) => {
+        mem.g = mem.g || {}
+        mem.g[src.gRef] = v
+      },
+    }
+  }
   if (src.kind === 'for') {
     const c = (mem.cur || {})[src.id]
     return c ? { key: () => 'for:' + src.id, get: () => c.i } : null
@@ -529,7 +542,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
 // ---- editor ------------------------------------------------------------------
 // wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
 
-export default function MachineCanvas({ graph, assets, types, globals = [], onChange }) {
+export default function MachineCanvas({ graph, assets, types, globals = [], gstore, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const [sel, setSel] = useState(null) // selected link id
@@ -962,7 +975,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], onCh
   const startSim = () =>
     setSim({
       amounts: Object.fromEntries(graphRef.current.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])),
-      mem: { tokens: [], g: Object.fromEntries((globals || []).map((v) => [v.id, globalValue(v)])) },
+      // the SESSION store object itself, not a copy: SET here is visible in
+      // every other machine's next run; only pools reset per run
+      mem: { tokens: [], g: gstore ? gstore.vals(globals) : Object.fromEntries((globals || []).map((v) => [v.id, globalValue(v)])) },
       log: ['— chain simulation started —', ...diagnostics()],
       steps: 0,
     })
@@ -1234,6 +1249,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], onCh
                   assets={assets}
                   types={types}
                   globals={globals}
+                  gvals={gstore ? gstore.vals(globals) : null}
                   selected={selection.includes(n.id)}
                   isEntry={entryIds.has(n.id)}
                   sim={sim}

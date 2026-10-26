@@ -305,6 +305,7 @@ export default function NodeCard({
   assets, // registry visible here (plus local generated assets, __local: true)
   types, // declared doc data types (struct value editing)
   globals = [], // document-wide global variables (GLOBAL/SET cards)
+  gvals = null, // live session values of the globals (shared across machines)
   selected,
   isEntry,
   sim, // machine sim state for display, or null
@@ -721,8 +722,14 @@ export default function NodeCard({
               ⇡ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
             </span>
             {node.gRef && (
-              <span className="dval">
-                {String(sim ? (sim.mem.g || {})[node.gRef] : (globals || []).find((g) => g.id === node.gRef)?.value ?? '')}
+              <span className="dval" title={sim || gvals ? "the session value — shared across machines" : 'default — set by the run'}>
+                {String(
+                  sim
+                    ? (sim.mem.g || {})[node.gRef]
+                    : gvals && gvals[node.gRef] !== undefined
+                      ? gvals[node.gRef]
+                      : (globals || []).find((g) => g.id === node.gRef)?.value ?? '',
+                )}
               </span>
             )}
             {!sim && (

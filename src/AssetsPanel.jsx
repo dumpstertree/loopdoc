@@ -63,16 +63,22 @@ function TypeSelect({ value, onChange, types, title }) {
 
 // document-wide global variables: named, typed, with a default the app
 // starts from — GLOBAL parts read them anywhere, SET parts write them
-function GlobalsSection({ globals, onGlobals, types }) {
+function GlobalsSection({ globals, onGlobals, onResetGlobals, types, gstore }) {
   const set = (fn) => onGlobals(fn(globals))
   const upd = (i, patch) => set((l) => l.map((v, j) => (j === i ? { ...v, ...patch } : v)))
+  const live = gstore ? gstore.vals(globals) : null
   return (
     <div className="types-box">
       <div className="io-label head">
-        ⚙ GLOBALS — app-wide values · {globals.length}
+        ⚙ GLOBALS — live session state · {globals.length}
         <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={() => set((l) => [...l, newGlobal('newVar')])}>
           + global
         </button>
+        {live && (
+          <button className="tb-btn" title="discard session values — everything restarts from the defaults" onClick={onResetGlobals}>
+            ↺ defaults
+          </button>
+        )}
       </div>
       {globals.map((v, i) => (
         <div className="api-var" key={v.id}>
@@ -93,11 +99,19 @@ function GlobalsSection({ globals, onGlobals, types }) {
             className="inp"
             style={{ width: 72 }}
             placeholder="default…"
-            title="default value — every run starts here"
+            title="default value — a fresh session starts here (SET overwrites it live)"
             value={v.value}
             onChange={(e) => upd(i, { value: e.target.value })}
             onKeyDown={(e) => e.stopPropagation()}
           />
+          {live && (
+            <span
+              className="dval"
+              title={`live session value — shared by every machine until ↺ defaults, opening a file, or reloading${String(live[v.id]) === String(v.value ?? '') ? '' : ' (default: ' + (v.value ?? '') + ')'}`}
+            >
+              = {String(live[v.id])}
+            </span>
+          )}
           <button className="icon-btn" title="delete global (GLOBAL/SET cards using it get flagged)" onClick={() => set((l) => l.filter((_, j) => j !== i))}>
             ×
           </button>
@@ -235,7 +249,7 @@ function ApiEditor({ asset, onChange, types }) {
   )
 }
 
-export default function AssetsPanel({ doc, types, onTypes, globals = [], onGlobals, onAssets, onRemove, onClose }) {
+export default function AssetsPanel({ doc, types, onTypes, globals = [], onGlobals, onResetGlobals, gstore, onAssets, onRemove, onClose }) {
   const assets = doc.assets || []
   const counts = useCounts(doc)
   const [open, setOpen] = useState(null) // asset id whose card is expanded
@@ -259,7 +273,7 @@ export default function AssetsPanel({ doc, types, onTypes, globals = [], onGloba
         </button>
       </div>
       <div className="assets-list">
-        <GlobalsSection globals={globals} onGlobals={onGlobals} types={types} />
+        <GlobalsSection globals={globals} onGlobals={onGlobals} onResetGlobals={onResetGlobals} gstore={gstore} types={types} />
         <TypesSection types={types || []} onTypes={onTypes} />
         <div className="io-label head">📦 ASSETS · {assets.length}</div>
         {assets.map((a) => (

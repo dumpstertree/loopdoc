@@ -125,9 +125,11 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
 - **⚙ GLOBALS** (assets panel): document-wide named variables with defaults —
-  every machine sim starts from the default; **GLOBAL** parts (flow & machine)
-  read them as typed ⇡ data, **SET** parts (machine) write them as the chain
-  passes, so machines and rounds can share state (score, depth, game flags)
+  the **live session state of the game**: machine sims read and write the one
+  shared store (SET parts *and* fed pools writing through their window), so
+  exploration's `depth` hands straight through to combat's next run; pools
+  still reset per run — only ↺ defaults / opening a file starts a new session
+  (**GLOBAL** parts, flow & machine, read; **SET** parts write)
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
   loop body, no entry), last-iteration item reads on end chains, drain vs
