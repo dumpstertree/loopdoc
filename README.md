@@ -103,8 +103,13 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 
 ## Interactions
 
+- both canvases share one look & feel: **orthogonal wires** (90° turns), exit
+  ports on the **right edge** of every card, `▶ START` flags where chains
+  begin, hover glow on wires, and while dragging a wire every ⇣ port that
+  would accept it **pulses** (type-checked live — ifb side rules included)
 - dbl-click canvas → drop a STEP · drag ◆ out-port onto a node → flow link
 - click link → select (Del removes) · dbl-click link → add anchor, drag it
+  (flow *and* data wires, both canvases)
 - **box-select**: drag on empty canvas (both canvases) · `Shift`-click or
   box-add to grow a selection · drag one selected node to move the whole group
 - `Ctrl+C/X/V` copy/cut/paste (nested graphs & wires included) · `Ctrl+A`

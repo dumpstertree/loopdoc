@@ -4,7 +4,7 @@
 // actions fire on click (and advance one tick), sys calls fire on flow.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap, globalValue } from './model.js'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, reidGraph, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
 
 // ---- simulation ------------------------------------------------------------
 const fmt = (v) =>
@@ -527,23 +527,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
 }
 
 // ---- editor ------------------------------------------------------------------
-// straight lines with 90° turns: horizontal → vertical → horizontal,
-// plus the midpoint of the (vertical) leg where the amount circle sits
-const orth = (sx, sy, tx, ty) => {
-  const mx = sx + Math.max(30, (tx - sx) / 2)
-  return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
-}
-
-// a wire's path: straight through dropped anchors when present, else the
-// default orthogonal elbow. mid lands on the whole run for the amount badge.
-const routePath = (a, b, anchors) => {
-  if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
-  const pts = [a, ...anchors, b]
-  let d = `M ${pts[0].x} ${pts[0].y}`
-  for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`
-  const m = pts[Math.floor(pts.length / 2)]
-  return { d, mid: { x: m.x, y: m.y } }
-}
+// wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
 
 export default function MachineCanvas({ graph, assets, types, globals = [], onChange }) {
   const [sim, setSim] = useState(null)
@@ -1029,6 +1013,49 @@ export default function MachineCanvas({ graph, assets, types, globals = [], onCh
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
   // endless canvas: the surface always keeps a generous runway beyond the
   // farthest part, so building toward an edge just makes room, never clips
+  // compatible drop targets while dragging a wire — mirrors the exact drop
+  // rules, so every ⇣ port that WOULD accept the wire glows before you let go
+  let compatPorts = null
+  if (drag && (drag.kind === 'flow' || drag.kind === 'data')) {
+    compatPorts = []
+    const g = graphRef.current
+    const ta = drag.kind === 'data' ? dataPortType(g, assets, drag.from, drag.port, 'out') : null
+    for (const key of Object.keys(portXY)) {
+      const [nid, pid, dir] = key.split(':')
+      if (dir !== 'in' || nid === drag.from) continue
+      const tn = g.nodes.find((x) => x.id === nid)
+      if (!tn) continue
+      if (drag.kind === 'flow') {
+        if (pid === 'in' && ((kindMeta(tn).ports || (() => []))(tn) || []).some((p) => p.dir === 'in')) compatPorts.push(key)
+      } else {
+        const tb = dataPortType(g, assets, nid, pid, 'in')
+        if (!ta || !tb) continue
+        if (tn.kind === 'ifb' && (pid === '__a__' || pid === '__b__')) {
+          if (ta !== 'int' && ta !== 'bool') continue
+          const other = (g.links || []).find((l) => l.kind === 'data' && l.to === nid && l.toPort === (pid === '__a__' ? '__b__' : '__a__'))
+          const ot = other && dataPortType(g, assets, other.from, other.fromPort, 'out')
+          if (ot && ot !== ta) continue
+        } else if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]')))) continue
+        compatPorts.push(key)
+      }
+    }
+  }
+
+  // auto-detected entry parts — same rule as the sim and DRC, shown with the
+  // flow canvas's ▶ flag so "where chains begin" reads identically in both
+  const entryIds = new Set(
+    graph.nodes
+      .filter(
+        (n) =>
+          n.kind !== 'drain' &&
+          n.kind !== 'add' &&
+          n.kind !== 'setg' &&
+          n.kind !== 'exit' &&
+          ((kindMeta(n).ports || (() => []))(n) || []).length > 0 &&
+          !(graph.links || []).some((l) => l.kind !== 'data' && l.to === n.id),
+      )
+      .map((n) => n.id),
+  )
   const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
   const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
@@ -1184,20 +1211,17 @@ export default function MachineCanvas({ graph, assets, types, globals = [], onCh
                     </circle>
                   )),
                 )}
-                {drag && (drag.kind === 'flow' || drag.kind === 'data') && portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`] && (
+                {drag && (drag.kind === 'flow' || drag.kind === 'data') && portXY[`${drag.from}:${drag.port}:out`] && (
                   <path
-                    d={
-                      orth(
-                        portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].x,
-                        portXY[`${drag.from}:${drag.kind === 'flow' ? 'out' : drag.port}:out`].y,
-                        drag.x,
-                        drag.y,
-                      ).d
-                    }
+                    d={orth(portXY[`${drag.from}:${drag.port}:out`].x, portXY[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y).d}
                     className="edge-temp"
                     stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                   />
                 )}
+                {compatPorts &&
+                  compatPorts.map((k) =>
+                    portXY[k] ? <circle key={k} className={`port-compat${drag && drag.kind === 'data' ? ' pc-data' : ''}`} cx={portXY[k].x} cy={portXY[k].y} r={8} /> : null,
+                  )}
               </svg>
               {/* TEXT frames render first so they sit behind their grouped parts */}
               {[...graph.nodes]
@@ -1211,7 +1235,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], onCh
                   types={types}
                   globals={globals}
                   selected={selection.includes(n.id)}
-                  isEntry={false}
+                  isEntry={entryIds.has(n.id)}
                   sim={sim}
                   onCardClick={clickNode}
                   onPatch={(p) => patch(n.id, p)}

@@ -60,9 +60,27 @@ export function globalValue(g) {
   return g.value ?? ''
 }
 
+// ---- shared wire routing -----------------------------------------------------
+// straight lines with 90° turns: horizontal → vertical → horizontal,
+// plus the midpoint of the (vertical) leg where the amount circle sits
+export function orth(sx, sy, tx, ty) {
+  const mx = sx + Math.max(30, (tx - sx) / 2)
+  return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
+}
+
+// a wire's path: straight through dropped anchors when present, else the
+// default orthogonal elbow. mid lands on the whole run for the amount badge.
+export function routePath(a, b, anchors) {
+  if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
+  const pts = [a, ...anchors, b]
+  let d = `M ${pts[0].x} ${pts[0].y}`
+  for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`
+  const m = pts[Math.floor(pts.length / 2)]
+  return { d, mid: { x: m.x, y: m.y } }
+}
+
 // every pickable type name, base first then arrays
-export function typeNames(types) {
-  const seen = []
+export function typeNames(types) {  const seen = []
   for (const n of [...BASIC_TYPES, ...(types || []).map((t) => t.name).filter(Boolean)])
     if (!seen.includes(n)) seen.push(n)
   return seen

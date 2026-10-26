@@ -1,15 +1,9 @@
 // graph canvas: node placement, drag-to-connect flow links, typed data
-// wires, box-select, copy/paste, endless top/left growth. The machine canvas
-// reuses the same vocabulary and the bezier helpers below.
+// wires, box-select, copy/paste, endless top/left growth. Shares the machine
+// canvas vocabulary: orthogonal wires, right-edge exit ports, anchors.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
-import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto, snap } from './model.js'
-
-export const bezier = (sx, sy, tx, ty) => {
-  const dx = Math.max(40, Math.abs(tx - sx) / 2)
-  return `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`
-}
-export const throughPath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ')
+import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, reidGraph, dataPortType, groupKin, adoptInto, snap, orth, routePath } from './model.js'
 
 const GROW_STEP = 600
 const GROW_AT = 64
@@ -396,6 +390,26 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
   const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
   const surfH = Math.max(size.h, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + origin.y + 600), 0))
   const selSet = new Set(selection)
+  // compatible drop targets while dragging a wire — mirrors the exact drop
+  // rules, so every ⇣ port that WOULD accept the wire glows before you let go
+  let compatPorts = null
+  if (drag && (drag.kind === 'flow' || drag.kind === 'data')) {
+    compatPorts = []
+    const g = graphRef.current
+    const ta = drag.kind === 'data' ? dataPortType(g, assets, drag.from, drag.port, 'out') : null
+    for (const key of Object.keys(portPos)) {
+      const [nid, pid, dir] = key.split(':')
+      if (dir !== 'in' || nid === drag.from) continue
+      const tn = g.nodes.find((x) => x.id === nid)
+      if (!tn) continue
+      if (drag.kind === 'flow') {
+        if (pid === 'in') compatPorts.push(key)
+      } else {
+        const tb = dataPortType(g, assets, nid, pid, 'in')
+        if (ta && tb && ta === tb) compatPorts.push(key)
+      }
+    }
+  }
   const flowEnd = (l) => {
     const key = `${l.to}:in:in`
     if (portPos[key]) return portPos[key]
@@ -424,7 +438,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">dbl-click drops a STEP · drag ◆ to connect · teal squares wire typed data · click link = select (Del)</span>
+        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire to drop a steering anchor · dbl-click surface adds a STEP · click link = select (Del)</span>
         {msg && <span className="warn">{msg}</span>}
         <span className="spacer" />
         {toolbarExtra}
@@ -460,7 +474,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                 const t = flowEnd(l)
                 if (!s || !t) return null
                 const anchors = l.anchors || []
-                const d = anchors.length ? throughPath([s, ...anchors.map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), t]) : bezier(s.x, s.y, t.x, t.y)
+                const d = routePath(s, t, anchors.map((p) => ({ x: p.x + origin.x, y: p.y + origin.y }))).d
                 const isReturn = kindMeta(a).ports(a).find((p) => p.id === l.fromPort)?.label === 'return'
                 return (
                   <g
@@ -497,7 +511,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                 const s = portPos[`${l.from}:${l.fromPort}:out`]
                 const t = portPos[`${l.to}:${l.toPort}:in`]
                 if (!s || !t) return null
-                const d = bezier(s.x, s.y, t.x, t.y)
+                const d = routePath(s, t, (l.anchors || []).map((p) => ({ x: p.x + origin.x, y: p.y + origin.y }))).d
                 return (
                   <g
                     key={l.id}
@@ -507,8 +521,20 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                       setSelection([])
                       setSel({ link: l.id, anchor: null })
                     }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      const p = surfacePoint(e.clientX, e.clientY)
+                      mutate((g) => ({
+                        ...g,
+                        links: g.links.map((x) =>
+                          x.id === l.id
+                            ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x - originRef.current.x), y: Math.round(p.y - originRef.current.y) }] }
+                            : x,
+                        ),
+                      }))
+                    }}
                   >
-                    <title>data wire — click selects · Del removes</title>
+                    <title>data wire — click selects · dbl-click adds anchor · Del removes</title>
                     <path d={d} className="edge-hit" />
                     <path d={d} className="edge-line" markerEnd="url(#arw-data)" />
                   </g>
@@ -533,11 +559,15 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
               )}
               {drag && (drag.kind === 'flow' || drag.kind === 'data') && portPos[`${drag.from}:${drag.port}:out`] && (
                 <path
-                  d={bezier(portPos[`${drag.from}:${drag.port}:out`].x, portPos[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y)}
+                  d={orth(portPos[`${drag.from}:${drag.port}:out`].x, portPos[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y).d}
                   className="edge-temp"
                   stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                 />
               )}
+              {compatPorts &&
+                compatPorts.map((k) =>
+                  portPos[k] ? <circle key={k} className={`port-compat${drag && drag.kind === 'data' ? ' pc-data' : ''}`} cx={portPos[k].x} cy={portPos[k].y} r={8} /> : null,
+                )}
             </svg>
             <div style={{ transform: `translate(${origin.x}px, ${origin.y}px)` }}>
               {/* TEXT frames render first so they sit behind their grouped parts */}

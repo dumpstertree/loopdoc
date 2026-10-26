@@ -13,25 +13,6 @@ export const PORT_Y = 16
 
 const portKey = (nodeId, portId, dir) => `${nodeId}:${portId}:${dir}`
 
-// one flow exit port with its label, rendered as a row
-function ExitRow({ node, port, onPortDown }) {
-  return (
-    <div className="exit-row" style={{ position: 'relative' }}>
-      <span className="exit-label">{port.label || '▸'}</span>
-      <span
-        className="port port-flow-out"
-        data-port={portKey(node.id, port.id, 'out')}
-        title="drag to connect"
-        onPointerDown={(e) => {
-          e.stopPropagation()
-          e.preventDefault()
-          onPortDown(e, node.id, port.id)
-        }}
-      />
-    </div>
-  )
-}
-
 // system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
 // pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
 function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut, onDataOut }) {
@@ -879,31 +860,30 @@ export default function NodeCard({
         )}
         {sim && node.kind === 'exit' && <div className="mc-click info">⏏ ends the machine here</div>}
 
-        {/* flow exit ports — rows on the flow canvas, pinned top-right on machine parts */}
-        {mode === 'machine'
-          ? flowOuts.map((p, i) => (
-              <span
-                key={p.id}
-                className={`port port-flow-out port-out-mc${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
-                style={i ? { top: 8 + i * 13 } : undefined}
-                data-port={portKey(node.id, p.id, 'out')}
-                title={
-                  p.label
-                    ? `${p.label} — drag to connect`
-                    : p.id === 'end'
-                      ? 'loop completion pulse — drag to connect'
-                      : 'drag to connect'
-                }
-                onPointerDown={(e) => {
-                  e.stopPropagation()
-                  e.preventDefault()
-                  onPortDown(e, node.id, p.id)
-                }}
-              >
-                {p.label && <span className="port-tag">{p.label}</span>}
-              </span>
-            ))
-          : flowOuts.map((p) => <ExitRow key={p.id} node={node} port={p} onPortDown={onPortDown} />)}
+        {/* flow exit ports — pinned right edge in both canvases: stacked
+            top-right on machine parts, spread along the edge on flow cards */}
+        {flowOuts.map((p, i) => (
+          <span
+            key={p.id}
+            className={`port port-flow-out ${mode === 'machine' ? 'port-out-mc' : 'port-out-flow'}${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
+            style={mode === 'machine' ? (i ? { top: 8 + i * 13 } : undefined) : { top: `calc(${((i + 1) * 100) / (flowOuts.length + 1)}% - 6px)` }}
+            data-port={portKey(node.id, p.id, 'out')}
+            title={
+              p.label
+                ? `${p.label} — drag to connect`
+                : p.id === 'end'
+                  ? 'loop completion pulse — drag to connect'
+                  : 'drag to connect'
+            }
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              onPortDown(e, node.id, p.id)
+            }}
+          >
+            {p.label && <span className="port-tag">{p.label}</span>}
+          </span>
+        ))}
       </div>
       {isText && !sim && onResizeDown && (
         <span
