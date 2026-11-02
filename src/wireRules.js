@@ -2,18 +2,22 @@
 // The chain engine (engine.js), both canvases' drop checks and drag-time
 // port highlighting, and the DRC all consult these, so a rule can never be
 // enforced in one place and forgotten in another.
-import { kindMeta, dataPortType } from './model.js'
+import { kindMeta, dataPortType, uid } from './model.js'
 
-// silent parts — they act on a passing chain (drain/add), write globals on
-// command (setg), or end one (exit); none of them may START a chain
-const SILENT = new Set(['drain', 'add', 'setg', 'exit'])
+// Entry parts are EXPLICIT: ENTER is the machine's door — always a start,
+// impossible to suppress — and SOURCE keeps its legacy self-firing. Nothing
+// else enters a chain by being unconnected any more.
+export function isEntryPart(n) {
+  return n.kind === 'enter' || n.kind === 'source'
+}
 
-// a part is an entry when it has ports but nothing feeds it flow-wise
-export function isEntryPart(n, links) {
-  if (SILENT.has(n.kind)) return false
+// may a flow wire touch this node at all? Pure-data parts (VAR) say no —
+// flow-mode parts otherwise take flow at their implicit in port, and
+// machine parts at their declared one.
+export function takesFlow(n) {
+  if (kindMeta(n).dataOnly) return false
   const ports = (kindMeta(n).ports || (() => []))(n) || []
-  if (!ports.length) return false
-  return !(links || []).some((l) => l.kind !== 'data' && l.to === n.id)
+  return ports.some((p) => p.dir === 'in') || kindMeta(n).mode === 'flow'
 }
 
 // may data port A feed data port B? returns { ok } or { ok: false, why }
@@ -51,9 +55,32 @@ export function compatTargets(g, assets, drag, portKeys) {
     const tn = g.nodes.find((x) => x.id === nid)
     if (!tn) continue
     if (drag.kind === 'flow') {
-      if (pid === 'in' && ((kindMeta(tn).ports || (() => []))(tn) || []).some((p) => p.dir === 'in'))
-        out.push(key)
+      if (pid === 'in' && takesFlow(tn)) out.push(key)
     } else if (ta && dataCanConnect(g, assets, drag.from, drag.port, nid, pid).ok) out.push(key)
   }
   return out
+}
+
+// Ctrl+drag branch-off — a new wire that shares an existing wire's run from
+// the source port up to anchor `idx`, then breaks away to a new target. The
+// canvases own the gesture and the drop point; this owns the grammar and the
+// shared stem, so a branch can never dodge a rule a dragged wire obeys.
+export function branchLink(g, assets, src, idx, to, toPort) {
+  const tn = (g.nodes || []).find((x) => x.id === to)
+  if (!tn) return { ok: false, why: '⚠ drop the branch on a part' }
+  if (to === src.from) return { ok: false, why: '⚠ a part cannot feed itself' }
+  const stem = (src.anchors || []).slice(0, idx + 1).map((a) => ({ x: a.x, y: a.y }))
+  if (src.kind === 'data') {
+    if (to === src.to && toPort === src.toPort) return { ok: false, why: '⚠ that wire already runs there' }
+    const chk = dataCanConnect(g, assets, src.from, src.fromPort, to, toPort)
+    if (!chk.ok) return chk
+    return { ok: true, link: { id: uid('lk'), kind: 'data', from: src.from, fromPort: src.fromPort, to, toPort, anchors: stem } }
+  }
+  if (!takesFlow(tn)) return { ok: false, why: `⚠ ${kindMeta(tn).label || tn.kind} is pure data — no flow wires into or out of it` }
+  if ((g.links || []).some((l) => l.kind !== 'data' && l.from === src.from && l.fromPort === src.fromPort && l.to === to))
+    return { ok: false, why: '⚠ those ports are already wired' }
+  return {
+    ok: true,
+    link: { id: uid('lk'), kind: 'flow', from: src.from, fromPort: src.fromPort, to, toPort: 'in', amount: src.amount ?? 1, anchors: stem },
+  }
 }

@@ -13,6 +13,17 @@ const KINDLABEL = {
   input: 'input', var: 'var', graph: 'graph', machine: 'machine',
 }
 
+// display a typed VAR value at full depth — arrays as lists, structs with
+// every field, nesting exactly as the card's fill-in laid it out
+const fmtV = (v) =>
+  Array.isArray(v)
+    ? `[${v.map(fmtV).join(', ')}]`
+    : v && typeof v === 'object'
+      ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${fmtV(x)}`).join(', ')} }`
+      : v === '' || v === null || v === undefined
+        ? '(empty)'
+        : String(v)
+
 function applyEnter(node, st, graph) {
   const L = st.log
   const A = st.assets
@@ -62,9 +73,11 @@ function applyEnter(node, st, graph) {
       }
       break
     }
-    case 'var':
-      L.push(`📝 ${node.variable?.name || '?'} = ${node.variable?.value || '(empty)'}`)
+    case 'var': {
+      const v = node.variable || {}
+      L.push(`📝 ${v.name || '?'}${v.type ? `:${v.type}` : ''} = ${fmtV(v.value)}`)
       break
+    }
     case 'machine':
       L.push(`⚙ machine "${node.name || '?'}" — ${node.graph?.nodes.length || 0} parts (open it to simulate)`)
       break

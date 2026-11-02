@@ -2,14 +2,15 @@
 // can be unit-tested and, one day, run headless ("the machine only asks and
 // eventually gets an answer").
 //
-// Chain execution: parts with no flow input are ENTRY POINTS, and their
-// chains self-pace — when every token from an entry has reached an end, the
+// Chain execution: ENTER doors (and legacy SOURCE parts) are ENTRY POINTS —
+// nothing self-starts just by being unconnected. Entry chains
+// self-pace — when every token from an entry has reached an end, the
 // entry re-fires. A token moves one hop per step. Blocking sys calls and
 // actions wait in place for a click. Pools never gate: chains pass through
 // them, link circles add/remove pool amounts, and fed ⇣ in pools are live
 // windows that write back to their origin value (incl. windows onto ⚙
 // globals — the session store object passed as mem.g, shared across machines).
-import { resolveCall, fnSig } from './model.js'
+import { resolveCall, fnSig, varValue, assetIcon, typedValue } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const fmt = (v) =>
@@ -18,6 +19,14 @@ const fmt = (v) =>
     : v && typeof v === 'object'
       ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(', ')} }`
       : v
+
+// ascending order: numbers numerically, everything else as text
+const cmpVals = (a, b) => {
+  const x = Number(a)
+  const y = Number(b)
+  if (!Number.isNaN(x) && !Number.isNaN(y)) return x - y
+  return String(a).localeCompare(String(b))
+}
 
 function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
   if (depth > 12) return null
@@ -41,6 +50,79 @@ function dataValue(nodes, links, amounts, mem, nodeId, varId, depth = 0) {
   }
   if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
   if (src.kind === 'getg') return { val: (mem.g || {})[src.gRef] ?? null, from: `⚙ ${src.gName || 'global'}` }
+  if (src.kind === 'var') {
+    // a made value — coerced through its declared type (nested structs too);
+    // mem.types lets the engine know the doc's shapes, optional without it
+    const v = src.variable || {}
+    return { val: v.type ? typedValue(v.type, v.value, mem.types) : null, from: `📝 ${v.name || 'var'}` }
+  }
+  if (src.kind === 'enter') {
+    // one of the machine's door variables — set on the ENTER card (or fed
+    // from the parent's MACHINE node), typed per its declared type; array
+    // types come through as lists from their comma text
+    const v = (src.vars || []).find((x) => x.id === w.fromPort)
+    if (v) return { val: v ? varValue(v) : null, from: `⤷ ${src.name || 'enter'}.${v?.name || '?'}` }
+    // …or a door 📦 asset — the handle to the picked asset itself
+    const a = (src.assets || []).find((x) => x.id === w.fromPort)
+    if (a) {
+      const found = (mem.assets || []).find((x) => x.id === a.asset)
+      return { val: found || null, from: `⤷ ${src.name || 'enter'}.${assetIcon(found?.kind)} ${a.name || 'asset'}` }
+    }
+    return { val: null, from: `⤷ ${src.name || 'enter'}` }
+  }
+  if (src.kind === 'clone') {
+    // a deep copy — downstream writes hit the copy, never the origin value
+    const d = dataValue(nodes, links, amounts, mem, src.id, '__val__', depth + 1)
+    const v = d ? d.val : null
+    if (v === null || v === undefined) return { val: null, from: src.name || 'clone' }
+    let c = v
+    try {
+      c = JSON.parse(JSON.stringify(v))
+    } catch {
+      /* circular or unserializable — pass the value through */
+    }
+    return { val: c, from: src.name || 'clone' }
+  }
+  if (['append', 'join', 'remove', 'removeat', 'sort'].includes(src.kind)) {
+    // pure array arithmetic — null (never fired / unwired) on any side means no value yet
+    // JOIN reads its first array from ⇣ a — its __arr__ port is the output
+    const d = dataValue(nodes, links, amounts, mem, src.id, src.kind === 'join' ? '__a__' : '__arr__', depth + 1)
+    const arr = d ? d.val : null
+    if (!Array.isArray(arr)) return { val: null, from: src.name || src.kind }
+    const side = (port) => {
+      const x = dataValue(nodes, links, amounts, mem, src.id, port, depth + 1)
+      return x ? x.val : null
+    }
+    const from = { val: (x) => `${src.name || 'append'}.${x || '?'}` }
+    if (src.kind === 'append') {
+      const v = side('__val__')
+      return v === null ? { val: null, from: src.name || 'append' } : { val: [...arr, v], from: from.val('val') }
+    }
+    if (src.kind === 'join') {
+      const b = side('__b__')
+      return Array.isArray(b) ? { val: [...arr, ...b], from: src.name || 'join' } : { val: null, from: src.name || 'join' }
+    }
+    if (src.kind === 'remove') {
+      const v = side('__val__')
+      return v === null
+        ? { val: null, from: src.name || 'remove' }
+        : { val: arr.filter((x) => !(x === v || String(x) === String(v))), from: from.val('val') }
+    }
+    if (src.kind === 'removeat') {
+      const i = Math.trunc(Number(side('__index__')))
+      if (!Number.isFinite(i)) return { val: null, from: src.name || 'remove at' }
+      const out = [...arr]
+      if (i >= 0 && i < out.length) out.splice(i, 1)
+      return { val: out, from: src.name || 'remove at' }
+    }
+    const f = src.field // sort: by one field of struct items, else by value itself
+    return {
+      val: [...arr].sort((p, q) =>
+        cmpVals(f && p && typeof p === 'object' ? p[f] : p, f && q && typeof q === 'object' ? q[f] : q),
+      ),
+      from: src.name || 'sort',
+    }
+  }
   const v = (mem.call || {})[w.from]?.[w.fromPort]
   return { val: v === undefined ? null : v, from: src.name || 'sys call' }
 }
@@ -68,6 +150,37 @@ function originRef(nodes, links, a, mem, nodeId, varId, depth = 0) {
       set: (v) => {
         mem.g = mem.g || {}
         mem.g[src.gRef] = v
+      },
+    }
+  }
+  if (src.kind === 'enter') {
+    // a door variable — readable as a window (a fed pool may mirror it), but
+    // chains never write back; it is set on the card, not by the sim
+    const v = (src.vars || []).find((x) => x.id === w.fromPort)
+    if (v) return { key: () => `ev:${src.id}:${w.fromPort}`, get: () => varValue(v) }
+    // a door 📦 asset — a read-only handle window onto the picked asset
+    const a = (src.assets || []).find((x) => x.id === w.fromPort)
+    if (a)
+      return {
+        key: () => `ev:${src.id}:${w.fromPort}`,
+        get: () => (mem.assets || []).find((x) => x.id === a.asset) || null,
+      }
+    return null
+  }
+  if (src.kind === 'clone') {
+    // a detached cell — fed windows read through to the copy and their
+    // arithmetic NEVER writes back through a clone to the base value
+    return {
+      key: () => 'cl:' + src.id,
+      get: () => {
+        const d = dataValue(nodes, links, a, mem, src.id, '__val__', depth + 1)
+        const v = d ? d.val : null
+        if (v === null || v === undefined) return null
+        try {
+          return JSON.parse(JSON.stringify(v)) // the copy — never the base reference
+        } catch {
+          return v
+        }
       },
     }
   }
@@ -144,14 +257,18 @@ function callSystem(n, nodes, links, a, mem, log, assets) {
   }
 }
 
-// Chain execution: parts with no flow input are ENTRY POINTS, and their
-// chains self-pace — when every token from an entry has reached an end, the
+// Chain execution: ENTER doors (and legacy SOURCE parts) are ENTRY POINTS —
+// nothing self-starts just by being unconnected. Entry chains
+// self-pace — when every token from an entry has reached an end, the
 // entry re-fires. A token moves one hop per step. Blocking sys calls and
 // actions wait in place for a click. Pools never gate: chains pass through
 // them, link circles add/remove pool amounts, and fed ⇣ in pools are live
 // windows that write back to their origin value.
 function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   const a = { ...prev }
+  // the doc's assets live on mem so ENTER 📦 ports (and anything downstream)
+  // can resolve handles without threading a new argument through every read
+  mem.assets = assets || []
   const flows = links.filter((l) => l.kind !== 'data')
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const outsOf = (id) => flows.filter((e) => e.from === id)
@@ -178,12 +295,12 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     ;(mem.fedKey = mem.fedKey || {})[n.id] = k
   }
 
-  // an entry fires whenever none of its chains are in flight
+  // entries are explicit — ENTER doors always start chains, SOURCE too; an
+  // entry fires whenever none of its chains are in flight
   mem.tseq = mem.tseq || 0
   const toks = (mem.tokens = mem.tokens || [])
   for (const e of nodes)
-    if (isEntryPart(e, links) && !insOf(e.id).length && !toks.some((t) => t.entry === e.id))
-      toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
+    if (isEntryPart(e) && !toks.some((t) => t.entry === e.id)) toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
   const qBudget = {}
   for (const n of nodes) if (n.kind === 'queue') qBudget[n.id] = n.rate ?? 1
@@ -405,7 +522,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
     if (n.kind === 'setg') {
       // write a global as the chain passes — unwired ⇣ leaves it untouched
       if (!n.gRef) {
-        log.push(`⚠ ${n.name || 'SET'} — no global selected, chain continues`)
+        log.push(`⚠ ${n.name || 'SET GLOBAL'} — no global selected, chain continues`)
         advance(t, n)
         continue
       }
@@ -413,7 +530,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       if (d && d.val !== null && d.val !== undefined) {
         ;(mem.g = mem.g || {})[n.gRef] = d.val
         log.push(`⚙ set ⚙ ${n.gName || 'global'} = ${fmt(d.val)} (from ${d.from})`)
-      } else log.push(`⚠ ${n.name || 'SET'} — ⇣ ${n.gName || 'value'} unwired, ⚙ ${n.gName || 'global'} unchanged`)
+      } else log.push(`⚠ ${n.name || 'SET GLOBAL'} — ⇣ ${n.gName || 'value'} unwired, ⚙ ${n.gName || 'global'} unchanged`)
       advance(t, n)
       continue
     }

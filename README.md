@@ -8,6 +8,14 @@ A design-doc authoring tool for game loops. One vocabulary, two canvases:
 Both are `Graph ▸ Node + Link`. Both use the same node card, the same port
 model, and the same **typed data wires**.
 
+## Layout
+
+Top-level tabs split the document: **DESIGN** (the canvases, breadcrumb through
+nested graphs) · **BUSINESS** / **MOOD** notes · **ASSETS**, with a sub-tab
+group for 🎨 **Art** · 🖥 **UI** · 🔊 **Audio** · 🎮 **Input** · **DATA**, with a
+sub-tab group for ⚙️ **Systems** (typed APIs) · ⚙ **Global variables** ·
+≡ **Types**. Every registry lives inside those two tabs — no side panel.
+
 ## Run
 
 ```sh
@@ -27,7 +35,8 @@ npm run dev
 | `api fn` | `{ id, name, inputs:[{id,name,type}], outputs:[…] }`               |
 
 A `flow` graph moves **control** between nodes. A `machine` graph runs
-**chains**: every part with no flow input is an *entry point*; a chain walks
+**chains**: `ENTER` parts are its *entry points* — always the start, never
+implicit (legacy `SOURCE` parts still self-fire too); a chain walks
 downstream one hop per step, and the entry re-fires when all of its chains
 reach an end. Link circles set the `amount` a chain adds/removes from pools
 it passes through. `data` links carry a typed value from a ⇡ output
@@ -37,16 +46,32 @@ to a ⇣ input **of the same type** (types compare case-insensitively).
 
 canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
 graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
-`LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (assign) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
+`LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (**pure data, no flow ports** — make a typed
+value: pick any type and fill in every field, recursively; child structs nest
+inside, arrays grow row by row, `bool` is a pick and `asset` a 📦 dropdown;
+recursive types collapse to a ↻ nest-deeper click; **⇡ publishes the typed
+value** for any ⇣ of that type · corner grip widens the form) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
 (nested machine — opens full-screen like any nested graph; the machine's
-EXIT parts appear here as named output ports).
+EXIT parts appear here as named output ports, and every ENTER variable and
+📦 asset of every enter door appears here as a ⇣ data input — one complete
+list) ·
+both canvases also carry `GET GLOBAL` (reads a ⚙ doc-wide variable) and
+`SET GLOBAL` (flow passes through as it writes the ⚙ — ⇣ takes the value,
+same type as the picked variable).
 
-machine canvas: `SOURCE` (chain entry) · `DRAIN` (removes its amount from
+machine canvas: `ENTER` (**the machine's door** — always the chain start,
+nothing else self-starts · a dynamic list of typed **variables** you set on
+the card — every type and its `[]` array form, arrays typed as comma lists —
+each publishes ⇡ data inside the machine and grows a matching
+⇣ input on the parent's MACHINE node · plus **📦 assets** — `+ asset` picks
+any doc asset on the card, and its handle publishes ⇡ inside as the base
+type `asset`, likewise growing a ⇣ asset input on the MACHINE node above) ·
+`SOURCE` (legacy chain entry) · `DRAIN` (removes its amount from
 upstream pools — and its `out` lets the chain continue **after** the subtraction,
 so an `IF` placed there reads drained values; set `n` on the card, or wire ⇣
 `in:int` and the field hides) · `ADD` (drain's mirror — adds its amount to
 upstream pools per pass, **signed**: `+1` for descend, `−1` for ascend; ⇣
-`in:int` dictates) · `GLOBAL` (reads a ⚙ doc-wide variable) · `SET` (writes
+`in:int` dictates) · `GET GLOBAL` (reads a ⚙ doc-wide variable) · `SET GLOBAL` (writes
 one as the chain passes) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
 `CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
@@ -65,6 +90,17 @@ pools are short) · `SYS CALL` (calls its system fn as the chain
 passes · tick **⏳ can block** and it stays *opened* — the chain freezes
 until you click it to return) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT` ·
+**array tools** (pure data, no flow) — `APPEND` (⇣ arr + ⇣ val → ⇡ arr with the
+value at the end) · `JOIN` (⇣ a + ⇣ b → one array) · `REMOVE` (drops every
+element equal to ⇣ val) · `REMOVE AT` (cuts the element at ⇣ `at:int`) ·
+`SORT` (ascending — by a chosen field of struct items, or by value) · they all
+learn their item type from the first array wired in; `CLONE` takes any ⇣ value
+and ⇡ a deep copy — windows, pools and foreach write-backs touch the copy,
+**never** the base value ·
+`TODO` (checklist leaf on **both** canvases — add task lines, tick the
+checkboxes, `Enter` adds the next task; drag its corner grip to widen it and
+long tasks wrap onto further lines; a silent note that never joins wires or
+the chain sim) ·
 `EXIT` (the machine ends here; name it — `victory`, `defeat`, `flee` — and the
 parent graph's MACHINE node grows a matching output port to continue from).
 
@@ -86,10 +122,11 @@ INSPECT node and it explodes into `⇡ name`, `⇡ hp`, … for each field.
 
 ## Systems & data wires
 
-Declare **T**ypes in the docked 📦 panel: a name plus the fields it is made
+Declare **T**ypes in the **DATA** tab: a name plus the fields it is made
 up of (each field picks its type from the same dropdown). Basic types
-(`int · float · string · bool`) and their `[]` array versions are always
-available; declared types join the list — every fn variable type is picked,
+(`int · float · string · bool · asset`) and their `[]` array versions are always
+available — `asset` carries a handle to one of the doc's 📦 assets, what
+ENTER doors pass in; declared types join the list — every fn variable type is picked,
 never typed. Renaming a type cascades into fn variables and foreach item
 types.
 
@@ -108,11 +145,19 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   begin, hover glow on wires, and while dragging a wire every ⇣ port that
   would accept it **pulses** (type-checked live — ifb side rules included)
 - dbl-click canvas → drop a STEP · drag ◆ out-port onto a node → flow link
-- click link → select (Del removes) · dbl-click link → add anchor, drag it
-  (flow *and* data wires, both canvases)
+- click link → select (Del removes) · dbl-click link → add anchor · **drag an
+  anchor** to bend the run (90° breaks only) · **Ctrl+drag an anchor** splits a
+  new branch off that point to another part — the branch shares the wire's run
+  up to the anchor, then elbows away (flow *and* data wires, both canvases)
+- **dbl-click a GRAPH or MACHINE card walks inside it** (the `open →` button
+  still does too); the breadcrumb walks back out
 - **box-select**: drag on empty canvas (both canvases) · `Shift`-click or
   box-add to grow a selection · drag one selected node to move the whole group
 - `Ctrl+C/X/V` copy/cut/paste (nested graphs & wires included) · `Ctrl+A`
+- **space opens the node finder** on both canvases: type to fuzzy-search every
+  droppable node/part (labels first, hint prose second, best match on top),
+  `↑`/`↓` move the highlight, `Enter` or click drops it at the cursor,
+  `Esc` or clicking away closes
 - machines mirror all of the above: box-select, group-drag, `Ctrl+C/X/V`,
   dbl-click a wire to drop **anchors** that steer its route (Del removes)
 - **TEXT** frames (flow *and* machine canvases) resize via the corner grip and
@@ -124,12 +169,12 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   are never moved, they snap the next time you touch them
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
-- **⚙ GLOBALS** (assets panel): document-wide named variables with defaults —
+- **⚙ GLOBALS** (DATA tab): document-wide named variables with defaults —
   the **live session state of the game**: machine sims read and write the one
-  shared store (SET parts *and* fed pools writing through their window), so
+  shared store (SET GLOBAL parts *and* fed pools writing through their window), so
   exploration's `depth` hands straight through to combat's next run; pools
   still reset per run — only ↺ defaults / opening a file starts a new session
-  (**GLOBAL** parts, flow & machine, read; **SET** parts write)
+  (**GET GLOBAL** parts, flow & machine, read; **SET GLOBAL** parts write)
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
   loop body, no entry), last-iteration item reads on end chains, drain vs
@@ -148,7 +193,7 @@ src/NodeCard.jsx     the node renderer shared by both canvases
 src/GraphCanvas.jsx  flow canvas: drag/connect/select/paste/data wires
 src/MachineCanvas.jsx machine canvas: full-screen editor + chain simulation
 src/MachineCanvasLegacy.jsx previous machinations step-tick sim (backup)
-src/AssetsPanel.jsx  docked asset registry + system API editor
+src/AssetsPanel.jsx  ASSETS + DATA tabs: asset registry + system API editor
 src/Traverse.jsx     flow-graph walkthrough
 src/App.jsx          shell: tabs, doc store, save/open, breadcrumbs
 src/theme.css        waybar-flavored theme (near-black, magenta, square)

@@ -70,12 +70,24 @@ function scanGraph(g, assets, types, globals, add) {
       add('warn', label(n), `reads ${n.objType} — no longer a declared type`)
     if (n.kind === 'foreach' && n.itemType && !BASIC_TYPES.includes(n.itemType) && !isDeclared(n.itemType))
       add('warn', label(n), `item type ${n.itemType} is no longer declared`)
+    if (n.kind === 'var') {
+      const v = n.variable || {}
+      if (!(v.name || '').trim()) add('warn', label(n), 'assigns to no name — the walkthrough can only show "?"')
+      const vt = String(v.type || '').replace('[]', '').trim()
+      if (vt && vt !== 'any' && !BASIC_TYPES.includes(vt) && !isDeclared(vt))
+        add('warn', label(n), `makes a ${vt} — no longer a declared type`)
+    }
   }
 
   if (g.mode !== 'machine') {
     // ---- flow-graph rules ----------------------------------------------------
     for (const n of nodes) {
       const m = kindMeta(n)
+      if (m.dataOnly) {
+        if (g.entry === n.id) add('error', label(n), 'set as the graph entry — but it is pure data, no flow ever starts there')
+        if (flows.some((l) => l.from === n.id || l.to === n.id))
+          add('error', label(n), 'has flow wires — a pure-data part lives outside the chain, remove them')
+      }
       if (n.kind === 'condition') {
         if (!outFrom(n.id, 'true').length) add('warn', label(n), 'no TRUE exit wired')
         if (!outFrom(n.id, 'false').length) add('warn', label(n), 'no FALSE exit wired')
@@ -87,6 +99,8 @@ function scanGraph(g, assets, types, globals, add) {
         add('warn', label(n), `${m.label} opens an empty graph`)
       if (n.kind === 'machine' && n.graph && !(n.graph.nodes || []).some((x) => x.kind === 'exit'))
         add('info', label(n), 'machine has no EXIT — the parent can only see a generic out, not outcomes')
+      if (n.kind === 'machine' && n.graph && (n.graph.nodes || []).length && !(n.graph.nodes || []).some((x) => x.kind === 'enter' || x.kind === 'source'))
+        add('info', label(n), 'machine has no ENTER — nothing starts its chains')
       if (n.kind === 'graph' && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
         add('info', label(n), 'sub graph returns here and nothing continues — flow ends')
       if (m.mode === 'flow' && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
@@ -100,10 +114,17 @@ function scanGraph(g, assets, types, globals, add) {
   // ---- machine rules -----------------------------------------------------------
   const entryNodes = nodes.filter((n) => isEntryPart(n, g.links))
   if (nodes.length && !entryNodes.length && (g.links || []).length)
-    add('error', '', 'nothing can run — every part has a flow input (closed cycle, no entry)')
+    add('error', '', 'nothing can run — no entry: add an ENTER part (only ENTER and SOURCE start chains)')
   const allReach = reach(entryNodes.map((n) => n.id))
 
   for (const n of nodes) {
+    if (n.kind === 'enter' && !anyOut(n.id))
+      add('info', label(n), 'chains fire into nothing — its out is unwired')
+    for (const a of n.assets || []) {
+      if (!a.asset) add('warn', label(n), `📦 row “${a.name || '?'}” has no asset picked yet`)
+      else if (assets.length && !assets.some((x) => x.id === a.asset))
+        add('error', label(n), `📦 "${a.name || '?'}" no longer exists — re-pick or remove (manage them in the 📦 panel)`)
+    }
     if (n.kind === 'syscall') {
       const r = resolveCall((n.calls || [])[0], assets)
       if (!r) add('error', label(n), 'has no system fn selected')
@@ -126,6 +147,14 @@ function scanGraph(g, assets, types, globals, add) {
     }
     if (n.kind === 'for' && !dataTo(n.id, '__to__')) add('error', label(n), 'counted loop has no ⇣ to:int — nothing to count to')
     if (n.kind === 'foreach' && !dataTo(n.id, '__arr__')) add('error', label(n), 'foreach has no ⇣ arr source — it can never iterate')
+    if (['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind) && !dataTo(n.id, '__arr__'))
+      add('error', label(n), 'no ⇣ array wired — it has nothing to work on')
+    if (n.kind === 'join' && dataTo(n.id, '__arr__') && !dataTo(n.id, '__b__'))
+      add('error', label(n), '⇣ b is unwired — join needs two arrays')
+    if ((n.kind === 'append' || n.kind === 'remove') && !dataTo(n.id, '__val__'))
+      add('error', label(n), `⇣ val unwired — nothing to ${n.kind === 'append' ? 'append' : 'remove'}`)
+    if (n.kind === 'removeat' && !dataTo(n.id, '__index__')) add('error', label(n), '⇣ at:int is unwired — no index to cut at')
+    if (n.kind === 'clone' && !dataTo(n.id, '__val__')) add('error', label(n), '⇣ val unwired — nothing to clone')
 
     if ((n.kind === 'for' || n.kind === 'foreach') && hasIn(n.id)) {
       const body = outFrom(n.id, 'out').length > 0
@@ -180,7 +209,7 @@ function scanGraph(g, assets, types, globals, add) {
   for (const x of exits)
     if (!allReach.has(x.id) && linked(x.id)) add('warn', label(x), `exit "${x.name || '?'}" is unreachable — no flow path from any entry leads here`)
 
-  for (const n of nodes) if (n.kind !== 'text' && !n.parent && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')
+  for (const n of nodes) if (n.kind !== 'text' && n.kind !== 'todo' && n.kind !== 'enter' && !n.parent && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')
 }
 
 // whole doc ---------------------------------------------------------------------

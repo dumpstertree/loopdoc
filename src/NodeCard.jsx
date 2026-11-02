@@ -4,7 +4,9 @@
 // so the canvas can measure them for edge routing; out-ports are drag
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
-import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid } from './model.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, fieldsOf, emptyValue, typedValue } from './model.js'
+import { dataValue, fmt } from './engine.js'
+import { TypeSelect } from './AssetsPanel.jsx'
 
 export const NODE_W_FLOW = 216
 export const NODE_W_MC = 184
@@ -237,6 +239,36 @@ function StructArrayInputs({ v, simCall, types, onSimOut }) {
   )
 }
 
+// one checklist line — a textarea that wraps long tasks onto further lines and
+// grows its own height; Enter adds the next task, Shift+Enter breaks the line
+function TaskLine({ value, done, onChange, onEnter }) {
+  const ref = React.useRef(null)
+  const fit = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = '0px'
+    el.style.height = el.scrollHeight + 'px'
+  }
+  React.useLayoutEffect(fit, [value])
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      className={`inp todo-line${done ? ' todo-done' : ''}`}
+      placeholder="task…"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          onEnter(e.currentTarget)
+        }
+      }}
+    />
+  )
+}
+
 function GenerateAsset({ node, onPatch }) {
   const gen = node.gen || null
   const set = (g) => onPatch({ gen: g })
@@ -299,18 +331,165 @@ function AssetPick({ node, assets, kindFilter, placeholder, onPatch }) {
   )
 }
 
+// ---- VAR typed fill-in --------------------------------------------------------
+// One editor per value, recursing through the type: a struct opens into an
+// indented block of EVERY field (child structs nest inside, arrays grow row
+// by row), leaves are inputs — bool a true/false pick, asset a 📦 dropdown.
+// A type that contains itself collapses to a ↻ button: nesting deeper is one
+// deliberate click, so a recursive type can't runaway-grow the card.
+function ValueEditor({ types, assets, typeId, value, onValue, path = [] }) {
+  const t = String(typeId || '').trim()
+  if (!t) return <span className="nd-sub">pick a type…</span>
+  if (t.endsWith('[]'))
+    return (
+      <ArrayEditor
+        types={types}
+        assets={assets}
+        base={t.replace(/\[\s*\]$/, '').trim()}
+        items={Array.isArray(value) ? value : []}
+        onItems={onValue}
+        path={path}
+      />
+    )
+  const fields = fieldsOf(types, t)
+  if (fields)
+    return (
+      <StructEditor
+        types={types}
+        assets={assets}
+        typeId={t}
+        fields={fields}
+        value={value}
+        onValue={onValue}
+        path={path}
+      />
+    )
+  if (t === 'bool')
+    return (
+      <select
+        className="inp"
+        value={value === true || value === 'true' ? 'true' : 'false'}
+        onChange={(e) => onValue(e.target.value)}
+        title="true or false"
+      >
+        <option value="false">false</option>
+        <option value="true">true</option>
+      </select>
+    )
+  if (t === 'asset')
+    return (
+      <select
+        className="inp"
+        value={typeof value === 'string' ? value : ''}
+        onChange={(e) => onValue(e.target.value || null)}
+        title="one of the doc's 📦 assets — the handle itself"
+      >
+        <option value="">{assets.length ? 'pick an asset…' : 'no assets — add in 📦 panel'}</option>
+        {assets.map((a) => (
+          <option key={a.id} value={a.id}>
+            {assetIcon(a.kind)} {a.name || '(unnamed)'}
+          </option>
+        ))}
+      </select>
+    )
+  // int · float · string · legacy undeclared — a plain text cell
+  return (
+    <input
+      className="inp"
+      style={{ width: '100%' }}
+      placeholder={t + '…'}
+      value={value == null || typeof value === 'object' ? '' : String(value)}
+      onChange={(e) => onValue(e.target.value)}
+      onKeyDown={(e) => e.stopPropagation()}
+    />
+  )
+}
+
+function ArrayEditor({ types, assets, base, items, onItems, path }) {
+  const isStruct = !!fieldsOf(types, base)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {items.map((x, i) => (
+        <div key={i} className="nd-row" style={{ alignItems: 'flex-start', gap: 4 }}>
+          <span className="nd-sub" style={{ width: 16, textAlign: 'right', paddingTop: 4 }}>
+            {i + 1}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <ValueEditor
+              types={types}
+              assets={assets}
+              typeId={base}
+              value={x}
+              onValue={(v) => onItems(items.map((y, j) => (j === i ? v : y)))}
+              path={path}
+            />
+          </div>
+          <button
+            className="icon-btn"
+            title="remove item"
+            onClick={() => onItems(items.filter((_, j) => j !== i))}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button className="tb-btn" title={`add a ${base} item`} onClick={() => onItems([...items, emptyValue(base, types)])}>
+        {isStruct ? '+ ' + base : `+ ${base} item`}
+      </button>
+    </div>
+  )
+}
+
+function StructEditor({ types, assets, typeId, fields, value, onValue, path }) {
+  const [open, setOpen] = React.useState(false)
+  const cyc = path.includes(typeId)
+  if (cyc && !open)
+    return (
+      <button className="tb-btn" title={`${typeId} contains itself — nest one level deeper`} onClick={() => setOpen(true)}>
+        ↻ {typeId} — nest deeper
+      </button>
+    )
+  const obj = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        borderLeft: '1px solid var(--line)',
+        paddingLeft: 8,
+      }}
+    >
+      {fields.map((f) => (
+        <div key={f.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span className="nd-sub">
+            {f.name}:<b>{f.typeId}</b>
+          </span>
+          <ValueEditor
+            types={types}
+            assets={assets}
+            typeId={f.typeId}
+            value={obj[f.name]}
+            onValue={(v) => onValue({ ...obj, [f.name]: v })}
+            path={[...path, typeId]}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function NodeCard({
   node,
   graph, // the owning graph (needed for data port lookups / sub counts)
   assets, // registry visible here (plus local generated assets, __local: true)
   types, // declared doc data types (struct value editing)
-  globals = [], // document-wide global variables (GLOBAL/SET cards)
+  globals = [], // document-wide global variables (GET/SET GLOBAL cards)
   gvals = null, // live session values of the globals (shared across machines)
   selected,
   isEntry,
   sim, // machine sim state for display, or null
   onPatch,
-  onDelete,
   onSelect,
   onToggleEntry,
   onOpenGraph,
@@ -326,9 +505,12 @@ export default function NodeCard({
   const isMachineKind = meta.mode === 'machine'
   const ports = (meta.ports && meta.ports(node)) || []
   const flowOuts = ports.filter((p) => p.dir === 'out')
-  const hasIn = meta.mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
+  const hasIn = meta.dataOnly ? false : meta.mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
   const isText = node.kind === 'text'
-  const W = isText ? node.w || NODE_W_MC : isMachineKind ? NODE_W_MC : NODE_W_FLOW
+  // TEXT and TODO carry their own width (corner grip); TODO grows its height
+  // from the task lines and VAR from its typed fill-in, so those store w only
+  const sized = isText || node.kind === 'todo' || node.kind === 'var'
+  const W = sized ? node.w || (mode === 'machine' ? NODE_W_MC : NODE_W_FLOW) : isMachineKind ? NODE_W_MC : NODE_W_FLOW
   const H = isText ? node.h || undefined : undefined
 
   // machine live values
@@ -361,6 +543,13 @@ export default function NodeCard({
       style={{ left: node.x, top: node.y, width: W, height: H }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
       onClick={() => onCardClick && onCardClick(node.id)}
+      onDoubleClick={(e) => {
+        // dbl-click a GRAPH/MACHINE card walks into it — the open → button
+        // stays for one-clickers; typing or clicking a control never enters
+        if (!['graph', 'machine'].includes(node.kind) || !onOpenGraph) return
+        if (e.target.closest('input, textarea, select, button, [contenteditable]')) return
+        onOpenGraph(node.id)
+      }}
     >
       {hasIn && <span className="port port-flow-in" data-port={portKey(node.id, 'in', 'in')} title="flow in" />}
 
@@ -399,6 +588,14 @@ export default function NodeCard({
             {tokWait ? '⏳' : `●${tokHere > 1 ? tokHere : ''}`}
           </span>
         )}
+        {node.kind === 'todo' && (node.todos || []).length > 0 && (
+          <span
+            className={`mc-amount ${node.todos.every((t) => t.done) ? 'full' : ''}`}
+            title={`${node.todos.filter((t) => t.done).length} of ${node.todos.length} tasks done`}
+          >
+            ✓{node.todos.filter((t) => t.done).length}/{node.todos.length}
+          </span>
+        )}
         {isEntry && <span className="entry-flag">▶ START</span>}
         {mode === 'flow' && (
           <button
@@ -414,15 +611,10 @@ export default function NodeCard({
             ▶
           </button>
         )}
-        {mode === 'flow' && (
-          <button className="icon-btn" title="delete node" onPointerDown={(e) => e.stopPropagation()} onClick={() => onDelete(node.id)}>
-            ×
-          </button>
-        )}
       </div>
 
       <div className="nd-body" onPointerDown={(e) => e.stopPropagation()}>
-        {(mode === 'flow' || node.kind === 'text') && (
+        {(mode === 'flow' || node.kind === 'text' || node.kind === 'todo') && (
           <input
             className="nd-name"
             placeholder={meta.label.toLowerCase() + ' name…'}
@@ -602,25 +794,67 @@ export default function NodeCard({
         {node.kind === 'unload' && <AssetPick node={node} assets={assets} placeholder="asset to unload…" onPatch={onPatch} />}
         {node.kind === 'input' && <AssetPick node={node} assets={assets} kindFilter="input" placeholder="input to apply…" onPatch={onPatch} />}
         {node.kind === 'var' && (
-          <div className="nd-row">
-            <input
-              className="inp"
-              style={{ flex: 1 }}
-              placeholder="var…"
-              value={node.variable?.name || ''}
-              onChange={(e) => onPatch({ variable: { ...(node.variable || {}), name: e.target.value } })}
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-            <span className="nd-sub">=</span>
-            <input
-              className="inp"
-              style={{ flex: 1 }}
-              placeholder="value…"
-              value={node.variable?.value || ''}
-              onChange={(e) => onPatch({ variable: { ...(node.variable || {}), value: e.target.value } })}
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-          </div>
+          <>
+            <div className="nd-row">
+              <input
+                className="inp"
+                style={{ flex: 1, minWidth: 0 }}
+                placeholder="var…"
+                value={node.variable?.name || ''}
+                onChange={(e) => onPatch({ variable: { ...(node.variable || {}), name: e.target.value } })}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              <span className="nd-sub">=</span>
+              <TypeSelect
+                types={types}
+                value={node.variable?.type || ''}
+                title="make it any type — structs and their [] forms fill in every field below, nested types included"
+                onChange={(type) =>
+                  onPatch({ variable: { ...(node.variable || {}), type, value: emptyValue(type, types) } })
+                }
+              />
+            </div>
+            {node.variable?.type ? (
+              <ValueEditor
+                types={types}
+                assets={assets}
+                typeId={node.variable.type}
+                value={node.variable.value}
+                onValue={(value) => onPatch({ variable: { ...node.variable, value } })}
+              />
+            ) : (
+              <input
+                className="inp"
+                style={{ width: '100%' }}
+                placeholder="value…"
+                value={node.variable?.value ?? ''}
+                onChange={(e) => onPatch({ variable: { ...(node.variable || {}), value: e.target.value } })}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            )}
+            {/* the value this VAR makes ⇡ — a data port like any other, no flow */}
+            {node.variable?.type && (
+              <div className="dvar out" title="what ⇣ wires read — drag to feed any ⇣ of the same type">
+                <span>
+                  ⇡ {node.variable.name || 'value'}:<b>{node.variable.type}</b>
+                </span>
+                {(() => {
+                  const s = fmt(typedValue(node.variable.type, node.variable.value, types))
+                  return s === '' || s === null || s === undefined ? null : <span className="dval">{s}</span>
+                })()}
+                <span
+                  className="port-data out"
+                  data-port={portKey(node.id, '__val__', 'out')}
+                  title="drag to feed a ⇣ of the same type"
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    e.preventDefault()
+                    onDataPortDown(e, node.id, '__val__')
+                  }}
+                />
+              </div>
+            )}
+          </>
         )}
         {node.kind === 'graph' && (
           <div className="nd-row">
@@ -642,6 +876,18 @@ export default function NodeCard({
             </button>
           </div>
         )}
+        {/* one ⇣ per ENTER variable of the nested machine — every door's
+            vars gathered into one complete input list */}
+        {node.kind === 'machine' &&
+          enterVarsOf(node.graph).map((v) => (
+            <div className="dvar" key={v.id} title={`feeds ⇡ ${v.name} on the ENTER “${v.enter}” inside — wire any ${v.type} in`}>
+              <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+              <span>
+                ⇣ {v.name}:<b>{v.type}</b>
+              </span>
+              <span className="nd-sub">↳ {v.enter}</span>
+            </div>
+          ))}
         {node.kind === 'step' && (
           <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
         )}
@@ -854,6 +1100,201 @@ export default function NodeCard({
             ⏳ can block — chain waits until clicked to return
           </label>
         )}
+        {/* APPEND · JOIN · REMOVE · REMOVE AT · SORT · CLONE — pure-data array tools;
+            wiring an array teaches the item type, every port follows */}
+        {['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&
+          (() => {
+            const dp = dataPorts(node, assets)
+            const fields = node.kind === 'sort' ? fieldsOf(types, node.itemType) : null
+            return (
+              <>
+                {node.kind === 'sort' && (
+                  <div className="nd-row" title="order by one field of struct items, or by the values themselves">
+                    <span className="nd-sub">by</span>
+                    <select
+                      className="inp"
+                      style={{ flex: 1 }}
+                      value={node.field || ''}
+                      onChange={(e) => onPatch({ field: e.target.value })}
+                    >
+                      <option value="">value</option>
+                      {(fields || []).map((f) => (
+                        <option key={f.id} value={f.name}>
+                          {f.name}:{f.typeId}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {dp.in.map((p) => (
+                  <div className="dvar" key={p.id} title={`needs ${p.type} wired in`}>
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                  </div>
+                ))}
+                {dp.out.map((p) => {
+                  const d = sim ? dataValue(graph.nodes, graph.links, sim.amounts || {}, sim.mem || {}, node.id, p.id) : null
+                  return (
+                    <div className="dvar out" key={p.id} title="the computed array — any consumer can read it">
+                      <span>
+                        ⇡ {p.name}:<b>{p.type}</b>
+                      </span>
+                      {d && d.val !== null && <span className="dval">{fmt(d.val)}</span>}
+                      <span
+                        className="port-data out"
+                        data-port={portKey(node.id, p.id, 'out')}
+                        title="drag to feed a ⇣ of the same type"
+                        onPointerDown={(e) => {
+                          e.stopPropagation()
+                          e.preventDefault()
+                          onDataPortDown(e, node.id, p.id)
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </>
+            )
+          })()}
+        {node.kind === 'enter' && (
+          <>
+            <div className="nd-sub" title="entries are explicit — chains start here, always">
+              ▶ always a chain start
+            </div>
+            {(node.vars || []).map((v, i) => (
+              <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div className="nd-row">
+                  <input
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    placeholder="variable name…"
+                    value={v.name}
+                    title="this variable also appears as a ⇣ input on the MACHINE node above"
+                    onChange={(e) => onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  />
+                  <TypeSelect
+                    types={types}
+                    value={v.type}
+                    title="the variable’s data type — every type with its [] array form"
+                    onChange={(type) => onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, type } : x)) })}
+                  />
+                  <button
+                    className="icon-btn"
+                    title="remove variable"
+                    onClick={() => onPatch({ vars: node.vars.filter((_, j) => j !== i) })}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="dvar out" title="the value chains read — set it here; it persists across rounds">
+                  <span>
+                    ⇡ {v.name || '?'}:<b>{v.type}</b>
+                  </span>
+                  <input
+                    className="inp"
+                    style={String(v.type || '').endsWith('[]') ? { flex: 1, minWidth: 60 } : { width: 46 }}
+                    placeholder={String(v.type || '').endsWith('[]') ? 'a, b, c…' : 'set…'}
+                    title={
+                      String(v.type || '').endsWith('[]')
+                        ? 'list values, comma separated'
+                        : "set the variable's value"
+                    }
+                    value={v.value ?? ''}
+                    onChange={(e) => onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)) })}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  />
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, v.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, v.id)
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+            <button
+              className="tb-btn"
+              style={{ width: '100%' }}
+              onClick={() => onPatch({ vars: [...(node.vars || []), { id: uid('ev'), name: '', type: 'int', value: '' }] })}
+            >
+              + variable
+            </button>
+            {/* 📦 door assets — same deal as variables, but the value IS one
+                of the doc's assets: pick it, ⇡ carries the handle inside,
+                and the MACHINE node above grows a matching ⇣ asset input */}
+            {(node.assets || []).map((a, i) => (
+              <div key={a.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div className="nd-row">
+                  <select
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    value={a.asset || ''}
+                    title="the asset this door passes in — its name follows the pick"
+                    onChange={(e) =>
+                      onPatch({
+                        assets: node.assets.map((x, j) =>
+                          j === i
+                            ? {
+                                ...x,
+                                asset: e.target.value || null,
+                                name: (assets.find((z) => z.id === e.target.value) || {}).name || '',
+                              }
+                            : x,
+                        ),
+                      })
+                    }
+                  >
+                    <option value="">{assets.length ? 'pick an asset…' : 'no assets — add in 📦 panel'}</option>
+                    {assets.map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {assetIcon(z.kind)} {z.name || '(unnamed)'}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="icon-btn"
+                    title="remove asset"
+                    onClick={() => onPatch({ assets: node.assets.filter((_, j) => j !== i) })}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div
+                  className="dvar out"
+                  title="the asset handle chains read inside — it also appears as a ⇣ input on the MACHINE node above"
+                >
+                  <span>
+                    ⇡ {a.name || 'asset'}:<b>asset</b>
+                  </span>
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, a.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, a.id)
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+            <button
+              className="tb-btn"
+              style={{ width: '100%' }}
+              onClick={() => onPatch({ assets: [...(node.assets || []), { id: uid('ev'), asset: null, name: '' }] })}
+            >
+              + asset
+            </button>
+          </>
+        )}
         {node.kind === 'exit' && !sim && (
           <input
             className="inp"
@@ -866,6 +1307,52 @@ export default function NodeCard({
           />
         )}
         {sim && node.kind === 'exit' && <div className="mc-click info">⏏ ends the machine here</div>}
+        {node.kind === 'todo' && (
+          <>
+            {(node.todos || []).map((t, i) => (
+              <div className="nd-row todo-row" key={t.id}>
+                <input
+                  type="checkbox"
+                  className="todo-check"
+                  checked={!!t.done}
+                  title={t.done ? 'done — click to reopen' : 'tick when this task is done'}
+                  onChange={(e) =>
+                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, done: e.target.checked } : x)) })
+                  }
+                />
+                <TaskLine
+                  value={t.text}
+                  done={!!t.done}
+                  onChange={(text) =>
+                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, text } : x)) })
+                  }
+                  onEnter={(el) => {
+                    onPatch({ todos: [...node.todos, { id: uid('td'), text: '', done: false }] })
+                    // move the caret into the fresh line as soon as it renders
+                    setTimeout(() => {
+                      const lines = el.closest('.nd')?.querySelectorAll('.todo-line')
+                      if (lines?.length) lines[lines.length - 1].focus()
+                    }, 0)
+                  }}
+                />
+                <button
+                  className="icon-btn"
+                  title="remove task"
+                  onClick={() => onPatch({ todos: node.todos.filter((_, j) => j !== i) })}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              className="tb-btn"
+              style={{ width: '100%' }}
+              onClick={() => onPatch({ todos: [...(node.todos || []), { id: uid('td'), text: '', done: false }] })}
+            >
+              + task
+            </button>
+          </>
+        )}
 
         {/* flow exit ports — pinned right edge in both canvases: stacked
             top-right on machine parts, spread along the edge on flow cards */}
@@ -892,10 +1379,16 @@ export default function NodeCard({
           </span>
         ))}
       </div>
-      {isText && !sim && onResizeDown && (
+      {(isText || node.kind === 'todo' || node.kind === 'var') && !sim && onResizeDown && (
         <span
           className="nd-resize"
-          title="drag to size the note — cover as many cells as it describes"
+          title={
+            isText
+              ? 'drag to size the note — cover as many cells as it describes'
+              : node.kind === 'todo'
+                ? 'drag to widen the checklist — long tasks wrap onto further lines'
+                : 'drag to widen the fill-in — long values and nested fields get room'
+          }
           onPointerDown={(e) => {
             e.stopPropagation()
             e.preventDefault()

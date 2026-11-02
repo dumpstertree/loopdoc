@@ -39,14 +39,14 @@ export const assetIcon = (kind) => (ASSET_KINDS.find((k) => k.id === kind) || {}
 // types are declared on the doc and picked from dropdowns everywhere.
 // a variable's `type` is a plain type NAME string — arrays carry '[]'
 // ('int', 'Foe', 'Foe[]') — so wire checking stays a simple name compare.
-export const BASIC_TYPES = ['int', 'float', 'string', 'bool']
+export const BASIC_TYPES = ['int', 'float', 'string', 'bool', 'asset']
 
 export function newType(name = '') {
   return { id: uid('ty'), name, fields: [{ id: uid('f'), name: '', typeId: 'int' }] }
 }
 
 // document-wide global variable — a named, typed value with a default the
-// whole app shares; GLOBAL/SET parts read and write it inside machines
+// whole app shares; GET GLOBAL/SET GLOBAL parts read and write it inside machines
 export function newGlobal(name = '') {
   return { id: uid('gv'), name, type: 'int', value: '' }
 }
@@ -58,6 +58,24 @@ export function globalValue(g) {
   if (g.type === 'float') return Number(g.value) || 0
   if (g.type === 'bool') return g.value === 'true' || g.value === '1'
   return g.value ?? ''
+}
+
+// coerce an ENTER variable's stored string into its typed runtime value —
+// array types are comma lists ('goblin, orc, 3'), just like sim answers
+export function varValue(v) {
+  if (!v) return undefined
+  const t = String(v.type || '')
+  if (!t.endsWith('[]')) return globalValue(v)
+  const base = t.replace(/\[\s*\]$/, '').trim().toLowerCase()
+  return String(v.value ?? '')
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .map((s) => {
+      if (base === 'int') return Math.trunc(Number(s)) || 0
+      if (base === 'float') return Number(s) || 0
+      if (base === 'bool') return s === 'true' || s === '1'
+      return isNaN(s) ? s : Number(s) // declared/unknown base — numbers stay numbers
+    })
 }
 
 // the session store for globals — the game's live state. ONE store per open
@@ -88,15 +106,24 @@ export function orth(sx, sy, tx, ty) {
   return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
 }
 
-// a wire's path: straight through dropped anchors when present, else the
-// default orthogonal elbow. mid lands on the whole run for the amount badge.
+// a wire's path: 90° breaks all the way through. Dropped anchors steer the
+// run — every hop between two points is the same horizontal → vertical →
+// horizontal elbow the plain wire uses, so placing a point on a line BENDS it
+// instead of pulling it into a diagonal. Legs that land where they started
+// collapse to nothing, so a hop sharing an x or a y is simply a straight run.
+// mid lands on the middle hop's vertical leg, where the amount circle sits.
 export function routePath(a, b, anchors) {
   if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
   const pts = [a, ...anchors, b]
   let d = `M ${pts[0].x} ${pts[0].y}`
-  for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`
-  const m = pts[Math.floor(pts.length / 2)]
-  return { d, mid: { x: m.x, y: m.y } }
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1]
+    const q = pts[i]
+    const mx = (p.x + q.x) / 2
+    d += ` L ${mx} ${p.y} L ${mx} ${q.y} L ${q.x} ${q.y}`
+  }
+  const h = Math.min(pts.length - 1, Math.max(1, Math.floor(pts.length / 2)))
+  return { d, mid: { x: (pts[h - 1].x + pts[h].x) / 2, y: (pts[h - 1].y + pts[h].y) / 2 } }
 }
 
 // every pickable type name, base first then arrays
@@ -114,6 +141,18 @@ export function fieldsOf(types, typeName) {
   return (t.fields || []).map((f) => ({ id: f.id, name: f.name || 'field', typeId: f.typeId }))
 }
 
+// the blank value of a type — what VAR starts a fresh fill-in with:
+// arrays begin empty, structs carry an empty value per field (recursively),
+// leaves are strings (bools 'true'/'false'), exactly as global defaults store
+export function emptyValue(typeId, types) {
+  const t = String(typeId || '').trim()
+  if (t.endsWith('[]')) return []
+  const fields = fieldsOf(types, t)
+  if (fields) return Object.fromEntries(fields.map((f) => [f.name, emptyValue(f.typeId, types)]))
+  if (t === 'bool') return 'false'
+  return ''
+}
+
 // rename a type everywhere it is referenced (fn vars, foreach item types)
 export function renameTypeInDoc(doc, oldName, newName) {
   const d = JSON.parse(JSON.stringify(doc))
@@ -126,6 +165,7 @@ export function renameTypeInDoc(doc, oldName, newName) {
   const walk = (g) => {
     for (const n of g.nodes) {
       if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
+      if (n.kind === 'var' && n.variable) n.variable.type = fix(n.variable.type || '')
       if (n.kind === 'getg' || n.kind === 'setg') {
         n.gType = fix(n.gType || '')
         if (n.gName === oldName) n.gName = newName
@@ -154,6 +194,37 @@ export function resolveCall(call, assets) {
   const fn = a && (a.api || []).find((f) => f.id === call.fn)
   return a && fn ? { asset: a, fn } : null
 }
+
+// The complete ENTER-variable list of a machine graph, in enter order — the
+// MACHINE node shows exactly this as its ⇣ inputs, and enter cards mirror it.
+// Each entry remembers which door declared it. 📦 asset entries ride along
+// too, typed 'asset' — a handle to one of the doc's assets.
+export function enterVarsOf(graph) {
+  const out = []
+  for (const e of (graph || {}).nodes || []) {
+    if (e.kind !== 'enter') continue
+    for (const v of e.vars || [])
+      out.push({ id: v.id, name: v.name || 'var', type: v.type || 'int', enter: e.name || 'enter' })
+    for (const a of e.assets || [])
+      out.push({ id: a.id, name: a.name || 'asset', type: 'asset', enter: e.name || 'enter' })
+  }
+  return out
+}
+
+// ---- array-op data ports -----------------------------------------------------
+// APPEND/JOIN/REMOVE/REMOVE AT/SORT are pure data like INSPECT: they learn
+// their itemType from the array first wired in, and every port's type follows.
+const arrIn = (n, id = '__arr__', name = 'arr') => ({
+  id,
+  type: n.itemType ? n.itemType + '[]' : 'array',
+  name,
+})
+const valIn = (n) => ({ id: '__val__', type: n.itemType || 'any', name: 'val' })
+const arrOut = (n) => ({
+  id: '__arr__',
+  type: n.itemType ? n.itemType + '[]' : 'array',
+  name: 'arr',
+})
 
 // ---- node kinds --------------------------------------------------------------
 // One registry for both graph modes. Each kind declares:
@@ -217,10 +288,19 @@ export const KINDS = {
   },
   var: {
     mode: 'flow',
+    // pure data like INSPECT — no flow ports at all (dataOnly keeps the
+    // implicit flow in-port off it and the canvas off wiring flow into it)
+    dataOnly: true,
     label: 'VAR',
     cls: 'nd-var',
-    hint: 'assign a value to a named variable',
-    ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
+    hint: 'makes a typed value — pick the type and fill in every field (child structs nest inside, arrays grow row by row) · ⇡ publishes it for any ⇣ of that type · drag its corner grip to widen the form',
+    ports: () => [],
+    data: (n) => ({
+      in: [],
+      out: n.variable?.type
+        ? [{ id: '__val__', type: n.variable.type, name: n.variable.name || 'value' }]
+        : [],
+    }),
   },
   graph: {
     mode: 'flow',
@@ -233,15 +313,32 @@ export const KINDS = {
     mode: 'flow',
     label: 'MACHINE',
     cls: 'nd-machine',
-    hint: 'nested machine — chains run its economy · its EXIT parts become named output ports here',
+    hint: 'nested machine — chains run its economy · its EXIT parts become named output ports here · its ENTER variables become ⇣ data inputs',
     ports: (n) => {
       const xs = ((n.graph || {}).nodes || []).filter((x) => x.kind === 'exit')
       return xs.length
         ? xs.map((x) => ({ id: x.id, dir: 'out', label: x.name || 'exit' }))
         : [{ id: 'out', dir: 'out', label: 'out' }]
     },
+    // every ENTER var of the nested machine, in enter order — ONE complete
+    // ⇣ list on this card however many enter doors the machine has
+    data: (n) => ({ in: enterVarsOf(n.graph), out: [] }),
   },
   // ---- machine nodes ----------------------------------------------------------
+  enter: {
+    mode: 'machine',
+    label: 'ENTER',
+    cls: 'mc-enter',
+    hint: 'the machine’s door — always starts chains · its typed variables and 📦 assets publish ⇡ inside and appear as ⇣ inputs on the MACHINE node in the parent graph',
+    ports: () => [{ id: 'out', dir: 'out', label: '' }],
+    data: (n) => ({
+      in: [],
+      out: [
+        ...(n.vars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'var' })),
+        ...(n.assets || []).map((a) => ({ id: a.id, type: 'asset', name: a.name || 'asset' })),
+      ],
+    }),
+  },
   source: {
     mode: 'machine',
     label: 'SOURCE',
@@ -273,17 +370,17 @@ export const KINDS = {
   },
   getg: {
     mode: 'both',
-    label: 'GLOBAL',
+    label: 'GET GLOBAL',
     cls: 'mc-getg',
     hint: 'reads a document-wide global — pick it here · ⇡ publishes its value (live during sim, the default while editing)',
     ports: () => [],
     data: (n) => ({ in: [], out: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }] }),
   },
   setg: {
-    mode: 'machine',
-    label: 'SET',
+    mode: 'both',
+    label: 'SET GLOBAL',
     cls: 'mc-setg',
-    hint: 'as the chain passes, writes its ⇣ value into a global — every GLOBAL reader (any machine, any round) sees it · unwired ⇣ leaves the global untouched',
+    hint: 'flow passes through as it writes its ⇣ value into a global — every GET GLOBAL reader (any machine, any round) sees it · unwired ⇣ leaves the global untouched',
     ports: () => [
       { id: 'in', dir: 'in', label: '' },
       { id: 'out', dir: 'out', label: '' },
@@ -415,6 +512,60 @@ export const KINDS = {
       out: (n.fields || []).map((f) => ({ id: f.id, type: f.typeId, name: f.name || 'field' })),
     }),
   },
+  append: {
+    mode: 'machine',
+    label: 'APPEND',
+    cls: 'mc-append',
+    hint: 'pure data — ⇡ a copy of ⇣ arr with ⇣ val added at the end',
+    ports: () => [],
+    data: (n) => ({ in: [arrIn(n), valIn(n)], out: [arrOut(n)] }),
+  },
+  join: {
+    mode: 'machine',
+    label: 'JOIN',
+    cls: 'mc-join',
+    hint: 'pure data — ⇡ ⇣ a followed by ⇣ b, one array',
+    ports: () => [],
+    data: (n) => ({ in: [arrIn(n, '__a__', 'a'), arrIn(n, '__b__', 'b')], out: [arrOut(n)] }),
+  },
+  remove: {
+    mode: 'machine',
+    label: 'REMOVE',
+    cls: 'mc-remove',
+    hint: 'pure data — ⇡ ⇣ arr without any element equal to ⇣ val',
+    ports: () => [],
+    data: (n) => ({ in: [arrIn(n), valIn(n)], out: [arrOut(n)] }),
+  },
+  removeat: {
+    mode: 'machine',
+    label: 'REMOVE AT',
+    cls: 'mc-removeat',
+    hint: 'pure data — ⇡ ⇣ arr with the element at ⇣ at:int dropped',
+    ports: () => [],
+    data: (n) => ({
+      in: [arrIn(n), { id: '__index__', type: 'int', name: 'at' }],
+      out: [arrOut(n)],
+    }),
+  },
+  sort: {
+    mode: 'machine',
+    label: 'SORT',
+    cls: 'mc-sort',
+    hint: 'pure data — ⇡ ⇣ arr ordered ascending — by ⇡ field of the item type, or by value itself',
+    ports: () => [],
+    data: (n) => ({ in: [arrIn(n)], out: [arrOut(n)] }),
+  },
+  clone: {
+    mode: 'machine',
+    label: 'CLONE',
+    cls: 'mc-clone',
+    hint: 'pure data — ⇡ a deep copy of ⇣ val: windows, pools and write-backs touch the copy, never the base value',
+    ports: () => [],
+    data: (n) => ({
+      in: [{ id: '__val__', type: 'any', name: 'val' }],
+      out: [{ id: '__val__', type: n.vType || '?', name: 'copy' }],
+    }),
+  },
   action: {
     mode: 'machine',
     label: 'ACTION',
@@ -434,6 +585,13 @@ export const KINDS = {
     label: 'TEXT',
     cls: 'mc-text',
     hint: 'annotation + group frame — drop other parts inside it and they move with the frame · drag its corner grip to size it over everything it labels',
+    ports: () => [],
+  },
+  todo: {
+    mode: 'both',
+    label: 'TODO',
+    cls: 'mc-todo',
+    hint: 'checklist — add task lines and tick them off; a silent note that never joins the chain sim',
     ports: () => [],
   },
   exit: {
@@ -515,6 +673,25 @@ export const kindMeta = (node) => KINDS[node.kind] || {}
 // Data ports of a node: { in: [{id,type,name}], out: [...] }
 // event/syscall nodes expose every resolved system call's fn variables;
 // pools expose their amount as int.
+// coerce a VAR fill-in into its runtime value — leaf strings become their
+// declared numbers/bools, structs and arrays keep their shape and recurse.
+// `types` may be missing (engine mem without the doc) — then struct leaves
+// simply stay as they are.
+export function typedValue(typeId, value, types) {
+  const t = String(typeId || '').trim()
+  if (t.endsWith('[]')) {
+    const base = t.replace(/\[\s*\]$/, '').trim()
+    return (Array.isArray(value) ? value : []).map((x) => typedValue(base, x, types))
+  }
+  if (t === 'int') return Math.trunc(Number(value)) || 0
+  if (t === 'float') return Number(value) || 0
+  if (t === 'bool') return value === true || value === 'true' || value === '1'
+  const fields = fieldsOf(types, t)
+  if (fields && value && typeof value === 'object' && !Array.isArray(value))
+    return Object.fromEntries(fields.map((f) => [f.name, typedValue(f.typeId, value[f.name], types)]))
+  return value === undefined ? null : value // string · asset id · undeclared
+}
+
 export function dataPorts(node, assets) {
   const meta = KINDS[node.kind] || {}
   const d = meta.data ? meta.data(node) : { in: [], out: [] }
@@ -551,7 +728,7 @@ export function newNode(kind, x, y) {
   if (kind === 'choice') n.exits = [{ id: uid('ex'), label: 'option a' }, { id: uid('ex'), label: 'option b' }]
   if (kind === 'event') n.calls = []
   if (kind === 'load' || kind === 'unload' || kind === 'input') n.asset = null
-  if (kind === 'var') n.variable = { name: '', value: '' }
+  if (kind === 'var') n.variable = { name: '', type: 'string', value: '' }
   if (kind === 'graph') n.graph = newGraph('flow', n.name || 'sub graph')
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'pool') n.init = 10
@@ -562,9 +739,15 @@ export function newNode(kind, x, y) {
   if (kind === 'queue') n.rate = 1
   if (kind === 'register') n.countTo = 2
   if (kind === 'foreach') n.itemType = '?'
+  if (['append', 'join', 'remove', 'removeat', 'sort'].includes(kind)) n.itemType = null // learns from the first array wired in
+  if (kind === 'sort') n.field = ''
+  if (kind === 'clone') n.vType = ''
   if (kind === 'inspect') n.objType = 'any'
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}
+  if (kind === 'todo') n.todos = [{ id: uid('td'), text: '', done: false }]
+  if (kind === 'enter') n.vars = [{ id: uid('ev'), name: '', type: 'int', value: '' }]
+  if (kind === 'enter') n.assets = []
   return n
 }
 
@@ -644,6 +827,7 @@ export function removeAssetRefs(doc, assetId) {
     for (const n of graph.nodes) {
       if (n.asset === assetId) n.asset = null
       if (Array.isArray(n.calls)) n.calls = n.calls.filter((c) => c.asset !== assetId)
+      if (Array.isArray(n.assets)) n.assets.forEach((a) => { if (a.asset === assetId) a.asset = null })
       if (n.graph) cleanGraph(n.graph)
     }
   }
@@ -667,14 +851,37 @@ export function reidNode(node, map) {
     e.id = uid('ex')
     map.set(`${node.id}:${old}`, e.id)
   })
+  ;(nn.todos || []).forEach((t) => (t.id = uid('td'))) // checklist rows are private — fresh ids, no port maps
+  // ENTER variables ARE ports (inside the machine and on the parent MACHINE
+  // node) — re-id and register both key forms so data wires follow
+  ;(nn.vars || []).forEach((v) => {
+    const old = v.id
+    v.id = uid('ev')
+    map.set(old, v.id)
+    map.set(`${node.id}:${old}`, v.id)
+  })
+  ;(nn.assets || []).forEach((a) => {
+    const old = a.id
+    a.id = uid('ev')
+    map.set(old, a.id)
+    map.set(`${node.id}:${old}`, a.id)
+  })
   if (nn.gen) nn.gen = { ...nn.gen, id: uid('asset') }
   if (nn.graph) {
     // MACHINE node: its parent-side ports ARE the nested exit nodes, so
     // links wired to those ports (fromPort = exit node id) must follow the
     // exit re-id — register `oldNode:oldExit → newExit` after reidding
     const oldExits = (nn.graph.nodes || []).filter((x) => x.kind === 'exit').map((x) => x.id)
+    // …and its ⇣ data ports ARE the nested ENTER variables (vars and assets)
+    const oldVars = (nn.graph.nodes || [])
+      .filter((x) => x.kind === 'enter')
+      .flatMap((x) => [...(x.vars || []), ...(x.assets || [])].map((v) => v.id))
     reidGraph(nn.graph, map)
     for (const old of oldExits) {
+      const nx = map.get(old)
+      if (nx) map.set(`${node.id}:${old}`, nx)
+    }
+    for (const old of oldVars) {
       const nx = map.get(old)
       if (nx) map.set(`${node.id}:${old}`, nx)
     }
@@ -725,6 +932,31 @@ function dedupeIds(g) {
   }
 }
 
+// The canvases grow endlessly toward the top/left while editing — the flow
+// canvas pans by moving its origin, and origin is VIEW state: it is not saved,
+// so a doc whose parts sit at negative coordinates loads with them past the
+// unscrollable edge, invisible until something drags the origin back. Repair on
+// load instead: shift every graph's parts — and the wire anchors steering
+// between them, they are absolute surface coords too — into positive space.
+const CANVAS_MARGIN = 40
+function intoView(g) {
+  const pts = [...(g.nodes || []), ...(g.links || []).flatMap((l) => l.anchors || [])]
+  if (!pts.length) return
+  const dx = pts.reduce((m, p) => Math.min(m, (p.x || 0) - CANVAS_MARGIN), 0)
+  const dy = pts.reduce((m, p) => Math.min(m, (p.y || 0) - CANVAS_MARGIN), 0)
+  if (dx >= 0 && dy >= 0) return
+  const sx = dx < 0 ? -dx : 0
+  const sy = dy < 0 ? -dy : 0
+  for (const n of g.nodes || []) {
+    n.x = (n.x || 0) + sx
+    n.y = (n.y || 0) + sy
+  }
+  for (const l of g.links || []) for (const a of l.anchors || []) {
+    a.x += sx
+    a.y += sy
+  }
+}
+
 export function parseDoc(text) {
   const d = JSON.parse(text)
   if (!d || d.app !== 'loopdoc-composer' || !d.design) throw new Error('not a loopdoc composer file')
@@ -732,6 +964,9 @@ export function parseDoc(text) {
   d.assets = d.assets || []
   d.types = d.types || []
   d.vars = d.vars || []
-  walkGraphs(d.design, dedupeIds) // heal any doc corrupted by the old paste bug
+  walkGraphs(d.design, (g) => {
+    dedupeIds(g) // heal any doc corrupted by the old paste bug
+    intoView(g) // pull edge-parked parts back inside the reachable canvas
+  })
   return d
 }

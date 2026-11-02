@@ -319,6 +319,80 @@ select.inp {
   cursor: grabbing;
   user-select: none;
 }
+
+/* ---- space-bar node finder -------------------------------------------------
+   backdrop swallows clicks (and stops them reaching the surface → no
+   box-select); the panel itself is a compact command-line dropdown        */
+.np-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+}
+.node-palette {
+  position: absolute;
+  z-index: 31;
+  width: 340px;
+  background: var(--bg-2);
+  border: 1px solid var(--magenta);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+}
+.np-input {
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  outline: none;
+}
+.np-input::placeholder {
+  color: var(--dim);
+}
+.np-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+.np-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.np-item .np-kind {
+  color: var(--cyan);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.np-sel {
+  background: var(--bg-4);
+}
+.np-sel .np-kind {
+  color: var(--magenta);
+}
+.np-hint {
+  color: var(--dim);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.np-none {
+  color: var(--dim);
+  padding: 8px;
+  font-size: 10.5px;
+}
+.np-foot {
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+}
 .canvas-empty {
   position: absolute;
   left: 40px;
@@ -448,6 +522,9 @@ svg.edges .edge {
   fill: var(--bg-3);
   stroke: var(--line-hi);
   cursor: grab;
+  /* svg.edges is pointer-transparent with re-grab permission for .edge only —
+     anchors sit directly on the svg, so without this they cannot be hit at all */
+  pointer-events: auto;
 }
 .edge-anchor:hover {
   stroke: var(--cyan);
@@ -566,6 +643,37 @@ svg.edges .edge {
   color: var(--lime);
   font-weight: 700;
 }
+/* TODO checklist rows */
+.todo-check {
+  accent-color: var(--amber);
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  cursor: pointer;
+  flex: none;
+}
+.todo-done {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+/* checklist task line — wraps, grows its own height (fit() in NodeCard) */
+.todo-row {
+  align-items: flex-start; /* multi-line rows: checkbox and × hug the top */
+}
+.todo-row > .icon-btn {
+  margin-top: 1px;
+}
+.todo-check {
+  margin-top: 4px;
+}
+.todo-line {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.35;
+  font-family: inherit;
+}
 .port {
   position: absolute;
   width: 11px;
@@ -674,9 +782,12 @@ svg.edges .edge {
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
 .mc-inspect { --kc: #9ad0ff; }
+.mc-append, .mc-join, .mc-remove, .mc-removeat, .mc-sort { --kc: #9ad0ff; }
+.mc-clone { --kc: #9ad0ff; border-style: dashed; }
 .mc-action { --kc: var(--amber); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); }
+.mc-todo { --kc: var(--amber); border-style: dashed; background: color-mix(in srgb, var(--amber) 5%, transparent); }
 .mc-exit { --kc: var(--urgent); border-style: double; border-width: 3px; }
 .mc-ifb { --kc: var(--amber); }
 .port-out-mc.pt-true { background: var(--lime); border-color: var(--lime); }
@@ -891,19 +1002,214 @@ svg.edges .edge {
   color: var(--mint);
 }
 
-/* ---- assets panel (docked) ------------------------------------------------------ */
-.assets-panel {
-  width: 320px;
-  flex: none;
-  background: var(--bg-2);
-  border-left: 1px solid var(--line-hi);
+/* ---- registry tabs (ASSETS / DATA) --------------------------------------------- */
+/* the right-hand dock is gone: assets and data each own a top-level tab with
+   a sub-tab group, filling the whole stage */
+.reg-tab {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-.assets-panel.hidden {
-  display: none;
+.subtabs {
+  display: flex;
+  gap: 3px;
+  padding: 8px 14px 0;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line-hi);
+  flex: none;
 }
+.subtab {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  color: var(--dim);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transform: translateY(1px);
+}
+.subtab:hover {
+  color: var(--cyan);
+}
+.subtab-on {
+  color: var(--bg);
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+.reg-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 12px 14px 20px;
+}
+.reg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 880px;
+}
+
+/* ---- DATA tab readability -------------------------------------------------
+   same palette, clearer scan lines: labelled grid rows for globals, one-line
+   function signatures that expand to edit, column-aligned type fields        */
+/* globals: one header-bar per global, same bar language as the type cards */
+.gv-row {
+  display: grid;
+  grid-template-columns: 18px minmax(120px, 1fr) 130px 150px 26px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 7px;
+  background: var(--bg-4);
+  border: 1px solid var(--line);
+}
+.gv-row.gv-live-on {
+  grid-template-columns: 18px minmax(120px, 1fr) 130px 150px 110px 26px;
+}
+.gv-row:not(.gv-h):hover {
+  border-color: var(--line-hi);
+}
+.gv-h {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line-hi);
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: 1px;
+  font-weight: 700;
+  padding: 2px 7px;
+}
+.gv-live {
+  color: var(--lime);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-weight: 700;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gv-live.changed {
+  color: var(--amber);
+}
+.reg-empty {
+  color: var(--dim);
+  font-size: 10.5px;
+  padding: 6px 5px;
+}
+
+/* systems: fn cards — always open, same header-bar anatomy as type cards;
+   description sits right in the header, edited in place */
+.fn-badge {
+  color: var(--magenta);
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.asset-body {
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.asset-body textarea {
+  resize: vertical;
+}
+.api-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fn-card {
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.fn-desc-in {
+  flex: 2 1 auto;
+  min-width: 0;
+  color: var(--clay);
+}
+.fn-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 7px;
+}
+.fn-col {
+  border: 1px solid var(--line);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.fn-none {
+  color: var(--dim);
+  font-size: 10px;
+  padding: 1px 0;
+}
+
+/* types: name in a highlighted header bar, fields in aligned columns */
+.ty-card {
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.ty-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  background: var(--bg-4);
+  border-bottom: 1px solid var(--line);
+}
+.ty-badge {
+  color: var(--magenta);
+  font-weight: 700;
+}
+.ty-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  color: var(--cyan);
+  background: transparent;
+  border-color: transparent;
+}
+.ty-name:hover,
+.ty-name:focus {
+  background: var(--bg-2);
+  border-color: var(--line);
+}
+.ty-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 160px 26px;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 7px;
+  border-bottom: 1px solid var(--line);
+}
+.ty-row:hover {
+  background: var(--bg-3);
+}
+.ty-row select.inp.t {
+  width: 100%;
+}
+.ty-h {
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: 1px;
+  font-weight: 700;
+  border-bottom-color: var(--line-hi);
+}
+.ty-h:hover {
+  background: none;
+}
+.ty-foot {
+  padding: 5px 7px;
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -917,38 +1223,12 @@ svg.edges .edge {
   font-weight: 700;
   letter-spacing: 1px;
 }
-.assets-list {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.asset-card {
-  border: 1px solid var(--line);
-  background: var(--bg-3);
-}
-.asset-card.sel {
-  border-color: var(--magenta);
-}
-.asset-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 7px;
-}
-.asset-kind-btn {
+.asset-kind-badge {
   background: var(--bg);
   border: 1px solid var(--line);
-  color: var(--text);
-  font: inherit;
-  padding: 1px 4px;
-  cursor: pointer;
-}
-.asset-name {
-  flex: 1;
-  min-width: 0;
+  padding: 1px 5px;
+  text-align: center;
+  min-width: 26px;
 }
 .asset-used {
   color: var(--dim);
@@ -958,27 +1238,6 @@ svg.edges .edge {
 }
 .asset-used.n {
   color: var(--urgent);
-}
-.asset-detail {
-  border-top: 1px dashed var(--line);
-  padding: 6px 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.api-fn {
-  border: 1px solid var(--line);
-  background: var(--bg);
-  padding: 5px 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.api-io {
-  padding-left: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
 }
 .io-label {
   font-size: 9.5px;
@@ -1014,15 +1273,6 @@ select.inp.t {
   font-weight: 700;
   letter-spacing: 1px;
 }
-.add-row {
-  display: flex;
-  gap: 4px;
-  padding: 8px;
-  border-top: 1px solid var(--line);
-  flex-wrap: wrap;
-  flex: none;
-}
-
 /* ---- traverse ------------------------------------------------------------------- */
 .traverse {
   position: fixed;

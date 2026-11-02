@@ -1,13 +1,14 @@
-// App shell: tabs (design / business / mood), the doc store with autosave +
-// file open/save, the docked assets panel, breadcrumb navigation through
-// nested graphs, the machine modal and the traverse overlay.
+// App shell: tabs (design / business / mood / assets / data), the doc store
+// with autosave + file open/save, breadcrumb navigation through nested graphs,
+// the machine modal and the traverse overlay.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import GraphCanvas from './GraphCanvas.jsx'
 import MachineCanvas from './MachineCanvas.jsx'
-import AssetsPanel from './AssetsPanel.jsx'
+import { AssetsTab, DataTab } from './AssetsPanel.jsx'
 import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore } from './model.js'
+import { exportForLLM } from './llmExport.js'
 import { runDRC } from './drc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
@@ -52,7 +53,6 @@ export default function App() {
   const [savedAt, setSavedAt] = useState(null)
   const [tab, setTab] = useState('design')
   const [path, setPath] = useState([]) // breadcrumb: node ids from design down
-  const [showAssets, setShowAssets] = useState(true)
   const [showTraverse, setShowTraverse] = useState(false)
   const [showDRC, setShowDRC] = useState(false)
   const [drcScope, setDrcScope] = useState('doc') // 'doc' | 'graph'
@@ -94,6 +94,18 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
     setDirty(false)
     setSavedAt(new Date().toLocaleTimeString())
+  }
+  // ⤓ llm — one plain-text brief of everything (graphs, machines, types,
+  // globals, assets) written to be read by a language model, not re-imported
+  const doExportLLM = () => {
+    const text = exportForLLM(docRef.current)
+    const name = `${(docRef.current.name || 'design').replace(/[^\w\- ]+/g, '')}.llm.md`
+    const blob = new Blob([text], { type: 'text/markdown' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   }
   const doUpload = () =>
     new Promise((resolve, reject) => {
@@ -212,6 +224,19 @@ export default function App() {
   const drcErr = drc.filter((f) => f.sev === 'error').length
   const drcWarn = drc.filter((f) => f.sev === 'warn').length
 
+  // registry mutations shared by the ASSETS and DATA tabs
+  const updateAssets = (fnOrList) =>
+    commit({ ...docRef.current, assets: typeof fnOrList === 'function' ? fnOrList(docRef.current.assets) : fnOrList })
+  const updateTypes = (next) => {
+    const prev = docRef.current.types || []
+    let d = { ...docRef.current, types: next }
+    for (const t of next) {
+      const p = prev.find((x) => x.id === t.id)
+      if (p && p.name && p.name !== t.name) d = renameTypeInDoc(d, p.name, t.name)
+    }
+    commit(d)
+  }
+
   return (
     <div className="app">
       <header className="topbar">
@@ -230,6 +255,8 @@ export default function App() {
             ['design', 'DESIGN'],
             ['business', 'BUSINESS'],
             ['mood', 'MOOD'],
+            ['assets', 'ASSETS'],
+            ['data', 'DATA'],
           ].map(([id, label]) => (
             <button key={id} className={`tab ${tab === id ? 'tab-on' : ''}`} onClick={() => setTab(id)}>
               {label}
@@ -244,6 +271,9 @@ export default function App() {
           </button>
           <button className="btn" onClick={doSave} title="Ctrl+S">
             💾 save
+          </button>
+          <button className="btn" onClick={doExportLLM} title="export the whole document as one plain-text brief written for an LLM to build a game from (.llm.md)">
+            ⤓ llm
           </button>
           <button className="btn" onClick={newDocument}>
             new
@@ -267,9 +297,6 @@ export default function App() {
           <button className={`btn ${showTraverse ? 'btn-hi' : ''}`} onClick={() => setShowTraverse(!showTraverse)}>
             ▶ traverse
           </button>
-          <button className={`btn ${showAssets ? 'btn-hi' : ''}`} onClick={() => setShowAssets(!showAssets)}>
-            📦 assets
-          </button>
         </div>
       </header>
 
@@ -283,6 +310,7 @@ export default function App() {
                 <GraphCanvas
                   graph={graph}
                   assets={scopedAssets}
+                  types={doc.types || []}
                   globals={doc.vars || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
@@ -310,6 +338,25 @@ export default function App() {
                 </div>
               )}
             </>
+          ) : tab === 'assets' ? (
+            <AssetsTab
+              doc={doc}
+              types={doc.types || []}
+              onAssets={updateAssets}
+              onRemove={(id) => commit(removeAssetRefs(docRef.current, id))}
+            />
+          ) : tab === 'data' ? (
+            <DataTab
+              doc={doc}
+              types={doc.types || []}
+              onTypes={updateTypes}
+              globals={doc.vars || []}
+              onGlobals={(next) => commit({ ...docRef.current, vars: next })}
+              onResetGlobals={() => gstore.reset()}
+              gstore={gstore}
+              onAssets={updateAssets}
+              onRemove={(id) => commit(removeAssetRefs(docRef.current, id))}
+            />
           ) : (
             <div className="notes-tab">
               <textarea
@@ -333,30 +380,6 @@ export default function App() {
               setPath(p)
             }}
             onClose={() => setShowDRC(false)}
-          />
-        )}
-        {tab === 'design' && showAssets && (
-          <AssetsPanel
-            doc={doc}
-            types={doc.types || []}
-            globals={doc.vars || []}
-            gstore={gstore}
-            onGlobals={(next) => commit({ ...docRef.current, vars: next })}
-            onResetGlobals={() => gstore.reset()}
-            onTypes={(next) => {
-              const prev = docRef.current.types || []
-              let d = { ...docRef.current, types: next }
-              for (const t of next) {
-                const p = prev.find((x) => x.id === t.id)
-                if (p && p.name && p.name !== t.name) d = renameTypeInDoc(d, p.name, t.name)
-              }
-              commit(d)
-            }}
-            onAssets={(fnOrList) =>
-              commit({ ...docRef.current, assets: typeof fnOrList === 'function' ? fnOrList(docRef.current.assets) : fnOrList })
-            }
-            onRemove={(id) => commit(removeAssetRefs(docRef.current, id))}
-            onClose={() => setShowAssets(false)}
           />
         )}
       </div>

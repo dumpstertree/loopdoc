@@ -3,8 +3,8 @@
 // could drift from the JS it pretended to test.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { stepOnce } from '../src/engine.js'
-import { newGlobal, makeGlobalsStore } from '../src/model.js'
+import { stepOnce, dataValue, originRef } from '../src/engine.js'
+import { newGlobal, makeGlobalsStore, enterVarsOf } from '../src/model.js'
 
 let seq = 0
 const n = (kind, extra = {}) => ({ id: 'n' + ++seq, kind, x: 0, y: 0, ...extra })
@@ -169,14 +169,15 @@ test('foreach walks the array one iteration at a time, then pulses end', () => {
       api: [{ id: 'fn1', name: 'list', inputs: [], outputs: [{ id: 'v1', name: 'items', type: 'int[]' }] }],
     },
   ]
+  const en = n('enter')
   const sys = n('syscall', { calls: [{ asset: 'as1', fn: 'fn1' }], out: { v1: [10, 20, 30] } })
   const fe = n('foreach', { itemType: 'int' })
   const body = n('pool', { init: 0 })
   const after = n('pool', { init: 0 })
-  const nodes = [sys, fe, body, after]
+  const nodes = [en, sys, fe, body, after]
   const lEnd = flow(fe, after)
   lEnd.fromPort = 'end'
-  const links = [flow(sys, fe), data(sys, 'v1', fe, '__arr__'), flow(fe, body), lEnd]
+  const links = [flow(en, sys), flow(sys, fe), data(sys, 'v1', fe, '__arr__'), flow(fe, body), lEnd]
   const { log, a } = run(nodes, links, 60, { tokens: [] }, assets)
   assert.ok(log.some((l) => l.includes('1/3')), 'iteration 1 ran')
   assert.ok(log.some((l) => l.includes('3/3')), 'iteration 3 ran')
@@ -215,4 +216,188 @@ test('drain, add and SET never self-fire as entries', () => {
   const mem = { tokens: [] }
   run([dr, ad, st], [], 3, mem)
   assert.equal(mem.tokens.length, 0, 'silent parts stay silent')
+})
+
+test('unconnected pools and machines parts never self-fire — entries are explicit', () => {
+  const pool = n('pool', { init: 3 })
+  const conv = n('converter')
+  const reg = n('register', { countTo: 2 })
+  const mem = { tokens: [] }
+  run([pool, conv, reg], [], 3, mem)
+  assert.equal(mem.tokens.length, 0, 'nothing self-started')
+})
+
+test('ENTER always starts chains and publishes its variables as data', () => {
+  const en = n('enter', { name: 'door', vars: [{ id: 'v1', name: 'hits', type: 'int', value: '4' }] })
+  const iff = n('ifb', { op: '>', bVal: '3' })
+  const yes = n('pool', { init: 0 })
+  const l = flow(iff, yes)
+  l.fromPort = 'true'
+  const nodes = [en, iff, yes]
+  const links = [flow(en, iff), data(en, 'v1', iff, '__a__'), l]
+  const { log, a } = run(nodes, links, 8, { tokens: [] })
+  assert.ok(log.some((x) => x.startsWith('✓') && x.includes('4 > 3')), 'enter variable fed the compare')
+  assert.ok(a[yes.id] >= 1, 'the true chain reached the pool')
+})
+
+test('ENTER array variables publish as lists — a foreach iterates them', () => {
+  const en = n('enter', { vars: [{ id: 'v1', name: 'mobs', type: 'int[]', value: '10, 20, 30' }] })
+  const fe = n('foreach', { itemType: 'int' })
+  const body = n('pool', { init: 0 })
+  const nodes = [en, fe, body]
+  const links = [flow(en, fe), data(en, 'v1', fe, '__arr__'), flow(fe, body)]
+  const { log, a } = run(nodes, links, 40, { tokens: [] })
+  assert.ok(log.some((x) => x.includes('loaded [10, 20, 30]')), 'comma list became an array')
+  assert.ok(log.some((x) => x.includes('item="30"')), 'iterated to the last item')
+  assert.ok(a[body.id] >= 3, 'every iteration ran')
+})
+
+// ---- array tools — pure data; a foreach's `loaded [...]` log reveals results
+test('APPEND adds one value to the end of an array', () => {
+  const en = n('enter', {
+    vars: [
+      { id: 'v1', name: 'xs', type: 'int[]', value: '1, 2' },
+      { id: 'v2', name: 'nine', type: 'int', value: '9' },
+    ],
+  })
+  const ap = n('append', { itemType: 'int' })
+  const fe = n('foreach', { itemType: 'int' })
+  const body = n('pool', { init: 0 })
+  const nodes = [en, ap, fe, body]
+  const links = [flow(en, fe), data(en, 'v1', ap, '__arr__'), data(en, 'v2', ap, '__val__'), data(ap, '__arr__', fe, '__arr__'), flow(fe, body)]
+  const { log } = run(nodes, links, 40, { tokens: [] })
+  assert.ok(log.some((x) => x.includes('loaded [1, 2, 9]')), 'value appended')
+})
+
+test('JOIN concatenates, REMOVE cuts by value, REMOVE AT cuts by index', () => {
+  const en = n('enter', {
+    vars: [
+      { id: 'v1', name: 'xs', type: 'int[]', value: '3, 1, 2' },
+      { id: 'v2', name: 'tail', type: 'int[]', value: '8' },
+      { id: 'v3', name: 'one', type: 'int', value: '1' },
+    ],
+  })
+  const jn = n('join', { itemType: 'int' })
+  const rm = n('remove', { itemType: 'int' })
+  const ra = n('removeat', { itemType: 'int' })
+  const fe = n('foreach', { itemType: 'int' })
+  const body = n('pool', { init: 0 })
+  const nodes = [en, jn, rm, ra, fe, body]
+  const links = [
+    flow(en, fe),
+    data(en, 'v1', jn, '__a__'),
+    data(en, 'v2', jn, '__b__'),
+    data(jn, '__arr__', rm, '__arr__'),
+    data(en, 'v3', rm, '__val__'),
+    data(rm, '__arr__', ra, '__arr__'),
+    data(en, 'v3', ra, '__index__'), // 1 → drops the element at index 1
+    data(ra, '__arr__', fe, '__arr__'),
+    flow(fe, body),
+  ]
+  const { log } = run(nodes, links, 40, { tokens: [] })
+  assert.ok(log.some((x) => x.includes('loaded [3, 8]')), 'joined → [3,1,2,8], removed 1 → [3,2,8], cut index 1 → [3, 8]')
+})
+
+test('SORT orders primitives and struct items by a picked field', () => {
+  const assets = [
+    {
+      id: 'asf',
+      name: 'roster',
+      api: [{ id: 'ff', name: 'foes', inputs: [], outputs: [{ id: 'fo', name: 'foes', type: 'Foe[]' }] }],
+    },
+  ]
+  const sys = n('syscall', { calls: [{ asset: 'asf', fn: 'ff' }] })
+  const en = n('enter', { vars: [{ id: 'v1', name: 'xs', type: 'int[]', value: '3, 1, 2' }] })
+  const sortP = n('sort', { itemType: 'int' })
+  const sortF = n('sort', { itemType: 'Foe', field: 'hp' })
+  const feP = n('foreach', { itemType: 'int' })
+  const feF = n('foreach', { itemType: 'Foe' })
+  const nodes = [sys, en, sortP, sortF, feP, feF]
+  const links = [
+    data(en, 'v1', sortP, '__arr__'),
+    data(sortP, '__arr__', feP, '__arr__'),
+    data(sys, 'fo', sortF, '__arr__'),
+    data(sortF, '__arr__', feF, '__arr__'),
+  ]
+  const mem = { tokens: [], call: { [sys.id]: { fo: [{ hp: 3 }, { hp: 1 }] } } }
+  assert.deepEqual(dataValue(nodes, links, {}, mem, feP.id, '__arr__').val, [1, 2, 3], 'numbers sorted numerically')
+  assert.deepEqual(
+    dataValue(nodes, links, {}, mem, feF.id, '__arr__').val.map((x) => x.hp),
+    [1, 3],
+    'struct items sorted by ⇡ hp',
+  )
+})
+
+test('CLONE publishes a deep copy — mutating it never touches the base value', () => {
+  const assets = [
+    {
+      id: 'asc',
+      name: 'roster',
+      api: [{ id: 'fc', name: 'foes', inputs: [], outputs: [{ id: 'fo', name: 'foes', type: 'Foe[]' }] }],
+    },
+  ]
+  const sys = n('syscall', { calls: [{ asset: 'asc', fn: 'fc' }] })
+  const cl = n('clone', { vType: 'Foe[]' })
+  const pool = n('pool', { init: 0 }) // fed through the clone — a window with no write-back
+  const fe = n('foreach', { itemType: 'Foe' })
+  const nodes = [sys, cl, pool, fe]
+  const links = [data(sys, 'fo', cl, '__val__'), data(cl, '__val__', pool, '__in__'), data(cl, '__val__', fe, '__arr__')]
+  const mem = { tokens: [], call: { [sys.id]: { fo: [{ hp: 3 }] } } }
+  const d = dataValue(nodes, links, {}, mem, fe.id, '__arr__')
+  assert.deepEqual(d.val, [{ hp: 3 }], 'the copy reads like the base')
+  d.val[0].hp = 99 // scribble on the copy
+  assert.equal(mem.call[sys.id].fo[0].hp, 3, 'base value untouched after the copy mutated')
+  const ref = originRef(nodes, links, {}, mem, pool.id, '__in__')
+  assert.equal(ref.set, undefined, 'a clone window has no write-back to its origin')
+})
+
+// ---- 📦 door assets — ENTER passes doc assets in, just like variables ----
+test('ENTER 📦 door publishes the picked asset as data', () => {
+  const assets = [{ id: 'as1', kind: 'art', name: 'sprites', api: [] }]
+  const en = n('enter', { vars: [], assets: [{ id: 'ea1', asset: 'as1', name: 'sprites' }] })
+  const insp = n('inspect', { objType: 'asset' })
+  const nodes = [en, insp]
+  const links = [data(en, 'ea1', insp, '__obj__')]
+  const d = dataValue(nodes, links, {}, { tokens: [], assets }, insp.id, '__obj__')
+  assert.equal(d.val?.name, 'sprites', 'the asset handle flows through the data wire')
+  const empty = dataValue(nodes, links, {}, { tokens: [] }, insp.id, '__obj__')
+  assert.equal(empty.val, null, 'nothing to resolve the handle against — no value yet')
+})
+
+test('a sim run leaves the doc assets on mem so 📦 doors resolve inside', () => {
+  const assets = [{ id: 'as1', kind: 'audio', name: 'theme', api: [] }]
+  const en = n('enter', { vars: [], assets: [{ id: 'ea1', asset: 'as1', name: 'theme' }] })
+  const body = n('pool', { init: 0 })
+  const mem = { tokens: [] }
+  run([en, body], [flow(en, body)], 1, mem, assets)
+  const insp = n('inspect', { objType: 'asset' })
+  const d = dataValue([en, body, insp], [flow(en, body), data(en, 'ea1', insp, '__obj__')], {}, mem, insp.id, '__obj__')
+  assert.equal(d.val?.name, 'theme', 'stepOnce rode the asset store on mem')
+})
+
+test('enterVarsOf lists 📦 doors among the MACHINE node ⇣ inputs', () => {
+  const en = n('enter', {
+    name: 'door',
+    vars: [{ id: 'v1', name: 'lives', type: 'int', value: '3' }],
+    assets: [{ id: 'ea1', asset: 'as1', name: 'sprites' }],
+  })
+  const list = enterVarsOf({ nodes: [en] })
+  assert.deepEqual(
+    list.map((v) => [v.name, v.type, v.enter]),
+    [
+      ['lives', 'int', 'door'],
+      ['sprites', 'asset', 'door'],
+    ],
+    'vars first, then 📦 — one complete ⇣ list',
+  )
+})
+
+test('VAR ⇡ reads through a data wire as its typed runtime value', () => {
+  const v = n('var', { variable: { name: 'count', type: 'int', value: '5' } })
+  const pool = n('pool') // fed window reading ⇣ in:int — dataValue resolves the wire
+  const nodes = [v, pool]
+  const links = [data(v, '__val__', pool, '__in__')]
+  const d = dataValue(nodes, links, {}, {}, pool.id, '__in__')
+  assert.equal(d.val, 5, 'the "5" fill-in arrives as a number')
+  assert.ok(d.from.includes('count'), 'provenance names the variable')
 })

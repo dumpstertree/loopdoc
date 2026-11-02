@@ -3,21 +3,35 @@
 // canvas vocabulary: orthogonal wires, right-edge exit ports, anchors.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
+import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath } from './model.js'
-import { dataCanConnect, compatTargets } from './wireRules.js'
+import { dataCanConnect, compatTargets, takesFlow, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 const GROW_STEP = 600
 const GROW_AT = 64
 
-export default function GraphCanvas({ graph, assets, globals = [], onChange, onOpenGraph, toolbarExtra }) {
+// Where a fresh canvas starts looking. The surface grows endlessly toward the
+// top/left while editing (drag to the edge and the origin shifts to make room),
+// and the origin is VIEW state — nothing stores it. So a canvas that mounts on
+// content parked at negative coordinates would open with those parts past the
+// unscrollable edge, invisible; start at the margin instead, or wherever the
+// content needs the pan to be, so everything always opens on screen.
+const homeOrigin = (g) => {
+  const pts = [...(g.nodes || []), ...(g.links || []).flatMap((l) => l.anchors || [])]
+  const minX = pts.reduce((m, p) => Math.min(m, p.x || 0), 0)
+  const minY = pts.reduce((m, p) => Math.min(m, p.y || 0), 0)
+  return { x: 40 - Math.min(0, minX), y: 40 - Math.min(0, minY) }
+}
+
+export default function GraphCanvas({ graph, assets, types = [], globals = [], onChange, onOpenGraph, toolbarExtra }) {
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
   dragRef.current = drag
-  const [origin, setOrigin] = useState({ x: 40, y: 40 })
+  const [origin, setOrigin] = useState(() => homeOrigin(graph))
   const originRef = useRef(origin)
   originRef.current = origin
   const [size, setSize] = useState({ w: 2800, h: 1800 })
@@ -26,6 +40,9 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
   const [portPos, setPortPos] = useState({})
   const portPosRef = useRef(portPos)
   const [msg, setMsg] = useState(null)
+  const [palette, setPalette] = useState(null) // { x, y } while the space-bar finder is open
+  const paletteRef = useRef(palette)
+  paletteRef.current = palette
   const scrollRef = useRef(null)
   const surfaceRef = useRef(null)
   const lastPointerRef = useRef(null)
@@ -53,10 +70,6 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
     },
   })
   const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
-  const del = (id) => {
-    mutate((g) => removeNode(g, id))
-    setSelection([])
-  }
   const addNodeAt = (kind, x, y) => {
     const n = newNode(kind, snap(x), snap(y))
     mutate((g) => ({ ...g, nodes: [...g.nodes, n] }))
@@ -98,6 +111,11 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
   // ---- links ---------------------------------------------------------------------
   const addFlowLink = (from, fromPort, to) => {
     if (from === to) return
+    // pure-data parts (VAR) sit outside the flow — neither end may take it
+    const byId = (id) => graphRef.current.nodes.find((x) => x.id === id)
+    for (const end of [byId(from), byId(to)])
+      if (end && !takesFlow(end))
+        return warn(`⚠ ${kindMeta(end).label || end.kind} is pure data — no flow wires into or out of it`)
     mutate((g) => {
       if (g.links.some((l) => l.kind !== 'data' && l.from === from && l.fromPort === fromPort && l.to === to)) return g
       return { ...g, links: [...g.links, { id: uid('lk'), kind: 'flow', from, fromPort, to, toPort: 'in', anchors: [] }] }
@@ -173,7 +191,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
     if (!drag) return
     const onMove = (e) => {
       const p0 = surfacePoint(e.clientX, e.clientY)
-      const p = ['node', 'flow', 'data', 'anchor', 'resize'].includes(drag.kind) ? growCheck(p0) : p0
+      const p = ['node', 'flow', 'data', 'anchor', 'branch', 'resize'].includes(drag.kind) ? growCheck(p0) : p0
       // drag toward the right/bottom edge to auto-scroll (growCheck already
       // handles left/top by extending the origin; box excluded — scrolling
       // would skew its rect)
@@ -206,11 +224,16 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
           ...g,
           nodes: g.nodes.map((n) =>
             n.id === drag.id
-              ? { ...n, w: Math.max(150, snap(drag.sw + ps.x - drag.sx)), h: Math.max(48, snap(drag.sh + ps.y - drag.sy)) }
+              ? {
+                  ...n,
+                  w: Math.max(150, snap(drag.sw + ps.x - drag.sx)),
+                  // TODO and VAR size their own height from their content — width only
+                  ...(n.kind === 'todo' || n.kind === 'var' ? {} : { h: Math.max(48, snap(drag.sh + ps.y - drag.sy)) }),
+                }
               : n,
           ),
         }))
-      } else if (drag.kind === 'flow' || drag.kind === 'data') {
+      } else if (drag.kind === 'flow' || drag.kind === 'data' || drag.kind === 'branch') {
         setDrag((d) => ({ ...d, x: p.x, y: p.y }))
       } else if (drag.kind === 'anchor') {
         const x = Math.round(p.x - originRef.current.x)
@@ -240,6 +263,38 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
           if (dir !== 'in') warn('⚠ data flows ⇡ out → ⇣ in — drop on an input square')
           else if (toNode === drag.from) warn('⚠ a node cannot feed itself')
           else addDataLink(drag.from, drag.port, toNode, toPort)
+        }
+      } else if (drag.kind === 'branch') {
+        // Ctrl+drag released — the branch lands where a normal wire would:
+        // flow on a part, data on a ⇣ square. wireRules.branchLink shares the
+        // source wire's run up to the grabbed anchor and enforces every rule.
+        const src = graphRef.current.links.find((x) => x.id === drag.link)
+        const el = document.elementFromPoint(e.clientX, e.clientY)
+        const pin = el && el.closest('[data-port]')
+        const card = el && el.closest('[data-node-id]')
+        let res = null
+        if (src && drag.branchKind === 'data' && pin) {
+          const [toNode, toPort, dir] = pin.getAttribute('data-port').split(':')
+          if (dir !== 'in') warn('⚠ data flows ⇡ out → ⇣ in — drop on an input square')
+          else {
+            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort)
+            if (!res.ok) warn(res.why)
+          }
+        } else if (src && card) {
+          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in')
+          if (!res.ok) warn(res.why)
+        }
+        if (res && res.ok) {
+          const ln = res.link
+          mutate((g) => ({
+            ...g,
+            links: [
+              // a data input still has exactly one producer, branch included
+              ...g.links.filter((l) => !(ln.kind === 'data' && l.kind === 'data' && l.to === ln.to && l.toPort === ln.toPort)),
+              ln,
+            ],
+          }))
+          setSel({ link: ln.id, anchor: null })
         }
       } else if (drag.kind === 'box') {
         const end = surfacePoint(e.clientX, e.clientY)
@@ -273,7 +328,7 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
     setDrag({ kind: 'box', x0: p.x, y0: p.y, x1: p.x, y1: p.y, shift: e.shiftKey })
   }
   const onDoubleClick = (e) => {
-    if (e.target.closest('.nd') || e.target.closest('.edge')) return
+    if (e.target.closest('.nd') || e.target.closest('.edge') || e.target.closest('.edge-anchor')) return
     const p = surfacePoint(e.clientX, e.clientY)
     addNodeAt('step', p.x - originRef.current.x - 20, p.y - originRef.current.y - 10)
   }
@@ -290,6 +345,17 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
       else if (mod && e.key === 'a') {
         e.preventDefault()
         setSelection(graphRef.current.nodes.map((n) => n.id))
+      } else if (e.key === ' ' && !mod && !e.altKey && !dragRef.current) {
+        // space opens the fuzzy node finder at the cursor
+        e.preventDefault()
+        if (!paletteRef.current) {
+          paletteRef.current = { x: 0, y: 0 } // claim it before a second listener reacts
+          // x/y place the panel in the viewport (wrap) space, sx/sy remember the
+          // surface point the node should land on (the canvas may be scrolled)
+          const pt = lastPointerRef.current || { x: 160, y: 120 }
+          const sc = scrollRef.current
+          setPalette({ x: pt.x - (sc?.scrollLeft || 0), y: pt.y - (sc?.scrollTop || 0), sx: pt.x, sy: pt.y })
+        }
       } else if (e.key === 'Escape') setSel(null)
       else if (e.key === 'Delete' || e.key === 'Backspace') {
         const s = selRef.current
@@ -339,16 +405,22 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
 
   // ---- render --------------------------------------------------------------------------
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
+  const paletteItems = kindsFor('flow').map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
   // endless canvas: the surface keeps a generous runway beyond the farthest
   // node so building toward the right/bottom edge just makes room, never clips
   const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
   const surfH = Math.max(size.h, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + origin.y + 600), 0))
   const selSet = new Set(selection)
   // compatible drop targets while dragging a wire — same shared rules as the
-  // machine canvas, so every ⇣ port that WOULD accept the wire glows first
-  const compatPorts = drag && (drag.kind === 'flow' || drag.kind === 'data')
-    ? compatTargets(graph, assets, drag, Object.keys(portPos))
-    : null
+  // machine canvas, so every ⇣ port that WOULD accept the wire glows first.
+  // A branch drag poses as the wire it grew from, so the same ports pulse.
+  const compatDrag =
+    drag && (drag.kind === 'flow' || drag.kind === 'data')
+      ? drag
+      : drag && drag.kind === 'branch'
+        ? { kind: drag.branchKind, from: drag.from, port: drag.port }
+        : null
+  const compatPorts = compatDrag ? compatTargets(graph, assets, compatDrag, Object.keys(portPos)) : null
   const flowEnd = (l) => {
     const key = `${l.to}:in:in`
     if (portPos[key]) return portPos[key]
@@ -377,12 +449,21 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire to drop a steering anchor · dbl-click surface adds a STEP · click link = select (Del)</span>
+        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · dbl-click GRAPH/MACHINE enters it · dbl-click surface adds a STEP · space finds nodes · Del deletes</span>
         {msg && <span className="warn">{msg}</span>}
         <span className="spacer" />
         {toolbarExtra}
       </div>
       <div className="canvas-wrap">
+        {palette && (
+          <NodePalette
+            items={paletteItems}
+            x={palette.x}
+            y={palette.y}
+            onPick={(kind) => addNodeAt(kind, palette.sx - originRef.current.x - 20, palette.sy - originRef.current.y - 10)}
+            onClose={() => setPalette(null)}
+          />
+        )}
         <div className="canvas-scroll" ref={scrollRef}>
           <div
             ref={surfaceRef}
@@ -489,11 +570,31 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                     r={5}
                     onPointerDown={(e) => {
                       e.stopPropagation()
+                      e.preventDefault()
+                      if (e.ctrlKey || e.metaKey) {
+                        // Ctrl+drag: split a branch off this anchor — the new
+                        // wire shares the run up to this point, then follows
+                        // the cursor to a new target
+                        setDrag({
+                          kind: 'branch',
+                          link: l.id,
+                          idx: i,
+                          branchKind: l.kind,
+                          from: l.from,
+                          port: l.fromPort,
+                          x: ap.x + origin.x,
+                          y: ap.y + origin.y,
+                        })
+                        return
+                      }
                       setSelection([])
                       setSel({ link: l.id, anchor: i })
                       setDrag({ kind: 'anchor', link: l.id, idx: i })
                     }}
-                  />
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    <title>{l.kind === 'data' ? 'data anchor' : 'wire anchor'} — drag to move · Ctrl+drag branches off · Del removes</title>
+                  </circle>
                 )),
               )}
               {drag && (drag.kind === 'flow' || drag.kind === 'data') && portPos[`${drag.from}:${drag.port}:out`] && (
@@ -503,9 +604,24 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                   stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                 />
               )}
+              {drag && drag.kind === 'branch' &&
+                (() => {
+                  // the branch follows the cursor from the anchor it grew off —
+                  // read live from the graph so edge-growth keeps it anchored
+                  const sl = graph.links.find((x) => x.id === drag.link)
+                  const ap = sl && (sl.anchors || [])[drag.idx]
+                  if (!ap) return null
+                  return (
+                    <path
+                      d={orth(ap.x + origin.x, ap.y + origin.y, drag.x, drag.y).d}
+                      className="edge-temp"
+                      stroke={drag.branchKind === 'data' ? 'var(--mint)' : undefined}
+                    />
+                  )
+                })()}
               {compatPorts &&
                 compatPorts.map((k) =>
-                  portPos[k] ? <circle key={k} className={`port-compat${drag && drag.kind === 'data' ? ' pc-data' : ''}`} cx={portPos[k].x} cy={portPos[k].y} r={8} /> : null,
+                  portPos[k] ? <circle key={k} className={`port-compat${compatDrag.kind === 'data' ? ' pc-data' : ''}`} cx={portPos[k].x} cy={portPos[k].y} r={8} /> : null,
                 )}
             </svg>
             <div style={{ transform: `translate(${origin.x}px, ${origin.y}px)` }}>
@@ -518,12 +634,12 @@ export default function GraphCanvas({ graph, assets, globals = [], onChange, onO
                   node={n}
                   graph={graph}
                   assets={assets}
+                  types={types}
                   globals={globals}
                   selected={selSet.has(n.id)}
                   isEntry={graph.entry === n.id}
                   sim={null}
                   onPatch={(p) => patch(n.id, p)}
-                  onDelete={del}
                   onSelect={(id, shift) => setSelection(shift ? [...new Set([...selection, id])] : [id])}
                   onToggleEntry={(id) => mutate((g) => ({ ...g, entry: g.entry === id ? null : id }))}
                   onOpenGraph={() => onOpenGraph(n.id)}

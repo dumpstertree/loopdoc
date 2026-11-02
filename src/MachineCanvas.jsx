@@ -3,9 +3,10 @@
 // clipboard, wires, anchors, toolbar — plus the sim driver around it.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
+import { NodePalette } from './NodePalette.jsx'
+import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
 import { fmt, dataValue, originRef, callSystem, stepOnce } from './engine.js'
-import { isEntryPart, dataCanConnect, compatTargets } from './wireRules.js'
+import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 // ---- editor ------------------------------------------------------------------
@@ -14,6 +15,8 @@ import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 export default function MachineCanvas({ graph, assets, types, globals = [], gstore, onChange }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
+  const dragRef = useRef(drag)
+  dragRef.current = drag
   const [sel, setSel] = useState(null) // selected link id
   const selRef = useRef(sel)
   selRef.current = sel
@@ -21,6 +24,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   const selAnchorRef = useRef(selAnchor)
   selAnchorRef.current = selAnchor
   const lastPointerRef = useRef(null) // where to drop a paste
+  const [palette, setPalette] = useState(null) // { x, y } while the space-bar finder is open
+  const paletteRef = useRef(palette)
+  paletteRef.current = palette
   const [portXY, setPortXY] = useState({})
   const [msg, setMsg] = useState(null)
   const surfaceRef = useRef(null)
@@ -53,16 +59,13 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     const r = surfaceRef.current.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
+  const addNodeAt = (kind, x, y) => {
+    const n = newNode(kind, snap(Math.max(0, x)), snap(Math.max(0, y)))
+    mutate((g) => ({ ...g, nodes: [...g.nodes, n] }))
+    setSelection([n.id])
+  }
   const addNode = (kind) =>
     mutate((g) => ({ ...g, nodes: [...g.nodes, newNode(kind, snap(140 + Math.random() * 180), snap(100 + Math.random() * 140))] }))
-  const delNode = (id) =>
-    mutate((g) => ({
-      ...g,
-      nodes: g.nodes
-        .filter((n) => n.id !== id)
-        .map((n) => (n.parent === id ? { ...n, parent: undefined } : n)), // free the frame's children
-      links: g.links.filter((l) => l.from !== id && l.to !== id),
-    }))
 
   const onHeaderDown = (e, id) => {
     if (e.button !== 0) return
@@ -121,6 +124,10 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
       nodes: g.nodes.map((n) => {
         if (n.id !== to) return n
         if (toPort === '__arr__' && n.kind === 'foreach') return { ...n, itemType: ta.replace('[]', '') }
+        // array ops learn the item type from the array wired in first
+        if ((toPort === '__arr__' || toPort === '__a__') && ['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind))
+          return { ...n, itemType: ta.replace('[]', '') }
+        if (toPort === '__val__' && n.kind === 'clone') return { ...n, vType: ta }
         if (toPort === '__obj__' && n.kind === 'inspect') {
           const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
           return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
@@ -188,7 +195,12 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           ...g,
           nodes: g.nodes.map((n) =>
             n.id === drag.id
-              ? { ...n, w: Math.max(150, snap(drag.sw + p.x - drag.sx)), h: Math.max(48, snap(drag.sh + p.y - drag.sy)) }
+              ? {
+                  ...n,
+                  w: Math.max(150, snap(drag.sw + p.x - drag.sx)),
+                  // TODO sizes its own height from the task lines — width only
+                  ...(n.kind === 'todo' ? {} : { h: Math.max(48, snap(drag.sh + p.y - drag.sy)) }),
+                }
               : n,
           ),
         }))
@@ -233,6 +245,39 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           else if (toNode === drag.from) warn('⚠ a part cannot feed itself')
           else addDataLink(drag.from, drag.port, toNode, toPort)
         }
+      } else if (drag.kind === 'branch') {
+        // Ctrl+drag released — branch lands like any wire: flow on a part,
+        // data on a ⇣ square. wireRules.branchLink shares the source wire's
+        // run up to the grabbed anchor and enforces every rule.
+        const src = graphRef.current.links.find((x) => x.id === drag.link)
+        const el = document.elementFromPoint(e.clientX, e.clientY)
+        const pin = el && el.closest('[data-port]')
+        const card = el && el.closest('[data-node-id]')
+        let res = null
+        if (src && drag.branchKind === 'data' && pin) {
+          const [toNode, toPort, dir] = pin.getAttribute('data-port').split(':')
+          if (dir !== 'in') warn('⚠ data flows ⇡ out → ⇣ in')
+          else {
+            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort)
+            if (!res.ok) warn(res.why)
+          }
+        } else if (src && card) {
+          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in')
+          if (!res.ok) warn(res.why)
+        }
+        if (res && res.ok) {
+          const ln = res.link
+          mutate((g) => ({
+            ...g,
+            links: [
+              // a data input still has exactly one producer, branch included
+              ...g.links.filter((l) => !(ln.kind === 'data' && l.kind === 'data' && l.to === ln.to && l.toPort === ln.toPort)),
+              ln,
+            ],
+          }))
+          setSel(ln.id)
+          setSelAnchor(null)
+        }
       } else if (drag.kind === 'box') {
         const end = surfacePoint(e)
         if (Math.abs(end.x - drag.x0) < 4 && Math.abs(end.y - drag.y0) < 4) {
@@ -264,7 +309,18 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     const onKey = (e) => {
       const el = document.activeElement
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
-      if (e.key === 'Escape') {
+      if (e.key === ' ' && !(e.ctrlKey || e.metaKey || e.altKey) && !dragRef.current) {
+        // space opens the fuzzy node finder at the cursor
+        e.preventDefault()
+        if (!paletteRef.current) {
+          paletteRef.current = { x: 0, y: 0 } // claim it before a second listener reacts
+          // x/y place the panel in the viewport (wrap) space, sx/sy remember the
+          // surface point the part should land on (the canvas may be scrolled)
+          const pt = lastPointerRef.current || { x: 160, y: 120 }
+          const sc = scrollRef.current
+          setPalette({ x: pt.x - (sc?.scrollLeft || 0), y: pt.y - (sc?.scrollTop || 0), sx: pt.x, sy: pt.y })
+        }
+      } else if (e.key === 'Escape') {
         setSel(null)
         setSelAnchor(null)
         setSelection([])
@@ -312,13 +368,13 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           }
           onChangeRef.current({ ...g, nodes, links })
         } else {
+          // selected parts go through the model's removeNode so a deleted TEXT
+          // frame frees the parts it was grouping instead of orphaning them
           const ids = selectionRef.current
           setSelection([])
-          onChangeRef.current({
-            ...graphRef.current,
-            nodes: graphRef.current.nodes.filter((n) => !ids.includes(n.id)),
-            links: graphRef.current.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
-          })
+          let g = graphRef.current
+          for (const id of ids) g = removeNode(g, id)
+          onChangeRef.current(g)
         }
       }
     }
@@ -346,7 +402,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     const out = []
     const g = graphRef.current
     const entries = g.nodes.filter((n) => isEntryPart(n, g.links))
-    if (!entries.length) out.push('⚠ nothing to run — parts with no flow input are chain entry points')
+    if (!entries.length) out.push('⚠ nothing to run — add an ENTER; only ENTER (and SOURCE) parts start chains')
     else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
     if (!g.nodes.some((x) => x.kind === 'exit'))
       out.push('ℹ no EXIT part yet — add one per ending (e.g. victory, defeat) and the MACHINE node grows a port for it')
@@ -408,19 +464,22 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     })
 
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
-  // endless canvas: the surface always keeps a generous runway beyond the
-  // farthest part, so building toward an edge just makes room, never clips
   // compatible drop targets while dragging a wire — mirrors the exact drop
   // rules (wireRules.js), so every ⇣ port that WOULD accept the wire glows
-  // before you let go
-  const compatPorts = drag && (drag.kind === 'flow' || drag.kind === 'data')
-    ? compatTargets(graph, assets, drag, Object.keys(portXY))
-    : null
+  // before you let go. A branch drag poses as the wire it grew from.
+  const compatDrag =
+    drag && (drag.kind === 'flow' || drag.kind === 'data')
+      ? drag
+      : drag && drag.kind === 'branch'
+        ? { kind: drag.branchKind, from: drag.from, port: drag.port }
+        : null
+  const compatPorts = compatDrag ? compatTargets(graph, assets, compatDrag, Object.keys(portXY)) : null
 
   // auto-detected entry parts — same rule as the sim and DRC (wireRules.js),
   // shown with the flow canvas's ▶ flag so "where chains begin" reads
   // identically in both
   const entryIds = new Set(graph.nodes.filter((n) => isEntryPart(n, graph.links)).map((n) => n.id))
+  const paletteItems = kindsFor('machine').map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
   const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
   const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
@@ -439,7 +498,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
         <button className="tb-btn" title="copy selected parts (Ctrl+C)" onClick={() => copySel(false)}>⧉ COPY</button>
         <button className="tb-btn" title="cut selected parts (Ctrl+X)" onClick={() => copySel(true)}>✂ CUT</button>
         <button className="tb-btn" title="paste at cursor (Ctrl+V)" onClick={paste}>⎘ PASTE</button>
-        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire to drop a steering anchor · chains run from unconnected parts · click ⏳/▶ part to continue · Del removes selection</span>
+        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · chains run from ENTER parts · click ⏳/▶ part to continue · Del removes selection</span>
         <span className="spacer" />
         {sim ? (
           <>
@@ -449,7 +508,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
             <button className="btn" onClick={startSim}>↺ reset</button>
           </>
         ) : (
-          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => n.kind === 'pool' || n.kind === 'syscall')}>
+          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => ['pool', 'syscall', 'enter', 'source'].includes(n.kind))}>
             ▶ simulate
           </button>
         )}
@@ -457,8 +516,24 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
       </div>
       <div className="machine-view">
         <div className="canvas-wrap">
+          {palette && (
+            <NodePalette
+              items={paletteItems}
+              x={palette.x}
+              y={palette.y}
+              noun="part"
+              onPick={(kind) => addNodeAt(kind, palette.sx, palette.sy)}
+              onClose={() => setPalette(null)}
+            />
+          )}
           <div className="canvas-scroll" ref={scrollRef}>
-            <div ref={surfaceRef} className="canvas-surface" style={{ width: surfW, height: surfH }} onPointerDown={onSurfaceDown}>
+            <div
+              ref={surfaceRef}
+              className="canvas-surface"
+              style={{ width: surfW, height: surfH }}
+              onPointerDown={onSurfaceDown}
+              onPointerMove={(e) => (lastPointerRef.current = surfacePoint(e.clientX, e.clientY))}
+            >
               <svg className="edges" width={surfW} height={surfH}>
                 <defs>
                   <marker id="marw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -555,7 +630,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                     </g>
                   )
                 })}
-                {/* dropped anchors — drag to steer, select + Del to remove */}
+                {/* dropped anchors — drag to steer, Ctrl+drag to branch, Del to remove */}
                 {graph.links.map((l) =>
                   (l.anchors || []).map((ap, i) => (
                     <circle
@@ -567,12 +642,29 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                       onPointerDown={(e) => {
                         e.stopPropagation()
                         e.preventDefault()
+                        if (e.ctrlKey || e.metaKey) {
+                          // Ctrl+drag: split a branch off this anchor — the new
+                          // wire shares the run up to this point, then follows
+                          // the cursor to a new target
+                          setDrag({
+                            kind: 'branch',
+                            link: l.id,
+                            idx: i,
+                            branchKind: l.kind,
+                            from: l.from,
+                            port: l.fromPort,
+                            x: ap.x,
+                            y: ap.y,
+                          })
+                          return
+                        }
                         setSel(null)
                         setSelAnchor({ link: l.id, idx: i })
                         setDrag({ kind: 'anchor', link: l.id, idx: i })
                       }}
+                      onContextMenu={(e) => e.preventDefault()}
                     >
-                      <title>wire anchor — drag to move · Del removes</title>
+                      <title>{l.kind === 'data' ? 'data anchor' : 'wire anchor'} — drag to move · Ctrl+drag branches off · Del removes</title>
                     </circle>
                   )),
                 )}
@@ -583,9 +675,24 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                     stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                   />
                 )}
+                {drag && drag.kind === 'branch' &&
+                  (() => {
+                    // the branch follows the cursor from the anchor it grew off —
+                    // read live from the graph in case the wire moved meanwhile
+                    const sl = graph.links.find((x) => x.id === drag.link)
+                    const ap = sl && (sl.anchors || [])[drag.idx]
+                    if (!ap) return null
+                    return (
+                      <path
+                        d={orth(ap.x, ap.y, drag.x, drag.y).d}
+                        className="edge-temp"
+                        stroke={drag.branchKind === 'data' ? 'var(--mint)' : undefined}
+                      />
+                    )
+                  })()}
                 {compatPorts &&
                   compatPorts.map((k) =>
-                    portXY[k] ? <circle key={k} className={`port-compat${drag && drag.kind === 'data' ? ' pc-data' : ''}`} cx={portXY[k].x} cy={portXY[k].y} r={8} /> : null,
+                    portXY[k] ? <circle key={k} className={`port-compat${compatDrag.kind === 'data' ? ' pc-data' : ''}`} cx={portXY[k].x} cy={portXY[k].y} r={8} /> : null,
                   )}
               </svg>
               {/* TEXT frames render first so they sit behind their grouped parts */}
@@ -605,7 +712,6 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                   sim={sim}
                   onCardClick={clickNode}
                   onPatch={(p) => patch(n.id, p)}
-                  onDelete={delNode}
                   onSelect={(id, shift) => {
                     setSel(null)
                     setSelAnchor(null)
