@@ -7,6 +7,7 @@ import MachineCanvas from './MachineCanvas.jsx'
 import { AssetsTab, DataTab } from './AssetsPanel.jsx'
 import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
+import BusinessDashboard from './BusinessDashboard.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore } from './model.js'
 import { exportForLLM } from './llmExport.js'
 import { runDRC } from './drc.js'
@@ -359,6 +360,12 @@ export default function App() {
             />
           ) : (
             <div className="notes-tab">
+              {tab === 'business' && (
+                <BusinessDashboard
+                  doc={doc}
+                  setDoc={commit}
+                />
+              )}
               <textarea
                 className="inp"
                 placeholder={`${tab} notes — free-form markdown-ish text, saved with the document…`}

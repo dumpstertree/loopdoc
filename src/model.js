@@ -184,7 +184,8 @@ export function newFn() {
   return { id: uid('fn'), name: '', inputs: [newVar()], outputs: [newVar()] }
 }
 export function newAsset(kind = 'art', name = '') {
-  return { id: uid('asset'), kind, name, note: '', api: kind === 'system' ? [] : undefined }
+  const ledger = kind === 'system' ? [{ id: uid('lv'), name: '', type: 'string', size: '' }] : []
+  return { id: uid('asset'), kind, name, note: '', api: kind === 'system' ? [] : undefined, ledger }
 }
 
 // Resolve an asset's chosen API function: { asset, fn } or null.

@@ -292,6 +292,72 @@ function ApiEditor({ asset, onChange, types }) {
   )
 }
 
+// ledger variables section for ⚙ systems: dropdowns to pick data types from types
+// and their array variants, plus array size hints
+function LedgerVariables({ ledger, onUpdate, types = [] }) {
+  const typeNames = (types || []).map((t) => t.name) || []
+  if (!ledger || !Array.isArray(ledger)) return null
+  const set = (fn) => onUpdate(fn(ledger))
+  const upd = (i, patch) => set((l) => l.map((v, j) => (j === i ? { ...v, ...patch } : v)))
+  const addVar = () => set((l) => [...l, { id: Date.now().toString(36), name: '', type: 'string', size: '' }])
+  const removeVar = (i) => set((l) => l.filter((_, j) => j !== i))
+  return (
+    <div className="ledger-section">
+      <div className="io-label head">
+        📊 LEDGER VARIABLES · {ledger.length}
+        <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={addVar}>
+          + variable
+        </button>
+      </div>
+      {ledger.length > 0 && (
+        <div className={`gv-row gv-h`} style={{ marginTop: '6px' }}>
+          <span />
+          <span>VARIABLE</span>
+          <span>TYPE</span>
+          <span>SIZE</span>
+          <span />
+        </div>
+      )}
+      {ledger.map((v, i) => (
+        <div className={`gv-row`} key={v.id} style={{ marginTop: '4px' }}>
+          <span className="ty-badge">📊</span>
+          <input
+            className="inp ty-name"
+            placeholder="var…"
+            value={v.name}
+            onChange={(e) => upd(i, { name: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <select className="inp" title="data type from types or array variants" value={v.type} onChange={(e) => upd(i, { type: e.target.value })}>
+            <option value="">— pick type —</option>
+            {typeNames.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            {typeNames.map((t) => (
+              <option key={`${t}-array`} value={`${t}[]`}>{t}[]</option>
+            ))}
+          </select>
+          <input
+            className="inp"
+            placeholder="size…"
+            title="array size hint (optional)"
+            value={v.size}
+            onChange={(e) => upd(i, { size: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button className="icon-btn" onClick={() => upd(i, { size: '' })}>
+            ↺ clear
+          </button>
+          <button className="icon-btn" onClick={() => removeVar(i)}>
+            ×
+          </button>
+        </div>
+      ))}
+      {ledger.length === 0 && <div className="reg-empty">no ledger variables — add one to track state in this system</div>}
+    </div>
+  )
+}
+
 // one asset: the same card design as TYPES — name inline-edited right in the
 // header bar (no edit button), body always visible: note, plus the API editor
 // for ⚙ systems. Kind is concrete — set by the tab that creates the asset and
@@ -332,7 +398,12 @@ function AssetCard({ a, upd, onRemove, count, types = [] }) {
           onChange={(e) => upd({ ...a, note: e.target.value })}
           onKeyDown={(e) => e.stopPropagation()}
         />
-        {a.kind === 'system' && <ApiEditor asset={a} onChange={upd} types={types} />}
+        {a.kind === 'system' && (
+          <>
+            <ApiEditor asset={a} onChange={upd} types={types} />
+            <LedgerVariables ledger={a.ledger} onUpdate={(next) => upd({ ...a, ledger: next })} types={types} />
+          </>
+        )}
       </div>
     </div>
   )
