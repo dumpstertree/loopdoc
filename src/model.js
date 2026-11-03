@@ -388,6 +388,25 @@ export const KINDS = {
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }], out: [] }),
   },
+  getledger: {
+    mode: 'both',
+    label: 'GET LEDGER',
+    cls: 'mc-getledger',
+    hint: 'reads a system ledger variable — pick the system and variable · ⇡ publishes its value',
+    ports: () => [],
+    data: (n) => ({ in: [], out: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }] }),
+  },
+  setledger: {
+    mode: 'both',
+    label: 'SET LEDGER',
+    cls: 'mc-setledger',
+    hint: 'flow passes through as it writes its ⇣ value into a system ledger variable · every GET LEDGER reader sees it',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: '' },
+    ],
+    data: (n) => ({ in: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }], out: [] }),
+  },
   pool: {
     mode: 'machine',
     label: 'POOL',
@@ -749,6 +768,12 @@ export function newNode(kind, x, y) {
   if (kind === 'todo') n.todos = [{ id: uid('td'), text: '', done: false }]
   if (kind === 'enter') n.vars = [{ id: uid('ev'), name: '', type: 'int', value: '' }]
   if (kind === 'enter') n.assets = []
+  if (kind === 'getledger' || kind === 'setledger') {
+    n.lRef = null
+    n.lName = ''
+    n.lType = ''
+    n.lVarId = null
+  }
   return n
 }
 

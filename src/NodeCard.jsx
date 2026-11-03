@@ -485,6 +485,7 @@ export default function NodeCard({
   assets, // registry visible here (plus local generated assets, __local: true)
   types, // declared doc data types (struct value editing)
   globals = [], // document-wide global variables (GET/SET GLOBAL cards)
+  systems = [], // system assets with ledger variables
   gvals = null, // live session values of the globals (shared across machines)
   selected,
   isEntry,
@@ -1020,6 +1021,72 @@ export default function NodeCard({
               ⇣ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
             </span>
             {sim && node.gRef && <span className="dval">{String((sim.mem.g || {})[node.gRef])}</span>}
+          </div>
+        )}
+        {(node.kind === 'getledger' || node.kind === 'setledger') && (
+          <>
+            <div className="nd-row">
+              <span className="nd-sub">system</span>
+              <select
+                className="inp"
+                style={{ flex: 1 }}
+                value={node.lRef || ''}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  const sys = (systems || []).find((x) => x.id === e.target.value)
+                  onPatch(sys ? { lRef: sys.id, lName: '', lType: '' } : { lRef: null, lName: '', lType: '' })
+                }}
+              >
+                <option value="">— pick a system —</option>
+                {(systems || []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name || '(unnamed)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {node.lRef && (
+              <div className="nd-row">
+                <span className="nd-sub">variable</span>
+                <select
+                  className="inp"
+                  style={{ flex: 1 }}
+                  value={node.lVarId || ''}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    const ledger = (systems.find((s) => s.id === node.lRef)?.ledger || [])
+                    const v = ledger.find((x) => x.id === e.target.value)
+                    onPatch(v ? { lVarId: v.id, lName: v.name, lType: v.type } : { lVarId: null, lName: '', lType: '' })
+                  }}
+                >
+                  <option value="">— pick a ledger variable —</option>
+                  {(systems.find((s) => s.id === node.lRef)?.ledger || []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name || '(unnamed)'} : {v.type}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
+        )}
+        {(node.kind === 'getledger' || node.kind === 'setledger') && (
+          <div className="dvar" title={node.kind === 'getledger' ? "wire the value to read — the node publishes it" : "wire the value to write — the chain carries it"}>
+            <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
+            <span>
+              ⇣ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
+            </span>
+            {sim && node.lRef && (
+              <span className="dval">
+                {(() => {
+                  const sys = systems.find((s) => s.id === node.lRef)
+                  if (!sys) return ''
+                  const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
+                  if (!v) return ''
+                  return String(v.value ?? '')
+                })()}
+              </span>
+            )}
           </div>
         )}
         {isMachineKind && node.kind === 'pool' && (

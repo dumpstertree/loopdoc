@@ -153,6 +153,17 @@ function originRef(nodes, links, a, mem, nodeId, varId, depth = 0) {
       },
     }
   }
+  if (src.kind === 'getledger' || src.kind === 'setledger') {
+    // a window onto a system ledger variable — read-only for now
+    if (!src.lRef) return null
+    const sys = assets.find((s) => s.id === src.lRef)
+    if (!sys) return null
+    const v = (sys.ledger || []).find((lv) => lv.id === src.lVarId)
+    return {
+      key: () => `ld:${src.lRef}:${src.lVarId}`,
+      get: () => v ? v.value : null,
+    }
+  }
   if (src.kind === 'enter') {
     // a door variable — readable as a window (a fed pool may mirror it), but
     // chains never write back; it is set on the card, not by the sim

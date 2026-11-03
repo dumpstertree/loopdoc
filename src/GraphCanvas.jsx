@@ -405,7 +405,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
 
   // ---- render --------------------------------------------------------------------------
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
-  const paletteItems = kindsFor('flow').map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
+  const paletteItems = [...kindsFor('flow'), 'getledger', 'setledger'].map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
   // endless canvas: the surface keeps a generous runway beyond the farthest
   // node so building toward the right/bottom edge just makes room, never clips
   const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
@@ -636,6 +636,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
                   assets={assets}
                   types={types}
                   globals={globals}
+                  systems={assets.filter((a) => a.kind === 'system')}
                   selected={selSet.has(n.id)}
                   isEntry={graph.entry === n.id}
                   sim={null}
