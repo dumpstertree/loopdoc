@@ -495,9 +495,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           </button>
         ))}
         <span className="tb-sep" />
-        <button className="tb-btn" title="copy selected parts (Ctrl+C)" onClick={() => copySel(false)}>⧉ COPY</button>
-        <button className="tb-btn" title="cut selected parts (Ctrl+X)" onClick={() => copySel(true)}>✂ CUT</button>
-        <button className="tb-btn" title="paste at cursor (Ctrl+V)" onClick={paste}>⎘ PASTE</button>
+        {/* buttons removed for machine graphs */}
         <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · chains run from ENTER parts · click ⏳/▶ part to continue · Del removes selection</span>
         <span className="spacer" />
         {sim ? (
