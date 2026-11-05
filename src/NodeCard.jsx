@@ -1023,7 +1023,7 @@ export default function NodeCard({
             {sim && node.gRef && <span className="dval">{String((sim.mem.g || {})[node.gRef])}</span>}
           </div>
         )}
-        {(node.kind === 'getledger' || node.kind === 'setledger') && (
+        {(node.kind === 'getledger' || node.kind === 'setledger') && graph.mode !== 'machine' && (
           <>
             <div className="nd-row">
               <span className="nd-sub">system</span>
@@ -1070,7 +1070,7 @@ export default function NodeCard({
             )}
           </>
         )}
-        {(node.kind === 'getledger' || node.kind === 'setledger') && (
+        {(node.kind === 'getledger' || node.kind === 'setledger') && graph.mode !== 'machine' && (
           <div className="dvar" title={node.kind === 'getledger' ? "wire the value to read — the node publishes it" : "wire the value to write — the chain carries it"}>
             <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
             <span>

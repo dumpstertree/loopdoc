@@ -389,7 +389,7 @@ export const KINDS = {
     data: (n) => ({ in: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }], out: [] }),
   },
   getledger: {
-    mode: 'both',
+    mode: 'flow',
     label: 'GET LEDGER',
     cls: 'mc-getledger',
     hint: 'reads a system ledger variable — pick the system and variable · ⇡ publishes its value',
@@ -397,7 +397,7 @@ export const KINDS = {
     data: (n) => ({ in: [], out: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }] }),
   },
   setledger: {
-    mode: 'both',
+    mode: 'flow',
     label: 'SET LEDGER',
     cls: 'mc-setledger',
     hint: 'flow passes through as it writes its ⇣ value into a system ledger variable · every GET LEDGER reader sees it',
