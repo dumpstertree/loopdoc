@@ -370,7 +370,7 @@ export const KINDS = {
     data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
   },
   getg: {
-    mode: 'both',
+    mode: 'flow',
     label: 'GET GLOBAL',
     cls: 'mc-getg',
     hint: 'reads a document-wide global — pick it here · ⇡ publishes its value (live during sim, the default while editing)',
@@ -378,7 +378,7 @@ export const KINDS = {
     data: (n) => ({ in: [], out: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }] }),
   },
   setg: {
-    mode: 'both',
+    mode: 'flow',
     label: 'SET GLOBAL',
     cls: 'mc-setg',
     hint: 'flow passes through as it writes its ⇣ value into a global — every GET GLOBAL reader (any machine, any round) sees it · unwired ⇣ leaves the global untouched',

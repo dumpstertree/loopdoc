@@ -942,7 +942,7 @@ export default function NodeCard({
             </span>
           </div>
         )}
-        {node.kind === 'getg' && (
+        {node.kind === 'getg' && graph.mode !== 'machine' && (
           <div className="nd-row">
             <span className="nd-sub">global</span>
             <select
@@ -963,7 +963,7 @@ export default function NodeCard({
             </select>
           </div>
         )}
-        {node.kind === 'getg' && (
+        {node.kind === 'getg' && graph.mode !== 'machine' && (
           <div className="dvar out" title="the global's value — readers wire here (default while editing, live during sim)">
             <span>
               ⇡ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
@@ -993,7 +993,7 @@ export default function NodeCard({
             )}
           </div>
         )}
-        {node.kind === 'setg' && (
+        {node.kind === 'setg' && graph.mode !== 'machine' && (
           <div className="nd-row">
             <span className="nd-sub">global</span>
             <select
@@ -1014,7 +1014,7 @@ export default function NodeCard({
             </select>
           </div>
         )}
-        {node.kind === 'setg' && (
+        {node.kind === 'setg' && graph.mode !== 'machine' && (
           <div className="dvar" title="wire the value to write — the chain carries the write the moment it passes">
             <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
             <span>
