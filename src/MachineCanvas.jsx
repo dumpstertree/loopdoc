@@ -406,6 +406,20 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
     if (!g.nodes.some((x) => x.kind === 'exit'))
       out.push('ℹ no EXIT part yet — add one per ending (e.g. victory, defeat) and the MACHINE node grows a port for it')
+    else {
+      const announced = g.nodes.filter((x) => x.kind === 'exit').reduce((s, x) => s + ((x.vars || []).length), 0)
+      const unwired = g.nodes
+        .filter((x) => x.kind === 'exit')
+        .flatMap((x) => (x.vars || []).filter((v) => !g.links.some((l) => l.kind === 'data' && l.to === x.id && l.toPort === v.id)))
+      if (announced)
+        out.push(
+          `ℹ ${announced} exit variable ${announced === 1 ? '' : 's'} — each grows a ⇡ output port on the MACHINE node above, carrying whatever is wired into its ⇣ here`,
+        )
+      if (unwired.length)
+        out.push(
+          `⚠ ${unwired.length} exit variable ${unwired.length === 1 ? '' : 's'} with nothing wired into ⇣ — ${unwired.map((v) => v.name || 'var').join(', ')} announce${unwired.length === 1 ? 's' : ''} only the value typed on the EXIT card`,
+        )
+    }
     for (const n of g.nodes.filter((x) => x.kind === 'syscall'))
       if (!resolveCall((n.calls || [])[0], assets)) out.push(`⚠ sys call "${n.name || ''}" has no system fn selected`)
     return out
@@ -741,7 +755,11 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
                     CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
-                  <p>chain sim — every part with no flow input is an entry point; chains walk downstream one hop per step and the entry re-runs when its chains end · click ○ = amount · teal squares wire typed data · click ⏳/▶ parts to continue a frozen chain · pools with ⇣ in write back to their origin.</p>
+                  <p>
+                    chain sim — every part with no flow input is an entry point; chains walk downstream one hop per step and the entry re-runs when its chains
+                    end · click ○ = amount · teal squares wire typed data · click ⏳/▶ parts to continue a frozen chain · pools with ⇣ in write back to their
+                    origin · an EXIT announces its variables: wire a producer into its ⇣ and the MACHINE node above grows a matching ⇡ port.
+                  </p>
                 </div>
               )}
             </div>

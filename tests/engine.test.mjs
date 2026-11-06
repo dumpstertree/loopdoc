@@ -141,6 +141,30 @@ test('EXIT kills the token and records lastExit', () => {
   // (the entry has since re-fired — the point is the machine never wedges at a door)
 })
 
+test('EXIT variables announce values out — wired ⇣ wins, the card value is the fallback', () => {
+  const src = n('source')
+  const made = n('var', { variable: { name: 'loot', type: 'int', value: '12' } })
+  const ex = n('exit', {
+    name: 'win',
+    vars: [
+      { id: 'x1', name: 'gold', type: 'int', value: '' },
+      { id: 'x2', name: 'party', type: 'string[]', value: 'goblin, orc' },
+    ],
+  })
+  const mem = { tokens: [] }
+  const nodes = [src, made, ex]
+  const links = [flow(src, ex), data(made, '__val__', ex, 'x1')]
+  const { log } = run(nodes, links, 6, mem)
+  assert.ok(
+    log.some((l) => l.includes('⏏ win') && l.includes('gold: 12') && l.includes('party: [goblin, orc]')),
+    'the exit logs both announcements',
+  )
+  const said = mem.exits[ex.id]
+  assert.equal(said.name, 'win', 'the door is remembered by name')
+  assert.equal(said.vars[0].val, 12, '⇣ gold took the wired VAR value')
+  assert.deepEqual(said.vars[1].val, ['goblin', 'orc'], '⇣ party fell back to the comma list typed on the card')
+})
+
 test('register pulses every N passes', () => {
   const src = n('source')
   const reg = n('register', { countTo: 2 })

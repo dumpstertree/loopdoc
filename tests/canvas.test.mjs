@@ -1,10 +1,11 @@
 // canvas geometry — the two rules both canvases share for drawing and loading:
 // a steered wire still bends only at 90°, and a loaded graph always opens with
 // its parts inside the reachable surface (the flow canvas's origin, which does
-// the panning, is view state — nothing saves it).
+// the panning, is view state — nothing saves it). Plus the paste rule: a copied
+// MACHINE's ⇡ exit wires follow the copy's own EXIT variables.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { orth, routePath, parseDoc, serializeDoc, newDoc, walkGraphs } from '../src/model.js'
+import { orth, routePath, parseDoc, serializeDoc, newDoc, walkGraphs, reidGraph, exitVarsOf } from '../src/model.js'
 
 // "M 0 0 L 10 0 L 10 5" → [[0,0],[10,0],[10,5]]
 const pts = (d) => {
@@ -136,4 +137,44 @@ test('nested graphs are repaired too — machines included', () => {
   walkGraphs(back.design, (g) => coords.push(...g.nodes.map((n) => [n.x, n.y])))
   assert.equal(coords.length, 2)
   assert.ok(coords.every(([x, y]) => x >= 0 && y >= 0), JSON.stringify(coords))
+})
+
+test('pasting a machine keeps ⇡ exit wires — they follow the copy’s own EXIT variables', () => {
+  const machine = {
+    id: 'm',
+    kind: 'machine',
+    x: 0,
+    y: 0,
+    graph: {
+      id: 'g2',
+      mode: 'machine',
+      name: 'inner',
+      entry: null,
+      nodes: [
+        {
+          id: 'x',
+          kind: 'exit',
+          name: 'win',
+          x: 0,
+          y: 0,
+          vars: [{ id: 'v1', name: 'gold', type: 'int', value: '' }],
+        },
+      ],
+      links: [],
+    },
+  }
+  const pool = { id: 'p', kind: 'pool', x: 200, y: 0 }
+  // the clipboard clip is the machine AND its consumer, so the ⇡ wire is part
+  // of the paste and must be rewired to the copy’s freshly re-id’d exit var
+  const clip = { id: 'g1', mode: 'flow', name: '', entry: null, nodes: [machine, pool], links: [{ id: 'l1', kind: 'data', from: 'm', fromPort: 'v1', to: 'p', toPort: '__in__' }] }
+  const pasted = reidGraph(JSON.parse(JSON.stringify(clip)))
+  const copy = pasted.nodes.find((n) => n.kind === 'machine')
+  const wire = pasted.links[0]
+  assert.notEqual(copy.id, 'm', 'the pasted machine is a fresh part')
+  assert.notEqual(wire.fromPort, 'v1', 'the ⇡ wire no longer names the original’s variable')
+  assert.ok(
+    exitVarsOf(copy.graph).some((v) => v.id === wire.fromPort),
+    `the ⇡ wire lands on one of the copy’s own exit variables (${exitVarsOf(copy.graph).map((v) => v.id)})`,
+  )
+  assert.equal(wire.to, pasted.nodes.find((n) => n.kind === 'pool').id, 'and still reaches the pasted pool')
 })

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isEntryPart, dataCanConnect, compatTargets, takesFlow, branchLink } from '../src/wireRules.js'
 import { runDRC } from '../src/drc.js'
-import { emptyValue, renameTypeInDoc, newNode, typedValue } from '../src/model.js'
+import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf } from '../src/model.js'
 
 const n = (kind, extra = {}) => ({ id: 'n' + kind + (extra.tag || Math.random().toString(36).slice(2, 6)), kind, x: 0, y: 0, ...extra })
 const flow = (a, b) => ({ id: 'f' + Math.random().toString(36).slice(2, 8), kind: 'flow', from: a.id, fromPort: 'out', to: b.id, toPort: 'in', amount: 1 })
@@ -88,6 +88,33 @@ test('MACHINE node exposes every ENTER variable as one complete ⇣ list', () =>
   const g = { nodes: [sys, m], links: [] }
   assert.ok(dataCanConnect(g, assets, sys.id, 'v', m.id, 'e1').ok, 'int ⇡ feeds the ENTER var through the MACHINE node')
   assert.ok(!dataCanConnect(g, assets, sys.id, 'v', m.id, 'e2').ok, 'string var refuses an int — types travel with the var')
+})
+
+test('MACHINE node mirrors EXIT variables as one complete ⇡ output list', () => {
+  const m = n('machine', {
+    graph: {
+      id: 'gm',
+      mode: 'machine',
+      name: 'combat',
+      entry: null,
+      nodes: [
+        n('enter', { name: 'round', vars: [{ id: 'e1', name: 'hp', type: 'int', value: '' }] }),
+        n('exit', { name: 'win', vars: [{ id: 'x1', name: 'score', type: 'int', value: '' }] }),
+        n('exit', { name: 'flee', vars: [{ id: 'x2', name: 'score', type: 'string', value: '' }] }),
+      ],
+      links: [],
+    },
+  })
+  const pool = n('pool')
+  const sink = n('inspect', { objType: 'any' })
+  const g = { nodes: [m, pool, sink], links: [] }
+  const vs = exitVarsOf(m.graph)
+  assert.equal(vs.length, 2, 'every EXIT door’s variables join the MACHINE node’s ⇡ list')
+  assert.deepEqual(vs.map((v) => v.exit), ['win', 'flee'], 'each ⇡ is tagged with the door it leaves through')
+  assert.equal(vs[1].id, 'x2', 'two doors may announce the same name and keep their own port')
+  assert.ok(dataCanConnect(g, [], m.id, 'x1', pool.id, '__in__').ok, 'the int score feeds an ⇣ int above')
+  assert.ok(!dataCanConnect(g, [], m.id, 'x2', pool.id, '__in__').ok, 'the string score refuses an int')
+  assert.ok(dataCanConnect(g, [], m.id, 'x2', sink.id, '__obj__').ok, 'the string score feeds an ⇣ any')
 })
 
 test('DRC still runs clean over a wired machine and flags a closed cycle', () => {

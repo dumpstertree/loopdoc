@@ -79,7 +79,7 @@ function detail(n, g, doc) {
     case 'graph':
       return `nested flow graph — ${n.graph?.nodes?.length || 0} parts (section below; RETURN leads back out)`
     case 'machine':
-      return `nested machine — ${n.graph?.nodes?.length || 0} parts (section below; its ⇣ inputs feed the machine's ENTER doors)`
+      return `nested machine — ${n.graph?.nodes?.length || 0} parts (section below; its ⇣ inputs feed the machine's ENTER doors and its ⇡ outputs are the EXIT doors' variables)`
     case 'getg':
       return `reads ⚙ ${n.gName || '?'} (${n.gType || '?'})`
     case 'setg':
@@ -122,8 +122,12 @@ function detail(n, g, doc) {
       return '⇡ = deep copy of ⇣ val — writes to it never reach the original'
     case 'action':
       return 'chain waits here for a click, then consumes from input pools'
-    case 'exit':
-      return 'kills the token; appears as this machine’s output port in the parent'
+    case 'exit': {
+      const parts = (n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}`)
+      return `kills the token; appears as this machine’s output port in the parent${
+        parts.length ? ` · announces ${parts.join(' · ')} as ⇡ outputs there` : ''
+      }`
+    }
     case 'enter': {
       const parts = [
         ...(n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}${String(v.value ?? '') ? ` = ${v.value}` : ''}`),

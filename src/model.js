@@ -212,6 +212,20 @@ export function enterVarsOf(graph) {
   return out
 }
 
+// The mirror image: every EXIT variable of a machine graph, in exit order —
+// this is exactly what the MACHINE node shows as its ⇡ outputs. Each entry
+// remembers which door declared it, so two exits may both announce 'score'
+// without colliding (they keep their own ids and their own ⇡ port above).
+export function exitVarsOf(graph) {
+  const out = []
+  for (const e of (graph || {}).nodes || []) {
+    if (e.kind !== 'exit') continue
+    for (const v of e.vars || [])
+      out.push({ id: v.id, name: v.name || 'var', type: v.type || 'int', exit: e.name || 'exit' })
+  }
+  return out
+}
+
 // ---- array-op data ports -----------------------------------------------------
 // APPEND/JOIN/REMOVE/REMOVE AT/SORT are pure data like INSPECT: they learn
 // their itemType from the array first wired in, and every port's type follows.
@@ -314,7 +328,8 @@ export const KINDS = {
     mode: 'flow',
     label: 'MACHINE',
     cls: 'nd-machine',
-    hint: 'nested machine — chains run its economy · its EXIT parts become named output ports here · its ENTER variables become ⇣ data inputs',
+    hint:
+      'nested machine — chains run its economy · its EXIT parts become named output ports here · its ENTER variables become ⇣ data inputs · its EXIT variables become ⇡ data outputs',
     ports: (n) => {
       const xs = ((n.graph || {}).nodes || []).filter((x) => x.kind === 'exit')
       return xs.length
@@ -322,8 +337,9 @@ export const KINDS = {
         : [{ id: 'out', dir: 'out', label: 'out' }]
     },
     // every ENTER var of the nested machine, in enter order — ONE complete
-    // ⇣ list on this card however many enter doors the machine has
-    data: (n) => ({ in: enterVarsOf(n.graph), out: [] }),
+    // ⇣ list on this card however many enter doors the machine has; its ⇡
+    // mirror is every EXIT var, tagged with the door it leaves through
+    data: (n) => ({ in: enterVarsOf(n.graph), out: exitVarsOf(n.graph) }),
   },
   // ---- machine nodes ----------------------------------------------------------
   enter: {
@@ -618,8 +634,14 @@ export const KINDS = {
     mode: 'machine',
     label: 'EXIT',
     cls: 'mc-exit',
-    hint: 'the machine ends here — named exits become output ports on the MACHINE node in the parent graph',
+    hint: 'the machine ends here — named exits become output ports on the MACHINE node in the parent graph · its typed variables publish ⇡ values out of the machine',
     ports: () => [{ id: 'in', dir: 'in', label: 'exit' }],
+    // a variable's ⇣ is fed by a producer inside the machine; the value then
+    // leaves through the matching ⇡ port on the MACHINE node above
+    data: (n) => ({
+      in: [...(n.vars || [])].map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'var' })),
+      out: [],
+    }),
   },
 }
 function flowIO() {
@@ -768,6 +790,9 @@ export function newNode(kind, x, y) {
   if (kind === 'todo') n.todos = [{ id: uid('td'), text: '', done: false }]
   if (kind === 'enter') n.vars = [{ id: uid('ev'), name: '', type: 'int', value: '' }]
   if (kind === 'enter') n.assets = []
+  // an EXIT's variables are its ⇡ outputs — it starts with none, so the card
+  // only shows the + variable button until you decide what this door announces
+  if (kind === 'exit') n.vars = []
   if (kind === 'getledger' || kind === 'setledger') {
     n.lRef = null
     n.lName = ''
@@ -878,11 +903,11 @@ export function reidNode(node, map) {
     map.set(`${node.id}:${old}`, e.id)
   })
   ;(nn.todos || []).forEach((t) => (t.id = uid('td'))) // checklist rows are private — fresh ids, no port maps
-  // ENTER variables ARE ports (inside the machine and on the parent MACHINE
-  // node) — re-id and register both key forms so data wires follow
+  // ENTER and EXIT variables ARE ports (inside the machine and on the parent
+  // MACHINE node) — re-id and register both key forms so data wires follow
   ;(nn.vars || []).forEach((v) => {
     const old = v.id
-    v.id = uid('ev')
+    v.id = uid(nn.kind === 'exit' ? 'xv' : 'ev')
     map.set(old, v.id)
     map.set(`${node.id}:${old}`, v.id)
   })
@@ -899,8 +924,9 @@ export function reidNode(node, map) {
     // exit re-id — register `oldNode:oldExit → newExit` after reidding
     const oldExits = (nn.graph.nodes || []).filter((x) => x.kind === 'exit').map((x) => x.id)
     // …and its ⇣ data ports ARE the nested ENTER variables (vars and assets)
+    // and its ⇡ data ports ARE the nested EXIT variables
     const oldVars = (nn.graph.nodes || [])
-      .filter((x) => x.kind === 'enter')
+      .filter((x) => x.kind === 'enter' || x.kind === 'exit')
       .flatMap((x) => [...(x.vars || []), ...(x.assets || [])].map((v) => v.id))
     reidGraph(nn.graph, map)
     for (const old of oldExits) {

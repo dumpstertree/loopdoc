@@ -43,7 +43,7 @@ export function TypeSelect({ value, onChange, types, title }) {
       </optgroup>
       <optgroup label="arrays">
         {names.filter((n) => BASIC_TYPES.includes(n)).map((n) => (
-          <option key={n} value={n}>{n}</option>
+          <option key={n} value={`${n}[]`}>{n}[]</option>
         ))}
       </optgroup>
       {names.filter((n) => !BASIC_TYPES.includes(n)).length > 0 && (

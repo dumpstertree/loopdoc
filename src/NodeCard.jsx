@@ -4,7 +4,7 @@
 // so the canvas can measure them for edge routing; out-ports are drag
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
-import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, fieldsOf, emptyValue, typedValue } from './model.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, fieldsOf, emptyValue, typedValue } from './model.js'
 import { dataValue, fmt } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
 
@@ -889,6 +889,28 @@ export default function NodeCard({
               <span className="nd-sub">↳ {v.enter}</span>
             </div>
           ))}
+        {/* the mirror image: one ⇡ per EXIT variable of the nested machine,
+            tagged with the door it leaves through — two exits may each
+            announce a same-named variable and keep their own port */}
+        {node.kind === 'machine' &&
+          exitVarsOf(node.graph).map((v) => (
+            <div className="dvar out" key={'x' + v.id} title={`leaves the “${v.exit}” EXIT inside — wire any ${v.type} out of this machine`}>
+              <span>
+                ⇡ {v.name}:<b>{v.type}</b>
+              </span>
+              <span className="nd-sub">↳ {v.exit}</span>
+              <span
+                className="port-data out"
+                data-port={portKey(node.id, v.id, 'out')}
+                title="drag to feed a ⇣ of the same type"
+                onPointerDown={(e) => {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  onDataPortDown(e, node.id, v.id)
+                }}
+              />
+            </div>
+          ))}
         {node.kind === 'step' && (
           <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
         )}
@@ -1362,16 +1384,98 @@ export default function NodeCard({
             </button>
           </>
         )}
-        {node.kind === 'exit' && !sim && (
-          <input
-            className="inp"
-            style={{ width: '100%' }}
-            placeholder="exit name — victory, defeat…"
-            title="the MACHINE node in the parent graph grows an output port with this name"
-            value={node.name || ''}
-            onPointerDown={(e) => e.stopPropagation()}
-            onChange={(e) => onPatch({ name: e.target.value })}
-          />
+        {node.kind === 'exit' && (
+          <>
+            {!sim && (
+              <input
+                className="inp"
+                style={{ width: '100%' }}
+                placeholder="exit name — victory, defeat…"
+                title="the MACHINE node in the parent graph grows an output port with this name"
+                value={node.name || ''}
+                onPointerDown={(e) => e.stopPropagation()}
+                onChange={(e) => onPatch({ name: e.target.value })}
+              />
+            )}
+            {/* EXIT variables are the mirror image of ENTER ones: a producer
+                inside the machine wires INTO ⇣ here, and the value leaves
+                through a matching ⇡ port on the MACHINE node above */}
+            {(node.vars || []).map((v, i) => {
+              const live = sim
+                ? dataValue(graph.nodes, graph.links, sim.amounts || {}, sim.mem || {}, node.id, v.id)
+                : null
+              return (
+                <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div className="nd-row">
+                    <input
+                      className="inp"
+                      style={{ flex: 1, minWidth: 0 }}
+                      placeholder="variable name…"
+                      title="this variable also appears as a ⇡ output on the MACHINE node above"
+                      value={v.name}
+                      onChange={(e) =>
+                        onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })
+                      }
+                      onKeyDown={(e) => e.stopPropagation()}
+                    />
+                    <TypeSelect
+                      types={types}
+                      value={v.type}
+                      title="the variable’s data type — every type with its [] array form"
+                      onChange={(type) =>
+                        onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, type } : x)) })
+                      }
+                    />
+                    <button
+                      className="icon-btn"
+                      title="remove variable"
+                      onClick={() => onPatch({ vars: node.vars.filter((_, j) => j !== i) })}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div
+                    className="dvar"
+                    title="wire a producer’s ⇡ into this ⇣ inside the machine — the value then leaves through the ⇡ port on the MACHINE node above"
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                    <span>
+                      ⇣ {v.name || '?'}:<b>{v.type}</b>
+                    </span>
+                    {sim && live && live.val !== null && <span className="dval">{fmt(live.val)}</span>}
+                    {!sim && (
+                      <input
+                        className="inp"
+                        style={String(v.type || '').endsWith('[]') ? { flex: 1, minWidth: 60 } : { width: 46 }}
+                        placeholder={String(v.type || '').endsWith('[]') ? 'a, b, c…' : 'announce…'}
+                        title={
+                          String(v.type || '').endsWith('[]')
+                            ? 'list values, comma separated — used only while nothing is wired into ⇣'
+                            : "the value announced while nothing is wired into ⇣"
+                        }
+                        value={v.value ?? ''}
+                        onChange={(e) =>
+                          onPatch({ vars: node.vars.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)) })
+                        }
+                        onKeyDown={(e) => e.stopPropagation()}
+                      />
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            <button
+              className="tb-btn"
+              style={{ width: '100%' }}
+              onClick={() =>
+                onPatch({
+                  vars: [...(node.vars || []), { id: uid('xv'), name: '', type: 'int', value: '' }],
+                })
+              }
+            >
+              + variable
+            </button>
+          </>
         )}
         {sim && node.kind === 'exit' && <div className="mc-click info">⏏ ends the machine here</div>}
         {node.kind === 'todo' && (

@@ -11,7 +11,7 @@
 // Finding: { sev, path, graph, node, text } — path = breadcrumb node ids to
 // the owning graph, so the panel can jump there.
 // ---------------------------------------------------------------------------
-import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs } from './model.js'
+import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const label = (n) =>
@@ -101,6 +101,12 @@ function scanGraph(g, assets, types, globals, add) {
         add('info', label(n), 'machine has no EXIT — the parent can only see a generic out, not outcomes')
       if (n.kind === 'machine' && n.graph && (n.graph.nodes || []).length && !(n.graph.nodes || []).some((x) => x.kind === 'enter' || x.kind === 'source'))
         add('info', label(n), 'machine has no ENTER — nothing starts its chains')
+      // a machine's ⇡ ports ARE its exits' variables — one nobody consumes is a
+      // decision worth seeing, the mirror of a choice option that leads nowhere
+      if (n.kind === 'machine')
+        for (const v of exitVarsOf(n.graph))
+          if (!data.some((l) => l.from === n.id && l.fromPort === v.id))
+            add('info', label(n), `⇡ ${v.name}:${v.type} from the “${v.exit}” EXIT is never read above — the value announces itself and goes no further`)
       if (n.kind === 'graph' && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
         add('info', label(n), 'sub graph returns here and nothing continues — flow ends')
       if (m.mode === 'flow' && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
@@ -206,8 +212,19 @@ function scanGraph(g, assets, types, globals, add) {
 
   const exits = nodes.filter((n) => n.kind === 'exit')
   if (nodes.length && !exits.length) add('info', '', 'no EXIT part — this machine never announces an outcome to its parent')
-  for (const x of exits)
-    if (!allReach.has(x.id) && linked(x.id)) add('warn', label(x), `exit "${x.name || '?'}" is unreachable — no flow path from any entry leads here`)
+  for (const x of exits) {
+    if (!allReach.has(x.id) && linked(x.id))
+      add('warn', label(x), `exit "${x.name || '?'}" is unreachable — no flow path from any entry leads here`)
+    // an EXIT variable is the mirror of an ENTER one: it grows a ⇡ port on the
+    // MACHINE node above, so a door that announces nothing is a decision to make
+    for (const v of x.vars || [])
+      if (!dataTo(x.id, v.id))
+        add(
+          hasVal(v.value) ? 'info' : 'warn',
+          label(x),
+          `exit var "${v.name || '?'}:${v.type || 'int'}" has nothing wired into its ⇣ — it announces only the value set on the card${hasVal(v.value) ? '' : ', and none is set'}`,
+        )
+  }
 
   for (const n of nodes) if (n.kind !== 'text' && n.kind !== 'todo' && n.kind !== 'enter' && !n.parent && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')
 }

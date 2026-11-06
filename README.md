@@ -52,9 +52,10 @@ inside, arrays grow row by row, `bool` is a pick and `asset` a 📦 dropdown;
 recursive types collapse to a ↻ nest-deeper click; **⇡ publishes the typed
 value** for any ⇣ of that type · corner grip widens the form) · `GRAPH` (nested flow graph, RETURN exits back out) · `MACHINE`
 (nested machine — opens full-screen like any nested graph; the machine's
-EXIT parts appear here as named output ports, and every ENTER variable and
+EXIT parts appear here as named output ports, every ENTER variable and
 📦 asset of every enter door appears here as a ⇣ data input — one complete
-list) ·
+list, and every EXIT variable appears here as a ⇡ data output tagged with the
+door it leaves through) ·
 both canvases also carry `GET GLOBAL` (reads a ⚙ doc-wide variable) and
 `SET GLOBAL` (flow passes through as it writes the ⚙ — ⇣ takes the value,
 same type as the picked variable).
@@ -102,7 +103,15 @@ checkboxes, `Enter` adds the next task; drag its corner grip to widen it and
 long tasks wrap onto further lines; a silent note that never joins wires or
 the chain sim) ·
 `EXIT` (the machine ends here; name it — `victory`, `defeat`, `flee` — and the
-parent graph's MACHINE node grows a matching output port to continue from).
+parent graph's MACHINE node grows a matching output port to continue from ·
+it is also the mirror image of `ENTER`: hit **`+ variable`** on the card and it
+grows a row of **name · type dropdown (every declared type plus its `[]` array
+form) · a ⇣ input port of that type**, so a producer inside the machine wires the
+value in and the MACHINE node above grows a matching **⇡ output port**, tagged
+`↳ exit-name`, that any part above can read — two exits may announce the same
+name and keep their own ports; the sim logs each door's announcements as `⏏
+victory — gold: 12 · party: [goblin, orc]`)
+.
 
 Chain sim visuals: parts with a chain token in flight glow teal; waiting
 parts (⏳ ACTION / blocked SYS CALL) pulse amber and are clickable.
