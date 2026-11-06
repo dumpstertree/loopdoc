@@ -84,7 +84,7 @@ test('llm export — part reference covers only kinds used', () => {
   const ref = t.slice(t.indexOf('## Part reference'))
   assert.ok(ref.includes('DRAIN —'), 'used kind explained')
   assert.ok(ref.includes('POOL —'), 'pool explained')
-  assert.ok(!ref.includes('TRADER —'), 'unused kind not bloating the brief')
+  assert.ok(!ref.includes('IF —'), 'unused kind not bloating the brief')
 })
 
 test('llm export — system fn descriptions ride the export', () => {

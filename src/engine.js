@@ -313,9 +313,6 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
   for (const e of nodes)
     if (isEntryPart(e) && !toks.some((t) => t.entry === e.id)) toks.push({ id: 't' + mem.tseq++, node: e.id, entry: e.id })
 
-  const qBudget = {}
-  for (const n of nodes) if (n.kind === 'queue') qBudget[n.id] = n.rate ?? 1
-
   const kill = (t) => {
     // a dead iteration token frees its loop to advance
     if (t.owner && (mem.loops || {})[t.owner]) mem.loops[t.owner].body = Math.max(0, (mem.loops[t.owner].body || 0) - 1)
@@ -399,46 +396,11 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       continue
     }
 
-    if (n.kind === 'delay') {
-      if (!t.armed) {
-        t.armed = true
-        t.hold = Math.max(1, n.delay ?? 3)
-      }
-      if (t.hold > 0) {
-        t.hold -= 1
-        put(t)
-        continue
-      }
-      log.push(`⏳ ${n.name || 'delay'} released`)
-      advance(t, n)
-      continue
-    }
-
-    if (n.kind === 'queue') {
-      if ((qBudget[n.id] || 0) > 0) {
-        qBudget[n.id] -= 1
-        advance(t, n)
-      } else put(t) // backed up — waits its turn
-      continue
-    }
-
-    if (n.kind === 'register') {
-      const r = (mem.reg = mem.reg || {})
-      r[n.id] = (r[n.id] || 0) + 1
-      if (r[n.id] >= (n.countTo ?? 2)) {
-        r[n.id] = 0
-        log.push(`🔢 ${n.name || 'register'} pulsed (every ${n.countTo ?? 2})`)
-        advance(t, n)
-      } else kill(t) // absorbed until the count fills
-      continue
-    }
-
-    if (n.kind === 'randgate') {
-      if (Math.random() < 0.5) {
-        log.push(`🎲 ${n.name || 'rand gate'} closed — chain dropped`)
-        kill(t)
-        continue
-      }
+    if (n.kind === 'func') {
+      // the body lives with the ƒ FUNCTIONS list on the DATA tab; running its
+      // parts is future work — today the call is announced and the chain keeps
+      // walking, so a func part never breaks a machine
+      log.push(n.func ? `ƒ ${n.fName || 'function'} — isolated function called` : 'ƒ ⚠ no function picked — chain passes through')
       advance(t, n)
       continue
     }
@@ -669,7 +631,7 @@ function stepOnce(nodes, links, prev, log, mem = {}, assets = []) {
       continue
     }
 
-    // everything else passes the chain through: source, pool, converter, gate, trader
+    // everything else passes the chain through
     advance(t, n)
   }
 

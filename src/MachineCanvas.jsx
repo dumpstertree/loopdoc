@@ -4,7 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
-import { KINDS, kindsFor, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
+import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
 import { fmt, dataValue, originRef, callSystem, stepOnce } from './engine.js'
 import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
@@ -12,7 +12,7 @@ import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 // ---- editor ------------------------------------------------------------------
 // wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
 
-export default function MachineCanvas({ graph, assets, types, globals = [], gstore, onChange }) {
+export default function MachineCanvas({ graph, assets, types, globals = [], funcs = [], gstore, onChange, onOpenNode }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
@@ -110,9 +110,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     setDrag({ kind: 'data', from: id, port: portId, x: p.x, y: p.y })
   }
   const addDataLink = (from, fromPort, to, toPort) => {
-    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort)
+    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort, funcs)
     if (!chk.ok) return warn(chk.why)
-    const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out')
+    const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out', funcs)
     mutate((g) => ({
       ...g,
       links: [
@@ -258,11 +258,11 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
           const [toNode, toPort, dir] = pin.getAttribute('data-port').split(':')
           if (dir !== 'in') warn('⚠ data flows ⇡ out → ⇣ in')
           else {
-            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort)
+            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort, funcs)
             if (!res.ok) warn(res.why)
           }
         } else if (src && card) {
-          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in')
+          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in', funcs)
           if (!res.ok) warn(res.why)
         }
         if (res && res.ok) {
@@ -362,19 +362,30 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
             const ifn = g.nodes.find((n) => n.id === dead.to && n.kind === 'ifb')
             if (ifn) {
               const rest = links.find((l) => l.to === ifn.id && (l.toPort === '__a__' || l.toPort === '__b__'))
-              const ot = rest && dataPortType({ nodes, links }, assets, rest.from, rest.fromPort, 'out')
+              const ot = rest && dataPortType({ nodes, links }, assets, rest.from, rest.fromPort, 'out', funcs)
               nodes = nodes.map((n) => (n.id === ifn.id ? { ...n, cmpType: ot && ot !== 'any' ? ot : null } : n))
             }
           }
           onChangeRef.current({ ...g, nodes, links })
         } else {
           // selected parts go through the model's removeNode so a deleted TEXT
-          // frame frees the parts it was grouping instead of orphaning them
+          // frame frees the parts it was grouping instead of orphaning them —
+          // and a function's permanent ENTER/EXIT doors survive it
+          const g0 = graphRef.current
+          const isF = g0.mode === 'func'
+          const prot = (id) => {
+            if (!isF) return false
+            const n = (g0.nodes || []).find((x) => x.id === id)
+            return n && (n.kind === 'enter' || n.kind === 'exit')
+          }
           const ids = selectionRef.current
-          setSelection([])
-          let g = graphRef.current
-          for (const id of ids) g = removeNode(g, id)
-          onChangeRef.current(g)
+          const kill = ids.filter((id) => !prot(id))
+          if (kill.length < ids.length)
+            warn(`⊘ ENTER and EXIT are permanent to the function — ${ids.length - kill.length === 1 ? 'door kept' : 'doors kept'}`)
+          setSelection(ids.filter((id) => prot(id)))
+          let g = g0
+          for (const id of kill) g = removeNode(g, id)
+          if (kill.length) onChangeRef.current(g)
         }
       }
     }
@@ -493,7 +504,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
   // shown with the flow canvas's ▶ flag so "where chains begin" reads
   // identically in both
   const entryIds = new Set(graph.nodes.filter((n) => isEntryPart(n, graph.links)).map((n) => n.id))
-  const paletteItems = kindsFor('machine').map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
+  const paletteItems = (graph.mode === 'func' ? funcKinds : kindsFor('machine')).map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
   const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
   const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
@@ -503,16 +514,20 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
     <>
       <div className="graph-toolbar">
         <span className="tb-label">ADD</span>
-        {kindsFor('machine').map((k) => (
+        {(graph.mode === 'func' ? funcKinds : kindsFor('machine')).map((k) => (
           <button key={k} className="tb-btn" title={KINDS[k].hint} onClick={() => addNode(k)}>
             {KINDS[k].label}
           </button>
         ))}
         <span className="tb-sep" />
         {/* buttons removed for machine graphs */}
-        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · chains run from ENTER parts · click ⏳/▶ part to continue · Del removes selection</span>
+        <span className="tb-hint">
+          {graph.mode === 'func'
+            ? 'drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · its ENTER/EXIT are permanent — they move and take vars, never copy or Del · dbl-click a FUNC (or ▶ enter) walks into it, the depth bar walks back'
+            : 'drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · chains run from ENTER parts · click ⏳/▶ part to continue · Del removes selection'}
+        </span>
         <span className="spacer" />
-        {sim ? (
+        {graph.mode === 'func' ? null : sim ? (
           <>
             <button className="btn" onClick={() => stepN(1)}>step</button>
             <button className="btn" onClick={() => stepN(10)}>step ×10</button>
@@ -718,6 +733,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                   assets={assets}
                   types={types}
                   globals={globals}
+                  funcs={funcs}
                   gvals={gstore ? gstore.vals(globals) : null}
                   selected={selection.includes(n.id)}
                   isEntry={entryIds.has(n.id)}
@@ -730,7 +746,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                     setSelection((s) => (shift ? (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]) : [id]))
                   }}
                   onToggleEntry={() => {}}
-                  onOpenGraph={() => {}}
+                  onOpenGraph={onOpenNode}
                   onPortDown={onPortDown}
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
@@ -753,7 +769,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], gsto
                 <div className="canvas-empty">
                   <p>
                     <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
-                    CONVERTERS/GATES move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
+                    DRAINS/ADDs move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
                   <p>
                     chain sim — every part with no flow input is an entry point; chains walk downstream one hop per step and the entry re-runs when its chains

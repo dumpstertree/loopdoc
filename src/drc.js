@@ -20,7 +20,7 @@ const label = (n) =>
 const hasVal = (v) => v !== undefined && v !== null && String(v) !== ''
 
 // one graph in isolation -------------------------------------------------------
-function scanGraph(g, assets, types, globals, add) {
+function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
   const nodes = g.nodes || []
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const data = (g.links || []).filter((l) => l.kind === 'data')
@@ -53,9 +53,9 @@ function scanGraph(g, assets, types, globals, add) {
       add('error', label(other || { kind: 'wire' }), 'a wire connects to a deleted part — remove or rewire it')
     }
   for (const l of data) {
-    if (byId[l.from] && !dataPortType(g, assets, l.from, l.fromPort, 'out'))
+    if (byId[l.from] && !dataPortType(g, assets, l.from, l.fromPort, 'out', funcs))
       add('error', label(byId[l.to]), `data wire ⇣ ${l.toPort} is dangling — ${label(byId[l.from])} no longer outputs that port`)
-    if (byId[l.to] && !dataPortType(g, assets, l.to, l.toPort, 'in'))
+    if (byId[l.to] && !dataPortType(g, assets, l.to, l.toPort, 'in', funcs))
       add('error', label(byId[l.from]), `data wire from ⇡ ${l.fromPort} is dangling — ${label(byId[l.to])} no longer has that input`)
   }
   for (const n of nodes) {
@@ -65,6 +65,14 @@ function scanGraph(g, assets, types, globals, add) {
         add('error', label(n), `global "${n.gName || '?'}" no longer exists — re-pick or remove (manage them in ⚙ GLOBALS)`)
       if (n.kind === 'setg' && n.gRef && !dataTo(n.id, '__val__'))
         add('warn', label(n), `⇣ ${n.gName || 'value'} unwired — the global is never actually set`)
+    }
+    if (n.kind === 'func') {
+      if (!n.func)
+        add('error', label(n), 'no ƒ function selected — pick one on the card (they live in ƒ FUNCTIONS on the DATA tab)')
+      else if (ownerId && n.func === ownerId)
+        add('error', label(n), 'calls the very function you are inside — a function may not call itself')
+      else if (funcs.length && !funcs.some((f) => f.id === n.func))
+        add('error', label(n), `ƒ function "${n.fName || '?'}" no longer exists — re-pick or remove`)
     }
     if (n.kind === 'inspect' && n.objType && n.objType !== 'any' && !isDeclared(n.objType))
       add('warn', label(n), `reads ${n.objType} — no longer a declared type`)
@@ -79,7 +87,7 @@ function scanGraph(g, assets, types, globals, add) {
     }
   }
 
-  if (g.mode !== 'machine') {
+  if (g.mode === 'flow') {
     // ---- flow-graph rules ----------------------------------------------------
     for (const n of nodes) {
       const m = kindMeta(n)
@@ -109,9 +117,11 @@ function scanGraph(g, assets, types, globals, add) {
             add('info', label(n), `⇡ ${v.name}:${v.type} from the “${v.exit}” EXIT is never read above — the value announces itself and goes no further`)
       if (n.kind === 'graph' && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
         add('info', label(n), 'sub graph returns here and nothing continues — flow ends')
-      if (m.mode === 'flow' && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
+      // 'both' kinds (FUNC) sit on graph canvases as much as on machines —
+      // the flow rules see them as flow members there
+      if (['flow', 'both'].includes(m.mode) && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
         add('info', label(n), 'flow dead-ends here')
-      if (m.mode === 'flow' && !linked(n.id) && !['event', 'step'].includes(n.kind))
+      if (['flow', 'both'].includes(m.mode) && !linked(n.id) && !['event', 'step'].includes(n.kind))
         add('info', label(n), 'orphan — no wires at all')
     }
     return
@@ -253,10 +263,56 @@ export function runDRC(doc, scopePath = null) {
   const findings = []
   const graphs = []
   walkGraphs(doc.design, (g, p) => graphs.push({ g, path: p.map((n) => n.id), label: [doc.design.name || 'Main Loop', ...p.map((n) => n.name || 'sub graph')].join(' ▸ ') }))
+  // function bodies live on the doc, not under a call site — scan each once,
+  // reachable through the first FUNC node anywhere in the doc that picks it
+  const sites = {}
+  const seen = new Set()
+  const queue = [[doc.design, []]]
+  while (queue.length) {
+    const [g, p] = queue.shift()
+    const key = g.id || JSON.stringify(p)
+    if (seen.has(key)) continue
+    seen.add(key)
+    for (const n of g.nodes || []) {
+      if (n.kind === 'func' && n.func) {
+        if (!sites[n.func]) sites[n.func] = [...p, n.id]
+        const f = (doc.funcs || []).find((x) => x.id === n.func)
+        if (f) queue.push([f.graph, [...p, n.id]])
+      }
+      if (n.graph) queue.push([n.graph, [...p, n.id]])
+    }
+  }
+  for (const f of doc.funcs || []) {
+    const path = sites[f.id]
+    if (!path) continue
+    // label the body graph with its own name under the call-site breadcrumb
+    let g = doc.design
+    const names = []
+    for (const id of path) {
+      const n = g.nodes.find((x) => x.id === id)
+      if (n?.kind === 'func') {
+        names.push(f.name || '(unnamed)')
+        g = f.graph
+      } else {
+        names.push(n.name || 'sub graph')
+        g = n.graph || g
+      }
+    }
+    graphs.push({ g: f.graph, path, owner: f.id, label: [doc.design.name || 'Main Loop', ...names].join(' ▸ ') })
+    // machines/graphs nested inside the body follow the same breadcrumb
+    walkGraphs(f.graph, (g, p) => {
+      if (!p.length) return
+      graphs.push({
+        g,
+        path: [...path, ...p.map((n) => n.id)],
+        label: [doc.design.name || 'Main Loop', ...names, ...p.map((n) => n.name || 'sub graph')].join(' ▸ '),
+      })
+    })
+  }
   const scoped = scopePath === null ? graphs : graphs.filter((x) => JSON.stringify(x.path) === JSON.stringify(scopePath))
-  for (const { g, path, label: gname } of scoped) {
+  for (const { g, path, owner, label: gname } of scoped) {
     const add = (sev, node, text) => findings.push({ sev, path, graph: gname, node, text })
-    scanGraph(g, doc.assets, doc.types || [], doc.vars || [], add)
+    scanGraph(g, doc.assets, doc.types || [], doc.vars || [], add, doc.funcs || [], owner || null)
   }
   if (scopePath === null) {
     const add = (sev, node, text) => findings.push({ sev, path: [], graph: 'document', node, text })

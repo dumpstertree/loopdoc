@@ -772,13 +772,7 @@ svg.edges .edge {
 .mc-getg { --kc: var(--magenta); }
 .mc-setg { --kc: var(--amber); border-style: dashed; }
 .mc-pool { --kc: var(--cyan); }
-.mc-converter { --kc: var(--magenta); }
-.mc-gate { --kc: var(--mint); }
-.mc-randgate { --kc: #e57ad0; }
-.mc-trader { --kc: var(--clay); }
-.mc-delay { --kc: var(--cyan); }
-.mc-queue { --kc: var(--lime); }
-.mc-register { --kc: #d7dde8; }
+.mc-func { --kc: #b39df5; border-style: dashed; }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
 .mc-inspect { --kc: #9ad0ff; }
@@ -1150,6 +1144,12 @@ svg.edges .edge {
   color: var(--dim);
   font-size: 10px;
   padding: 1px 0;
+}
+.fn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
 }
 
 /* types: name in a highlighted header bar, fields in aligned columns */

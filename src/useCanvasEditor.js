@@ -40,29 +40,47 @@ export function useCanvasEditor({ graphRef, mutate, mode, warn, getPointer, clam
   selectionRef.current = selection
   const clipboardRef = useRef(null)
 
+  // func bodies own permanent doors: ENTER/EXIT can be neither copied, cut
+  // nor pasted — they are born with the graph. Read the mode from the live
+  // graph, so canvas-level setup never goes stale.
+  const gmode = () => (graphRef.current && graphRef.current.mode) || mode
+  const prot = (n) => gmode() === 'func' && (n.kind === 'enter' || n.kind === 'exit')
+
   const copySel = (cut) => {
     const ids = selectionRef.current
     if (!ids.length) return
     const g = graphRef.current
     const nodes = g.nodes.filter((n) => ids.includes(n.id))
-    const links = g.links.filter((l) => ids.includes(l.from) && ids.includes(l.to))
-    clipboardRef.current = JSON.parse(JSON.stringify({ nodes, links }))
+    const kept = nodes.filter((n) => !prot(n))
+    if (nodes.length && !kept.length) {
+      warn('⊘ ENTER and EXIT are permanent to the function — they cannot be copied or cut')
+      return
+    }
+    const keepIds = kept.map((n) => n.id)
+    const links = g.links.filter((l) => keepIds.includes(l.from) && keepIds.includes(l.to))
+    clipboardRef.current = JSON.parse(JSON.stringify({ nodes: kept, links }))
     if (cut) {
       mutate((gg) => ({
         ...gg,
-        nodes: gg.nodes.filter((n) => !ids.includes(n.id)),
-        links: gg.links.filter((l) => !ids.includes(l.from) && !ids.includes(l.to)),
-        ...(mode === 'flow' ? { entry: ids.includes(gg.entry) ? null : gg.entry } : {}),
+        nodes: gg.nodes.filter((n) => !(ids.includes(n.id) && !prot(n))),
+        links: gg.links.filter((l) => !(keepIds.includes(l.from) && keepIds.includes(l.to))),
+        ...(gmode() === 'flow' ? { entry: ids.includes(gg.entry) ? null : gg.entry } : {}),
       }))
       setSelection([])
-    } else if (warn) warn(`⧉ ${ids.length} part${ids.length > 1 ? 's' : ''} copied`)
+    } else if (warn) warn(`⧉ ${keepIds.length} part${keepIds.length > 1 ? 's' : ''} copied`)
   }
 
   const paste = () => {
     const clip = clipboardRef.current
     if (!clip || !clip.nodes.length) return
+    // permanent doors never survive a paste either — a clipboard filled
+    // before the rule applied, or carried from another canvas, can't
+    // clone a function's ENTER/EXIT
+    const safe = clip.nodes.filter((n) => !prot(n))
+    if (!safe.length) return
+    const safeIds = safe.map((n) => n.id)
     const fresh = reidGraph(
-      JSON.parse(JSON.stringify({ id: uid('g'), mode, name: '', entry: null, nodes: clip.nodes, links: clip.links })),
+      JSON.parse(JSON.stringify({ id: uid('g'), mode: gmode(), name: '', entry: null, nodes: safe, links: clip.links.filter((l) => safeIds.includes(l.from) && safeIds.includes(l.to)) })),
     )
     // group leader-snap: the copy's top-left corner lands on the grid at the
     // pointer, members keep their offsets — and the routed-wire anchors come

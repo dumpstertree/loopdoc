@@ -485,6 +485,7 @@ export default function NodeCard({
   assets, // registry visible here (plus local generated assets, __local: true)
   types, // declared doc data types (struct value editing)
   globals = [], // document-wide global variables (GET/SET GLOBAL cards)
+  funcs = [], // ƒ functions defined on the data tab (FUNC cards pick one)
   systems = [], // system assets with ledger variables
   gvals = null, // live session values of the globals (shared across machines)
   selected,
@@ -502,8 +503,12 @@ export default function NodeCard({
   onSimCall, // set a live sys-call return value during sim
 }) {
   const meta = kindMeta(node)
-  const mode = graph.mode
-  const isMachineKind = meta.mode === 'machine'
+  // a func body is a machine canvas as far as looks go — same card width,
+  // same ports stacked top-right, so style it as one
+  const mode = graph.mode === 'func' ? 'machine' : graph.mode
+  // 'both' kinds (FUNC) count as machine parts on a machine canvas — flow
+  // cards only when they sit on a graph canvas
+  const isMachineKind = meta.mode === 'machine' || (meta.mode === 'both' && mode === 'machine')
   const ports = (meta.ports && meta.ports(node)) || []
   const flowOuts = ports.filter((p) => p.dir === 'out')
   const hasIn = meta.dataOnly ? false : meta.mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
@@ -516,7 +521,6 @@ export default function NodeCard({
 
   // machine live values
   let amount
-  let held
   let tokHere = 0
   let tokWait = false
   // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
@@ -531,8 +535,6 @@ export default function NodeCard({
     const tk = ((sim.mem || {}).tokens || []).filter((t) => t.node === node.id)
     tokHere = tk.length
     tokWait = tk.some((x) => x.wait)
-    if (node.kind === 'register') held = (sim.mem.reg || {})[node.id] ?? 0
-    else if (['delay', 'queue'].includes(node.kind)) held = tokHere
   }
 
   return (
@@ -545,9 +547,9 @@ export default function NodeCard({
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
       onClick={() => onCardClick && onCardClick(node.id)}
       onDoubleClick={(e) => {
-        // dbl-click a GRAPH/MACHINE card walks into it — the open → button
-        // stays for one-clickers; typing or clicking a control never enters
-        if (!['graph', 'machine'].includes(node.kind) || !onOpenGraph) return
+        // dbl-click a GRAPH/MACHINE/FUNC card walks into it — the open → /
+        // ▶ enter buttons stay for one-clickers; typing or clicking a control never enters
+        if (!['graph', 'machine', 'func'].includes(node.kind) || !onOpenGraph) return
         if (e.target.closest('input, textarea, select, button, [contenteditable]')) return
         onOpenGraph(node.id)
       }}
@@ -561,16 +563,6 @@ export default function NodeCard({
             {sim ? amount : poolFed ? '⇣' : node.init ?? 0}
           </span>
         )}
-        {held !== undefined && (
-          <span className={`mc-amount ${held > 0 ? 'full' : ''}`} title="held / counted">
-            {held}
-          </span>
-        )}
-        {isMachineKind && !sim && ['delay', 'queue', 'register'].includes(node.kind) && (
-          <span className="mc-amount" title="setting (edit below)">
-            {node.kind === 'delay' ? `⏳${node.delay ?? 3}` : node.kind === 'queue' ? `×${node.rate ?? 1}` : `÷${node.countTo ?? 2}`}
-          </span>
-        )}
         {isMachineKind && node.kind === 'drain' && (
           <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'tokens removed from each upstream pool per step'}>
             {drainFed ? '⇣' : `−${node.drain ?? 1}`}
@@ -581,7 +573,7 @@ export default function NodeCard({
             {drainFed ? '⇣' : `${(node.gain ?? 1) >= 0 ? '+' : ''}${node.gain ?? 1}`}
           </span>
         )}
-        {sim && tokHere > 0 && !['register', 'delay', 'queue'].includes(node.kind) && (
+        {sim && tokHere > 0 && (
           <span
             className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
             title={tokWait ? 'chain waiting here — click to continue' : `chain token${tokHere > 1 ? 's' : ''} here`}
@@ -1154,26 +1146,6 @@ export default function NodeCard({
             />
           </div>
         )}
-        {isMachineKind && !sim && ['delay', 'queue', 'register'].includes(node.kind) && (
-          <div className="nd-row">
-            <span className="nd-sub">{node.kind === 'delay' ? 'steps' : node.kind === 'queue' ? 'rate' : 'count to'}</span>
-            <input
-              className="inp"
-              style={{ width: 52 }}
-              type="number"
-              value={node.kind === 'delay' ? node.delay ?? 3 : node.kind === 'queue' ? node.rate ?? 1 : node.countTo ?? 2}
-              onChange={(e) =>
-                onPatch(
-                  node.kind === 'delay'
-                    ? { delay: Math.max(0, Number(e.target.value) || 0) }
-                    : node.kind === 'queue'
-                      ? { rate: Math.max(1, Number(e.target.value) || 1) }
-                      : { countTo: Math.max(1, Number(e.target.value) || 1) },
-                )
-              }
-            />
-          </div>
-        )}
         {sim && node.kind === 'action' && <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>}
         {sim && node.kind === 'syscall' && (
           <div className={`mc-click${tokWait ? '' : ' info'}`}>
@@ -1189,6 +1161,84 @@ export default function NodeCard({
             ⏳ can block — chain waits until clicked to return
           </label>
         )}
+        {/* FUNC — one ƒ function defined on the data tab; its body graph lives
+            with the definition, so the card only has to pick it */}
+        {node.kind === 'func' &&
+          (() => {
+            // a body may call every function except the one you are inside —
+            // the enclosing definition never appears among its own picks
+            const here = (graph || {}).id
+            const picks = (funcs || []).filter((f) => !f.graph || f.graph.id !== here)
+            const picked = (funcs || []).find((x) => x.id === node.func)
+            const dp = dataPorts(node, assets, funcs)
+            return (
+              <>
+                <div className="nd-row">
+                  <span className="nd-sub">function</span>
+                  <select
+                    className="inp"
+                    style={{ flex: 1 }}
+                    value={node.func || ''}
+                    onChange={(e) => {
+                      e.stopPropagation()
+                      const f = (funcs || []).find((x) => x.id === e.target.value)
+                      onPatch(f ? { func: f.id, fName: f.name } : { func: null, fName: '' })
+                    }}
+                  >
+                    <option value="">— pick a ƒ function —</option>
+                    {picks.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name || '(unnamed)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {picked && picked.graph && (
+                  <div className="nd-row">
+                    <span className="nd-sub">
+                      {(picked.graph.nodes || []).length} parts · {(picked.graph.links || []).length} flows
+                    </span>
+                    {onOpenGraph && <button className="tb-btn" onClick={() => onOpenGraph(node.id)}>▶ enter</button>}
+                  </div>
+                )}
+                {/* one ⇣ per ENTER variable of the definition, one ⇡ per EXIT —
+                    the body lives once on the doc so every call site mirrors it */}
+                {dp.in.map((p) => (
+                  <div className="dvar" key={p.id} title={`feeds ⇡ ${p.name} at the ENTER inside — wire any ${p.type} in`}>
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                  </div>
+                ))}
+                {dp.out.map((p) => (
+                  <div className="dvar out" key={p.id} title={`reads ⇣ ${p.name} at the EXIT inside — drag to feed a ⇣ of the same type`}>
+                    <span>
+                      ⇡ {p.name}:<b>{p.type}</b>
+                    </span>
+                    <span
+                      className="port-data out"
+                      data-port={portKey(node.id, p.id, 'out')}
+                      title="drag to feed a ⇣ of the same type"
+                      onPointerDown={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onDataPortDown(e, node.id, p.id)
+                      }}
+                    />
+                  </div>
+                ))}
+                {sim && node.func && (
+                  <div className="mc-click info">
+                    ƒ {((funcs || []).find((x) => x.id === node.func)?.name || '(gone)').trim() || '(unnamed)'} runs as the
+                    chain passes
+                  </div>
+                )}
+                {!sim && !node.func && <div className="mc-click warn">pick a ƒ function</div>}
+                {!sim && node.func && !picked && <div className="mc-click warn">⚠ the function it picks was deleted</div>}
+              </>
+            )
+          })()}
         {/* APPEND · JOIN · REMOVE · REMOVE AT · SORT · CLONE — pure-data array tools;
             wiring an array teaches the item type, every port follows */}
         {['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&

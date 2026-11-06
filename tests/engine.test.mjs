@@ -165,26 +165,6 @@ test('EXIT variables announce values out — wired ⇣ wins, the card value is t
   assert.deepEqual(said.vars[1].val, ['goblin', 'orc'], '⇣ party fell back to the comma list typed on the card')
 })
 
-test('register pulses every N passes', () => {
-  const src = n('source')
-  const reg = n('register', { countTo: 2 })
-  const sink = n('pool', { init: 0 })
-  const nodes = [src, reg, sink]
-  const links = [flow(src, reg), flow(reg, sink)]
-  const { log } = run(nodes, links, 12)
-  assert.ok(log.some((l) => l.includes('pulsed')), 'register pulsed')
-})
-
-test('delay releases after its countdown', () => {
-  const src = n('source')
-  const del = n('delay', { delay: 2 })
-  const sink = n('pool', { init: 0 })
-  const nodes = [src, del, sink]
-  const links = [flow(src, del), flow(del, sink)]
-  const { log } = run(nodes, links, 10)
-  assert.ok(log.some((l) => l.includes('released')), 'delay released')
-})
-
 test('foreach walks the array one iteration at a time, then pulses end', () => {
   const assets = [
     {
@@ -244,10 +224,10 @@ test('drain, add and SET never self-fire as entries', () => {
 
 test('unconnected pools and machines parts never self-fire — entries are explicit', () => {
   const pool = n('pool', { init: 3 })
-  const conv = n('converter')
-  const reg = n('register', { countTo: 2 })
+  const ad = n('add')
+  const iff = n('ifb', { op: '>', bVal: '3' })
   const mem = { tokens: [] }
-  run([pool, conv, reg], [], 3, mem)
+  run([pool, ad, iff], [], 3, mem)
   assert.equal(mem.tokens.length, 0, 'nothing self-started')
 })
 

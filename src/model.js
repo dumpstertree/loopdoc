@@ -51,6 +51,27 @@ export function newGlobal(name = '') {
   return { id: uid('gv'), name, type: 'int', value: '' }
 }
 
+// An isolated function: one named computation living on the doc, picked by FUNC
+// parts on any machine canvas. The body graph is a `func` graph — a machine-like
+// graph scoped to this single function, and its nodes/links will live right here.
+export function newFunc(name = '') {
+  return { id: uid('fn'), name, note: '', graph: newFuncGraph(name) }
+}
+
+// The body of a function is a machine-like canvas that already knows its own
+// door and its own end: ENTER and EXIT are born with the graph, so a function
+// always has exactly one of each — they can never be spawned, copied or deleted.
+export function newFuncGraph(name = '') {
+  const g = newGraph('func', name)
+  const en = newNode('enter', 100, 200)
+  const ex = newNode('exit', 620, 200)
+  en.name = 'enter'
+  ex.name = 'exit'
+  g.nodes.push(en, ex)
+  g.entry = en.id
+  return g
+}
+
 // coerce a global's stored default string into its typed runtime value
 export function globalValue(g) {
   if (!g) return undefined
@@ -210,6 +231,20 @@ export function enterVarsOf(graph) {
       out.push({ id: a.id, name: a.name || 'asset', type: 'asset', enter: e.name || 'enter' })
   }
   return out
+}
+
+// A FUNC part's data ports ARE the interface of the definition it picks: the
+// body's ENTER variables become ⇣ inputs the caller must feed, and its EXIT
+// variables ⇡ outputs the caller can read. Because the body lives once on the
+// doc, every call site shows the very same ports.
+export function funcPorts(node, funcs) {
+  const f = (funcs || []).find((x) => x.id === node.func)
+  if (!f) return { in: [], out: [] }
+  const g = f.graph || { nodes: [] }
+  return {
+    in: enterVarsOf(g).map((v) => ({ id: v.id, type: v.type, name: v.name })),
+    out: exitVarsOf(g).map((v) => ({ id: v.id, type: v.type, name: v.name })),
+  }
 }
 
 // The mirror image: every EXIT variable of a machine graph, in exit order —
@@ -423,6 +458,17 @@ export const KINDS = {
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }], out: [] }),
   },
+  func: {
+    // graph *and* machine canvases may call a function — the call site lives
+    // wherever it is dropped, the body always lives on the doc
+    mode: 'both',
+    label: 'FUNC',
+    cls: 'mc-func',
+    hint:
+      'calls one isolated function — pick it from the ƒ FUNCTIONS list on the data tab · double-click or ▶ enter walks into its body · its ⇣/⇡ mirror the function’s ENTER/EXIT variables',
+    ports: flowIO(),
+    data: (n, funcs) => funcPorts(n, funcs),
+  },
   pool: {
     mode: 'machine',
     label: 'POOL',
@@ -436,27 +482,6 @@ export const KINDS = {
       in: [{ id: '__in__', type: 'int', name: 'in' }],
       out: [{ id: '__int__', type: 'int', name: 'amount' }],
     }),
-  },
-  converter: {
-    mode: 'machine',
-    label: 'CONVERTER',
-    cls: 'mc-converter',
-    hint: 'chain passes through — takes amounts from input pools, gives to output pools',
-    ports: flowIO(),
-  },
-  gate: {
-    mode: 'machine',
-    label: 'GATE',
-    cls: 'mc-gate',
-    hint: 'chain passes through — takes amounts from input pools (never gates)',
-    ports: flowIO(),
-  },
-  randgate: {
-    mode: 'machine',
-    label: 'RAND GATE',
-    cls: 'mc-randgate',
-    hint: 'coin flip — half the chains that arrive drop here',
-    ports: flowIO(),
   },
   ifb: {
     mode: 'machine',
@@ -475,34 +500,6 @@ export const KINDS = {
       ],
       out: [{ id: '__bool__', type: 'bool', name: 'result' }],
     }),
-  },
-  trader: {
-    mode: 'machine',
-    label: 'TRADER',
-    cls: 'mc-trader',
-    hint: 'chain passes through — takes amounts from input pools',
-    ports: flowIO(),
-  },
-  delay: {
-    mode: 'machine',
-    label: 'DELAY',
-    cls: 'mc-delay',
-    hint: 'holds the chain N steps, then releases it',
-    ports: flowIO(),
-  },
-  queue: {
-    mode: 'machine',
-    label: 'QUEUE',
-    cls: 'mc-queue',
-    hint: 'releases at most rate chains per step, the rest wait their turn (FIFO)',
-    ports: flowIO(),
-  },
-  register: {
-    mode: 'machine',
-    label: 'REGISTER',
-    cls: 'mc-register',
-    hint: 'absorbs chains; pulses 1 downstream every N counted',
-    ports: flowIO(),
   },
   for: {
     mode: 'machine',
@@ -654,6 +651,11 @@ function flowIO() {
 export const kindsFor = (mode) =>
   Object.keys(KINDS).filter((k) => KINDS[k].mode === mode || KINDS[k].mode === 'both')
 
+// A func canvas offers everything a machine canvas does — minus the doors.
+// ENTER and EXIT are born with every func graph, so the palette must never
+// offer a second pair.
+export const funcKinds = kindsFor('machine').filter((k) => !['enter', 'exit'].includes(k))
+
 // ---- text-frame grouping ---------------------------------------------------------
 // A TEXT node is a group frame: parts dropped so their anchor lands inside it are
 // adopted (n.parent = frame id), and dragging the frame carries its children — and
@@ -734,9 +736,9 @@ export function typedValue(typeId, value, types) {
   return value === undefined ? null : value // string · asset id · undeclared
 }
 
-export function dataPorts(node, assets) {
+export function dataPorts(node, assets, funcs = []) {
   const meta = KINDS[node.kind] || {}
-  const d = meta.data ? meta.data(node) : { in: [], out: [] }
+  const d = meta.data ? meta.data(node, funcs) : { in: [], out: [] }
   const out = { in: [...d.in], out: [...d.out] }
   for (const call of node.calls || []) {
     const r = resolveCall(call, assets)
@@ -748,10 +750,10 @@ export function dataPorts(node, assets) {
 }
 
 // Type of one data port, lower-cased for comparison; null if gone.
-export function dataPortType(graph, assets, nodeId, portId, dir) {
+export function dataPortType(graph, assets, nodeId, portId, dir, funcs = []) {
   const node = (graph.nodes || []).find((n) => n.id === nodeId)
   if (!node) return null
-  const set = dataPorts(node, assets)[dir]
+  const set = dataPorts(node, assets, funcs)[dir]
   const p = set.find((x) => x.id === portId)
   return p ? (p.type || '').trim().toLowerCase() : null
 }
@@ -774,12 +776,10 @@ export function newNode(kind, x, y) {
   if (kind === 'graph') n.graph = newGraph('flow', n.name || 'sub graph')
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'pool') n.init = 10
+  if (kind === 'func') n.func = null
   if (kind === 'drain') n.drain = 1
   if (kind === 'add') n.gain = 1
   if (kind === 'source' || kind === 'drain') n.auto = true
-  if (kind === 'delay') n.delay = 3
-  if (kind === 'queue') n.rate = 1
-  if (kind === 'register') n.countTo = 2
   if (kind === 'foreach') n.itemType = '?'
   if (['append', 'join', 'remove', 'removeat', 'sort'].includes(kind)) n.itemType = null // learns from the first array wired in
   if (kind === 'sort') n.field = ''
@@ -803,7 +803,7 @@ export function newNode(kind, x, y) {
 }
 
 export function newGraph(mode, name) {
-  return { id: uid('g'), mode, name: name || (mode === 'flow' ? 'Main Loop' : 'machine'), entry: null, nodes: [], links: [] }
+  return { id: uid('g'), mode, name: name || (mode === 'flow' ? 'Main Loop' : mode === 'func' ? 'function' : 'machine'), entry: null, nodes: [], links: [] }
 }
 
 export function newDoc(name = 'Untitled Design') {
@@ -816,6 +816,7 @@ export function newDoc(name = 'Untitled Design') {
     assets: [],
     types: [],
     vars: [],
+    funcs: [],
   }
 }
 
@@ -859,6 +860,61 @@ export function pruneLinks(graph, assets, nodeId) {
 export function walkGraphs(graph, fn, path = []) {
   fn(graph, path)
   for (const n of graph.nodes) if (n.graph) walkGraphs(n.graph, fn, [...path, n])
+}
+
+// ---- canvas navigation ------------------------------------------------------
+// The breadcrumb is a chain of node ids from design down. Machine/graph nodes
+// carry their sub-graph on themselves; a FUNC node hops to the definition it
+// picks on the doc — the body lives once there, so walking into any call site
+// of the same function shows (and edits) the very same graph.
+export function resolveGraph(doc, path) {
+  let g = doc.design
+  for (const id of path) {
+    const n = (g.nodes || []).find((x) => x.id === id)
+    if (n?.kind === 'func') {
+      const f = (doc.funcs || []).find((x) => x.id === n.func)
+      if (!f) return g
+      g = f.graph
+      continue
+    }
+    if (!n?.graph) return g
+    g = n.graph
+  }
+  return g
+}
+
+// Same chain, writing back. A func hop splices `next` into the function's
+// entry on doc.funcs instead of a node's .graph — which is what makes "edit
+// one call site edits them all" true.
+export function replaceGraph(doc, path, next) {
+  if (!path.length) return { ...doc, design: next }
+  const root = { ...doc.design }
+  const funcs = (doc.funcs || []).map((f) => ({ ...f }))
+  let g = root
+  for (let i = 0; i < path.length; i++) {
+    const n = g.nodes.find((x) => x.id === path[i])
+    if (!n) break
+    if (n.kind === 'func') {
+      const fi = funcs.findIndex((f) => f.id === n.func)
+      if (fi < 0) break
+      const f = { ...funcs[fi] }
+      funcs[fi] = f
+      if (i === path.length - 1) f.graph = next
+      else {
+        f.graph = { ...f.graph }
+        g = f.graph
+      }
+      continue
+    }
+    const nn = { ...n }
+    g.nodes = g.nodes.map((x) => (x.id === path[i] ? nn : x))
+    if (i === path.length - 1) nn.graph = next
+    else {
+      nn.graph = { ...n.graph }
+      g = nn.graph
+    }
+  }
+  return { ...doc, design: root, funcs }
 }
 
 // Every asset referenced by name/id across all graphs, with a label helper.
@@ -1016,9 +1072,37 @@ export function parseDoc(text) {
   d.assets = d.assets || []
   d.types = d.types || []
   d.vars = d.vars || []
-  walkGraphs(d.design, (g) => {
+  d.funcs = d.funcs || []
+  const repair = (g) => {
     dedupeIds(g) // heal any doc corrupted by the old paste bug
     intoView(g) // pull edge-parked parts back inside the reachable canvas
-  })
+  }
+  walkGraphs(d.design, repair)
+  // defined functions own their own body graphs — heal those too
+  for (const f of d.funcs) {
+    f.id = f.id || uid('fn')
+    f.name = f.name || ''
+    f.note = f.note || ''
+    f.graph = f.graph || newGraph('func', f.name)
+    f.graph.mode = 'func'
+    repair(f.graph)
+    // ENTER and EXIT are permanent parts of every function body — a loaded
+    // doc that lost one gets it born back at its usual spot
+    if (!f.graph.nodes.some((n) => n.kind === 'enter')) {
+      const en = newNode('enter', 100, 200)
+      f.graph.nodes.push(en)
+      f.graph.entry = en.id
+    }
+    if (!f.graph.nodes.some((n) => n.kind === 'exit')) f.graph.nodes.push(newNode('exit', 620, 200))
+    if (f.graph.entry && !f.graph.nodes.some((n) => n.id === f.graph.entry)) {
+      const en = f.graph.nodes.find((n) => n.kind === 'enter')
+      if (en) f.graph.entry = en.id
+    }
+    if (!f.graph.entry) {
+      const en = f.graph.nodes.find((n) => n.kind === 'enter')
+      if (en) f.graph.entry = en.id
+    }
+    walkGraphs(f.graph, repair)
+  }
   return d
 }

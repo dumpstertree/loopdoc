@@ -90,18 +90,6 @@ function detail(n, g, doc) {
       return 'chain passes: subtracts its amount from every upstream pool (⇣ in:int dictates)'
     case 'add':
       return 'chain passes: adds its amount to every upstream pool (negative subtracts)'
-    case 'delay':
-      return `⏳ holds ${n.delay ?? 3} steps`
-    case 'queue':
-      return `releases at most ×${n.rate ?? 1} per step`
-    case 'register':
-      return `pulses 1 every ${n.countTo ?? 2} counted`
-    case 'converter':
-    case 'gate':
-    case 'randgate':
-    case 'trader':
-      // no per-node config — their semantics live in the Part reference below
-      return ''
     case 'for':
       return `counted loop — ⇡ i counts to ⇣ to:int; iter = body, end = after`
     case 'foreach':
@@ -143,6 +131,11 @@ function detail(n, g, doc) {
       return (n.todos || []).length
         ? `checklist: ${(n.todos || []).map((t) => `${t.done ? '[x]' : '[ ]'} ${t.text || '…'}`).join(' · ')}`
         : 'checklist — empty'
+    case 'func': {
+      const f = (doc?.funcs || []).find((x) => x.id === n.func)
+      if (f) return `ƒ ${f.name || '(unnamed)'} — see Defined functions${f.note ? ` (${f.note})` : ''}`
+      return n.func ? 'ƒ ⚠ picks a function that was deleted' : 'ƒ — no function picked yet'
+    }
     default:
       return '' // note rides its own suffix below
   }
@@ -154,7 +147,7 @@ function graphSection(g, doc, heading, parentNote) {
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const datas = (g.links || []).filter((l) => l.kind === 'data')
   const portName = (node, id, dir) => {
-    const dp = dataPorts(node, doc.assets)
+    const dp = dataPorts(node, doc.assets, doc.funcs || [])
     const p = (dp[dir] || []).find((x) => x.id === id)
     return p ? p.name || id : id
   }
@@ -175,7 +168,7 @@ function graphSection(g, doc, heading, parentNote) {
     for (const l of datas.filter((x) => x.to === n.id)) {
       const s = (g.nodes || []).find((x) => x.id === l.from)
       if (!s) continue
-      const out = dataPorts(s, doc.assets).out.find((x) => x.id === l.fromPort)
+      const out = dataPorts(s, doc.assets, doc.funcs || []).out.find((x) => x.id === l.fromPort)
       const t = out?.type ? ` :${out.type}` : ''
       L.push(`      ⇣ ${portName(n, l.toPort, 'in')} ← ${labels[l.from]}.${out?.name || l.fromPort}${t}`)
     }
@@ -193,6 +186,7 @@ export function exportForLLM(doc) {
     }
   }
   collect(doc.design)
+  for (const f of doc.funcs || []) collect(f.graph || { nodes: [] })
 
   out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
   out.push(
@@ -223,6 +217,16 @@ export function exportForLLM(doc) {
   if ((doc.vars || []).length) {
     out.push('## Globals — ⚙ named values shared by every graph & machine (live session state)')
     for (const v of doc.vars) out.push(`- ${v.name || '?'}:${v.type || 'int'} = ${v.value ?? ''}`)
+    out.push('')
+  }
+
+  if ((doc.funcs || []).length) {
+    out.push('## Defined functions — ƒ isolated bodies a FUNC part calls by name')
+    for (const f of doc.funcs) {
+      out.push(`- ${f.name || '(unnamed)'} · ${(f.graph?.nodes || []).length} parts${f.note ? ` — ${f.note}` : ''}`)
+      out.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', ''))
+      out.push('')
+    }
     out.push('')
   }
 

@@ -14,7 +14,7 @@ Top-level tabs split the document: **DESIGN** (the canvases, breadcrumb through
 nested graphs) · **BUSINESS** / **MOOD** notes · **ASSETS**, with a sub-tab
 group for 🎨 **Art** · 🖥 **UI** · 🔊 **Audio** · 🎮 **Input** · **DATA**, with a
 sub-tab group for ⚙️ **Systems** (typed APIs) · ⚙ **Global variables** ·
-≡ **Types**. Every registry lives inside those two tabs — no side panel.
+≡ **Types** · ƒ **Functions** (isolated bodies picked by FUNC parts). Every registry lives inside those two tabs — no side panel.
 
 ## Run
 
@@ -73,15 +73,15 @@ so an `IF` placed there reads drained values; set `n` on the card, or wire ⇣
 `in:int` and the field hides) · `ADD` (drain's mirror — adds its amount to
 upstream pools per pass, **signed**: `+1` for descend, `−1` for ascend; ⇣
 `in:int` dictates) · `GET GLOBAL` (reads a ⚙ doc-wide variable) · `SET GLOBAL` (writes
-one as the chain passes) · `POOL` (its amount is ⇡
+one as the chain passes) · `FUNC` (its dropdown picks one **ƒ function** defined on
+the DATA tab — the call names an isolated computation whose parts live in the
+function's own `func` graph, not here) · `POOL` (its amount is ⇡
 `int` data — wire ⇣ `in:int` for a write-back window, see below) ·
-`CONVERTER` · `GATE` · `RAND GATE` (half the chains that arrive drop) ·
-`TRADER` · `DELAY` (holds the chain N steps) · `QUEUE` (releases at most
-rate chains/step) · `IF` (compares ⇣ `a` ⟨sign⟩ ⇣ `b` — `< · <= · == · != · >= · >` — over `int`
+`IF` (compares ⇣ `a` ⟨sign⟩ ⇣ `b` — `< · <= · == · != · >= · >` — over `int`
 or `bool`, both sides alike; an unwired side takes a **custom value** typed on
 the card; chain leaves via **true** or **false**, and ⇡ `result:bool`
 republishes the verdict) ·
-`REGISTER` (absorbs chains, pulses every N) · `FOR` (⇣ `to:int` loads a
+`FOR` (⇣ `to:int` loads a
 count on trigger; one iteration per step once the previous body chain has
 ended, ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array,
 from a sys-call output; one iteration per step, ⇡ `item:T` + ⇡ `index:int`;
@@ -158,8 +158,8 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   anchor** to bend the run (90° breaks only) · **Ctrl+drag an anchor** splits a
   new branch off that point to another part — the branch shares the wire's run
   up to the anchor, then elbows away (flow *and* data wires, both canvases)
-- **dbl-click a GRAPH or MACHINE card walks inside it** (the `open →` button
-  still does too); the breadcrumb walks back out
+- **dbl-click a GRAPH, MACHINE or FUNC card walks inside it** (the `open →` /
+  `▶ enter` buttons still do too); the breadcrumb walks back out
 - **box-select**: drag on empty canvas (both canvases) · `Shift`-click or
   box-add to grow a selection · drag one selected node to move the whole group
 - `Ctrl+C/X/V` copy/cut/paste (nested graphs & wires included) · `Ctrl+A`
@@ -184,6 +184,24 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   exploration's `depth` hands straight through to combat's next run; pools
   still reset per run — only ↺ defaults / opening a file starts a new session
   (**GET GLOBAL** parts, flow & machine, read; **SET GLOBAL** parts write)
+- **ƒ FUNCTIONS** (DATA tab): document-wide **isolated functions** — each one is a
+  name, a note and its own `func` body graph holding its parts; a `FUNC` part on
+  any machine **or graph** canvas picks one from a dropdown, so shared logic is defined once
+  and called everywhere — and every FUNC picking the same definition **shares one
+  body**: the parts never live on the call sites, so editing the body from any one
+  of them edits all the others
+- **func canvases navigate like machines**: `▶ enter` or a dbl-click on a FUNC
+  card walks into the function's body — a canvas as close to a machine canvas as
+  can be, same toolbar and interactions, minus the ENTER/EXIT buttons: every body
+  is **born with a permanent ENTER and EXIT** (left and right, named `enter`/`exit`
+  to start) that you can move, rename and give variables to — but never create,
+  duplicate, copy, cut or delete (the depth bar bottom-left walks back out, as
+  into any nested graph) · the body's ENTER vars grow a ⇣ on every call site, its
+  EXIT vars a ⇡, so a function reads typed inputs and announces typed outputs
+  wherever it is called · a body may call other FUNC parts — recursion is open —
+  but a FUNC can never pick the function you are inside (the dropdown hides it,
+  the DRC flags any slip) · func bodies are editing-only for now: no ▶ simulate
+  inside one yet — the engine logs the call and passes the chain through
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
   loop body, no entry), last-iteration item reads on end chains, drain vs

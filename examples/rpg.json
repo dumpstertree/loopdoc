@@ -46,8 +46,8 @@
             { "id": "p_spland", "kind": "pool", "name": "spell landed", "x": 1260, "y": 240, "init": 0 },
 
             { "id": "p_ehp", "kind": "pool", "name": "enemy hp", "x": 640, "y": 700, "init": 60 },
-            { "id": "c_hit", "kind": "converter", "name": "", "x": 940, "y": 660 },
-            { "id": "c_spell", "kind": "converter", "name": "", "x": 940, "y": 800 },
+            { "id": "c_hit", "kind": "drain", "name": "", "x": 940, "y": 660 },
+            { "id": "c_spell", "kind": "drain", "name": "", "x": 940, "y": 800 },
             { "id": "p_slain", "kind": "pool", "name": "hp destroyed", "x": 1260, "y": 720, "init": 0 },
 
             { "id": "p_php", "kind": "pool", "name": "player hp (×players)", "x": 60, "y": 780, "init": 30 },

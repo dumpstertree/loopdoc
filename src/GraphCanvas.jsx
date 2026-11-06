@@ -24,7 +24,7 @@ const homeOrigin = (g) => {
   return { x: 40 - Math.min(0, minX), y: 40 - Math.min(0, minY) }
 }
 
-export default function GraphCanvas({ graph, assets, types = [], globals = [], onChange, onOpenGraph, toolbarExtra }) {
+export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph, toolbarExtra }) {
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
@@ -124,7 +124,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
   const addDataLink = (from, fromPort, to, toPort) => {
     // same rules as the machine canvas — any feeds everything, arrays feed
     // ⇣ list, and every mismatch explains itself
-    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort)
+    const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort, funcs)
     if (!chk.ok) return warn(chk.why)
     mutate((g) => ({
       ...g,
@@ -277,11 +277,11 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
           const [toNode, toPort, dir] = pin.getAttribute('data-port').split(':')
           if (dir !== 'in') warn('⚠ data flows ⇡ out → ⇣ in — drop on an input square')
           else {
-            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort)
+            res = branchLink(graphRef.current, assets, src, drag.idx, toNode, toPort, funcs)
             if (!res.ok) warn(res.why)
           }
         } else if (src && card) {
-          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in')
+          res = branchLink(graphRef.current, assets, src, drag.idx, card.getAttribute('data-node-id'), 'in', funcs)
           if (!res.ok) warn(res.why)
         }
         if (res && res.ok) {
@@ -420,7 +420,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
       : drag && drag.kind === 'branch'
         ? { kind: drag.branchKind, from: drag.from, port: drag.port }
         : null
-  const compatPorts = compatDrag ? compatTargets(graph, assets, compatDrag, Object.keys(portPos)) : null
+  const compatPorts = compatDrag ? compatTargets(graph, assets, compatDrag, Object.keys(portPos), funcs) : null
   const flowEnd = (l) => {
     const key = `${l.to}:in:in`
     if (portPos[key]) return portPos[key]
@@ -636,6 +636,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], o
                   assets={assets}
                   types={types}
                   globals={globals}
+                  funcs={funcs}
                   systems={assets.filter((a) => a.kind === 'system')}
                   selected={selSet.has(n.id)}
                   isEntry={graph.entry === n.id}

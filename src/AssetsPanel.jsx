@@ -5,7 +5,7 @@
 // No modals: inline rename / kind switch / note / API, usage counts across
 // every graph.
 import React, { useState } from 'react'
-import { ASSET_KINDS, BASIC_TYPES, assetIcon, newAsset, newFn, newVar, newType, newGlobal, typeNames, walkGraphs } from './model.js'
+import { ASSET_KINDS, BASIC_TYPES, assetIcon, newAsset, newFn, newFunc, newVar, newType, newGlobal, typeNames, walkGraphs } from './model.js'
 
 function useCounts(doc) {
   const counts = {}
@@ -17,6 +17,14 @@ function useCounts(doc) {
       bump(n.asset)
       for (const c of n.calls || []) bump(c.asset)
       for (const ea of n.assets || []) bump(ea.asset) // ENTER 📦 doors count as users too
+    }
+  })
+  // function bodies use assets like any other canvas
+  for (const f of doc.funcs || []) walkGraphs(f.graph || { nodes: [] }, (g) => {
+    for (const n of g.nodes) {
+      bump(n.asset)
+      for (const c of n.calls || []) bump(c.asset)
+      for (const ea of n.assets || []) bump(ea.asset)
     }
   })
   return counts
@@ -212,6 +220,64 @@ function TypesSection({ types, onTypes }) {
             >
               + field
             </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ƒ FUNCTIONS — isolated computations on the doc, picked by FUNC parts on any
+// machine canvas. Each definition owns a `func` body graph right now empty but
+// ready to hold its nodes and links, so a function is a first-class part of the
+// document like a type or a system, not a node hiding inside another graph.
+function FuncsSection({ funcs, onFuncs, uses }) {
+  const set = (fn) => onFuncs(fn(funcs))
+  const upd = (i, patch) => set((l) => l.map((f, j) => (j === i ? { ...f, ...patch } : f)))
+  return (
+    <div className="types-box">
+      <div className="io-label head">
+        ƒ FUNCTIONS — isolated bodies picked by FUNC parts · {funcs.length}
+        <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={() => set((l) => [...l, newFunc('newFn')])}>
+          + function
+        </button>
+      </div>
+      {funcs.length === 0 && (
+        <div className="reg-empty">
+          define one isolated computation — a FUNC part on any machine canvas picks it by name · the body graph keeps its
+          nodes
+        </div>
+      )}
+      {funcs.map((f, i) => (
+        <div className="fn-card" key={f.id}>
+          <div className="ty-head">
+            <span className="ty-badge">ƒ</span>
+            <input
+              className="inp ty-name"
+              placeholder="fn name…"
+              value={f.name}
+              onChange={(e) => upd(i, { name: e.target.value })}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <span className="io-label">{(f.graph?.nodes || []).length} parts · used by {uses[f.id] || 0}</span>
+            <button
+              className="icon-btn"
+              title="delete function (FUNC parts still picking it get flagged)"
+              onClick={() => set((l) => l.filter((_, j) => j !== i))}
+            >
+              ×
+            </button>
+          </div>
+          <div className="fn-row">
+            <span className="io-label">note</span>
+            <input
+              className="inp"
+              style={{ flex: 1 }}
+              placeholder="what it does…"
+              value={f.note}
+              onChange={(e) => upd(i, { note: e.target.value })}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       ))}
@@ -473,10 +539,17 @@ export function AssetsTab({ doc, types = [], onAssets, onRemove }) {
 }
 
 // the DATA tab — ⚙ systems & their APIs, global variables, declared types
-export function DataTab({ doc, types, onTypes, globals = [], onGlobals, onResetGlobals, gstore, onAssets, onRemove }) {
+export function DataTab({ doc, types, onTypes, funcs = [], onFuncs, globals = [], onGlobals, onResetGlobals, gstore, onAssets, onRemove }) {
   const [sub, setSub] = useState('systems')
   const ops = useAssetOps(doc, onAssets, onRemove)
   const systems = ops.assets.filter((a) => a.kind === 'system')
+  // how many FUNC parts anywhere in the doc pick each function
+  const uses = {}
+  const countUses = (g) => {
+    for (const n of g.nodes || []) if (n.kind === 'func' && n.func) uses[n.func] = (uses[n.func] || 0) + 1
+  }
+  walkGraphs(doc.design, countUses)
+  for (const f of doc.funcs || []) walkGraphs(f.graph || { nodes: [] }, countUses)
   return (
     <div className="reg-tab">
       <SubTabs
@@ -484,6 +557,7 @@ export function DataTab({ doc, types, onTypes, globals = [], onGlobals, onResetG
           ['systems', `⚙️ SYSTEMS · ${systems.length}`],
           ['globals', `⚙ GLOBAL VARIABLES · ${globals.length}`],
           ['types', `≡ TYPES · ${(types || []).length}`],
+          ['funcs', `ƒ FUNCTIONS · ${(funcs || []).length}`],
         ]}
         value={sub}
         onChange={setSub}
@@ -517,6 +591,11 @@ export function DataTab({ doc, types, onTypes, globals = [], onGlobals, onResetG
         {sub === 'types' && (
           <div className="reg-list">
             <TypesSection types={types || []} onTypes={onTypes} />
+          </div>
+        )}
+        {sub === 'funcs' && (
+          <div className="reg-list">
+            <FuncsSection funcs={funcs || []} onFuncs={onFuncs} uses={uses} />
           </div>
         )}
       </div>

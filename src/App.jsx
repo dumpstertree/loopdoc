@@ -8,39 +8,11 @@ import { AssetsTab, DataTab } from './AssetsPanel.jsx'
 import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
 import BusinessDashboard from './BusinessDashboard.jsx'
-import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore } from './model.js'
+import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore, resolveGraph, replaceGraph } from './model.js'
 import { exportForLLM } from './llmExport.js'
 import { runDRC } from './drc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
-
-// resolve a nested flow graph by the chain of node ids leading to it
-function resolveGraph(doc, path) {
-  let g = doc.design
-  for (const id of path) {
-    const n = g.nodes.find((x) => x.id === id)
-    if (!n?.graph) return g
-    g = n.graph
-  }
-  return g
-}
-function replaceGraph(doc, path, next) {
-  if (!path.length) return { ...doc, design: next }
-  const root = { ...doc.design }
-  let g = root
-  for (let i = 0; i < path.length; i++) {
-    const n = g.nodes.find((x) => x.id === path[i])
-    if (!n) break
-    const nn = { ...n }
-    g.nodes = g.nodes.map((x) => (x.id === path[i] ? nn : x))
-    if (i === path.length - 1) nn.graph = next
-    else {
-      nn.graph = { ...n.graph }
-      g = nn.graph
-    }
-  }
-  return { ...doc, design: root }
-}
 
 export default function App() {
   const [doc, setDoc] = useState(() => {
@@ -199,9 +171,17 @@ export default function App() {
     let g = doc.design
     for (let i = 0; i < path.length; i++) {
       const n = g.nodes.find((x) => x.id === path[i])
-      if (!n?.graph) break
-      g = n.graph
-      out.push({ name: n.name || 'sub graph', path: path.slice(0, i + 1) })
+      let ng = null
+      let nm = null
+      if (n?.kind === 'func') {
+        const f = (doc.funcs || []).find((x) => x.id === n.func)
+        if (!f) break
+        ng = f.graph
+        nm = f.name || n.fName || n.name || 'function'
+      } else if (n?.graph) ng = n.graph
+      else break
+      out.push({ name: nm || n.name || 'sub graph', path: path.slice(0, i + 1) })
+      g = ng
     }
     return out
   }, [doc, path])
@@ -305,14 +285,15 @@ export default function App() {
         <div className="stage">
           {tab === 'design' ? (
             <>
-              {graph.mode === 'machine' ? (
-                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} gstore={gstore} onChange={updateGraph} />
+              {['machine', 'func'].includes(graph.mode) ? (
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} funcs={doc.funcs || []} gstore={gstore} onChange={updateGraph} onOpenNode={(id) => setPath([...path, id])} />
               ) : (
                 <GraphCanvas
                   graph={graph}
                   assets={scopedAssets}
                   types={doc.types || []}
                   globals={doc.vars || []}
+                  funcs={doc.funcs || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
                   toolbarExtra={
@@ -352,6 +333,8 @@ export default function App() {
               types={doc.types || []}
               onTypes={updateTypes}
               globals={doc.vars || []}
+              funcs={doc.funcs || []}
+              onFuncs={(next) => commit({ ...docRef.current, funcs: next })}
               onGlobals={(next) => commit({ ...docRef.current, vars: next })}
               onResetGlobals={() => gstore.reset()}
               gstore={gstore}
