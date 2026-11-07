@@ -3,8 +3,7 @@
 //
 // Pure static analysis over one graph or the whole doc, running the same
 // reviews a human would: dropped-chain wiring, empty loop bodies, item reads
-// bound to the last iteration, drain/reader races, unreachable exits,
-// dangling data wires and type drift. Every finding carries a severity:
+// bound to the last iteration, unreachable exits, dangling data wires and type drift. Every finding carries a severity:
 //   error — a chain drops / nothing runs / a port is gone
 //   warn  — almost certainly not what you meant
 //   info  — works, but is a decision worth making on purpose
@@ -107,7 +106,7 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
         add('warn', label(n), `${m.label} opens an empty graph`)
       if (n.kind === 'machine' && n.graph && !(n.graph.nodes || []).some((x) => x.kind === 'exit'))
         add('info', label(n), 'machine has no EXIT — the parent can only see a generic out, not outcomes')
-      if (n.kind === 'machine' && n.graph && (n.graph.nodes || []).length && !(n.graph.nodes || []).some((x) => x.kind === 'enter' || x.kind === 'source'))
+      if (n.kind === 'machine' && n.graph && (n.graph.nodes || []).length && !(n.graph.nodes || []).some((x) => x.kind === 'enter'))
         add('info', label(n), 'machine has no ENTER — nothing starts its chains')
       // a machine's ⇡ ports ARE its exits' variables — one nobody consumes is a
       // decision worth seeing, the mirror of a choice option that leads nowhere
@@ -130,7 +129,7 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
   // ---- machine rules -----------------------------------------------------------
   const entryNodes = nodes.filter((n) => isEntryPart(n, g.links))
   if (nodes.length && !entryNodes.length && (g.links || []).length)
-    add('error', '', 'nothing can run — no entry: add an ENTER part (only ENTER and SOURCE start chains)')
+    add('error', '', 'nothing can run — no entry: add an ENTER part (only ENTER starts chains)')
   const allReach = reach(entryNodes.map((n) => n.id))
 
   for (const n of nodes) {
@@ -180,7 +179,7 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
         add('warn', label(n), 'loop body is empty — end fires at once; per-item work belongs on iter, end is only the round summary')
       else if (body && end) {
         // taint: everything that reads the loop's ⇡ item/index — directly or
-        // through data wires (item → inspect → pool → if …)
+        // through data wires (item → inspect → if …)
         const tainted = new Set()
         const q = data
           .filter((l) => l.from === n.id && (l.fromPort === '__item__' || l.fromPort === '__idx__'))
@@ -202,21 +201,6 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
             `end chain reads the loop item through ${offenders.map((o) => label(byId[o])).join(', ')} — after the loop, item binds to the LAST iteration only`,
           )
       }
-    }
-  }
-
-  // mutate vs reader race: a pool forked into a drain/add AND another part at once
-  for (const d of nodes.filter((x) => x.kind === 'drain' || x.kind === 'add')) {
-    for (const e of flows.filter((l) => l.to === d.id)) {
-      const pool = byId[e.from]
-      if (!pool || pool.kind !== 'pool') continue
-      const others = flows.filter((l) => l.from === pool.id && byId[l.to] && byId[l.to].kind !== 'drain' && byId[l.to].kind !== 'add')
-      if (others.length)
-        add(
-          'warn',
-          label(pool),
-          `feeds drain ${label(d)} and ${others.map((o) => label(byId[o.to])).join(', ')} in parallel — reads may run before the subtraction lands; wire pool → drain → reader`,
-        )
     }
   }
 

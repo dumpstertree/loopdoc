@@ -84,12 +84,6 @@ function detail(n, g, doc) {
       return `reads ⚙ ${n.gName || '?'} (${n.gType || '?'})`
     case 'setg':
       return `writes ⇣ value into ⚙ ${n.gName || '?'}`
-    case 'pool':
-      return fed('__in__') ? `fed window ⇣ in — reads AND writes its origin value` : `number bucket = ${n.init ?? 0}`
-    case 'drain':
-      return 'chain passes: subtracts its amount from every upstream pool (⇣ in:int dictates)'
-    case 'add':
-      return 'chain passes: adds its amount to every upstream pool (negative subtracts)'
     case 'for':
       return `counted loop — ⇡ i counts to ⇣ to:int; iter = body, end = after`
     case 'foreach':
@@ -109,7 +103,7 @@ function detail(n, g, doc) {
     case 'clone':
       return '⇡ = deep copy of ⇣ val — writes to it never reach the original'
     case 'action':
-      return 'chain waits here for a click, then consumes from input pools'
+      return 'chain waits here for a click'
     case 'exit': {
       const parts = (n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}`)
       return `kills the token; appears as this machine’s output port in the parent${
@@ -123,8 +117,6 @@ function detail(n, g, doc) {
       ]
       return `the machine’s door — always starts chains${parts.length ? ` · vars: ${parts.join(' · ')}` : ''}`
     }
-    case 'source':
-      return 'legacy chain entry — re-fires when its chain ends'
     case 'text':
       return `annotation frame — labels whatever sits inside it`
     case 'todo':
@@ -162,8 +154,7 @@ function graphSection(g, doc, heading, parentNote) {
       if (!t) continue
       const port = (meta.ports && meta.ports(n)) || []
       const p = port.find((x) => x.id === l.fromPort)
-      const amt = g.mode === 'machine' && l.amount !== 1 ? ` ×${l.amount}` : ''
-      L.push(`      ${(p && p.label ? p.label + '→' : '→')} ${labels[l.to]}${amt}`)
+      L.push(`      ${(p && p.label ? p.label + '→' : '→')} ${labels[l.to]}`)
     }
     for (const l of datas.filter((x) => x.to === n.id)) {
       const s = (g.nodes || []).find((x) => x.id === l.from)
@@ -192,8 +183,8 @@ export function exportForLLM(doc) {
   out.push(
     'Exported from loopdoc-composer as a plain-text reading of a node-graph design.',
     'Two canvases exist: FLOW graphs (control flow, one token walking the chain) and',
-    'MACHINES (economy chains: POOLS hold numbers, wires carry flow passes, DRAIN/ADD',
-    'move pool amounts, data wires ⇣/⇡ carry typed values between parts). A token moves',
+    'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
+    'data wires ⇣/⇡ carry typed values between parts). A token moves',
     'one hop per step; ENTER doors start machine chains; flow graphs run from their entry.',
     'Reading a list: each part is a line; its indented lines are where its flow goes',
     '(→) and where its typed inputs get their value (⇣ ← source).',

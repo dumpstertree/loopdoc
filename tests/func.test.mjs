@@ -47,7 +47,7 @@ test('a picked FUNC survives save and load', () => {
   const d = newDoc('RPG')
   const fn = newFunc('apply damage')
   d.funcs.push(fn)
-  const body = newNode('pool', 0, 0)
+  const body = newNode('action', 0, 0)
   body.name = 'hp'
   fn.graph.nodes.push(body)
   const back = parseDoc(serializeDoc(d))
@@ -88,7 +88,7 @@ test('a body that lost a door gets it born back on load', () => {
 
 test('func body graphs are repaired like every other graph', () => {
   const fn = newFunc('dupe')
-  const a = newNode('pool', 0, 0)
+  const a = newNode('action', 0, 0)
   const copy = { ...a, x: 40 } // a copy that kept its original id
   fn.graph.nodes.push(a, copy)
   const d = { ...newDoc('RPG'), funcs: [fn] }
@@ -108,16 +108,16 @@ test('a func node is navigable — its body opens the same way from every call s
   assert.equal(resolveGraph(d, [c1.id]).id, fn.graph.id, 'walking in from the first call site opens the body')
   assert.equal(resolveGraph(d, [c2.id]).id, fn.graph.id, 'the second call site opens the very same body')
   // editing the body under one call site writes back into the definition …
-  const next = { ...fn.graph, nodes: [...fn.graph.nodes, newNode('pool', 40, 40)] }
+  const next = { ...fn.graph, nodes: [...fn.graph.nodes, newNode('action', 40, 40)] }
   const edited = replaceGraph(d, [c1.id], next)
   assert.equal(edited.funcs[0].graph.nodes.length, next.nodes.length, 'the edit lands on the definition')
   assert.ok(
-    edited.funcs[0].graph.nodes.some((n) => n.kind === 'pool'),
+    edited.funcs[0].graph.nodes.some((n) => n.kind === 'action'),
     'the new part is in the shared body',
   )
   // … and the other call site sees it too — one backing graph, many doors
   assert.ok(
-    resolveGraph(edited, [c2.id]).nodes.some((n) => n.kind === 'pool'),
+    resolveGraph(edited, [c2.id]).nodes.some((n) => n.kind === 'action'),
     'the other call site sees the same edit',
   )
 })

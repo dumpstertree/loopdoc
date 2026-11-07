@@ -28,15 +28,15 @@ const doc = {
         name: 'combat',
         nodes: [
           { id: 'm1', kind: 'enter', name: 'door', x: 0, y: 0, vars: [{ id: 'ev1', name: 'lives', type: 'int', value: '3' }], assets: [{ id: 'ea1', asset: 'as1', name: 'sprites' }] },
-          { id: 'm2', kind: 'pool', name: 'gold', x: 0, y: 0, init: 30 },
+          { id: 'm2', kind: 'action', name: 'gold', x: 0, y: 0 },
           { id: 'm3', kind: 'foreach', x: 0, y: 0, itemType: 'Foe' },
-          { id: 'm4', kind: 'drain', x: 0, y: 0 },
+          { id: 'm4', kind: 'action', name: 'spend', x: 0, y: 0 },
           { id: 'm5', kind: 'exit', name: 'victory', x: 0, y: 0 },
           { id: 'm6', kind: 'todo', name: 'balance', x: 0, y: 0, todos: [{ id: 'td1', text: 'tune gold', done: true }, { id: 'td2', text: 'boss drop', done: false }] },
         ],
         links: [
           { id: 'f1', kind: 'flow', from: 'm1', fromPort: 'out', to: 'm3', toPort: 'in' },
-          { id: 'f2', kind: 'flow', from: 'm3', fromPort: 'out', to: 'm4', toPort: 'in', amount: 2 },
+          { id: 'f2', kind: 'flow', from: 'm3', fromPort: 'out', to: 'm4', toPort: 'in' },
           { id: 'f3', kind: 'flow', from: 'm4', fromPort: 'out', to: 'm5', toPort: 'in' },
         ],
       } },
@@ -68,13 +68,13 @@ test('llm export — flow graph: entry, typed VAR with real values, nesting', ()
   assert.ok(t.includes('NOTE') || t.includes('annotation frame'), 'text frame carried')
 })
 
-test('llm export — machine section: door vars/assets, pools, wires, amounts', () => {
+test('llm export — machine section: door vars/assets, loops, wires, actions', () => {
   const t = exportForLLM(doc)
   assert.ok(t.includes('Machine "combat"') && t.includes('inside MACHINE "combat"'), 'nested machine sectioned under its parent')
   assert.ok(t.includes('lives:int = 3'), 'enter var carried')
   assert.ok(t.includes('📦 sprites'), 'enter asset carried')
-  assert.ok(t.includes('number bucket = 30'), 'pool init shown')
-  assert.ok(t.includes('iter→ DRAIN ×2') || t.includes('iter→ ×2'), 'machine wire amount carried')
+  assert.ok(t.includes('ACTION "gold": chain waits here for a click'), 'action part and its waiting shown')
+  assert.ok(t.includes('iter→ ACTION "spend"'), 'machine wire carries the chain on the iter port')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
   assert.ok(t.includes('EXIT "victory"'), 'named exit listed')
 })
@@ -82,8 +82,8 @@ test('llm export — machine section: door vars/assets, pools, wires, amounts', 
 test('llm export — part reference covers only kinds used', () => {
   const t = exportForLLM(doc)
   const ref = t.slice(t.indexOf('## Part reference'))
-  assert.ok(ref.includes('DRAIN —'), 'used kind explained')
-  assert.ok(ref.includes('POOL —'), 'pool explained')
+  assert.ok(ref.includes('ACTION —'), 'used kind explained')
+  assert.ok(ref.includes('FOREACH —'), 'loop kind explained')
   assert.ok(!ref.includes('IF —'), 'unused kind not bloating the brief')
 })
 

@@ -5,7 +5,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
-import { fmt, dataValue, originRef, callSystem, stepOnce } from './engine.js'
+import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
 import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
@@ -232,7 +232,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               ...g,
               links: [
                 ...g.links.filter((l) => l.kind === 'data' || !(l.from === drag.from && l.to === to)),
-                { id: uid('lk'), kind: 'flow', from: drag.from, fromPort: drag.port || 'out', to, toPort: 'in', amount: 1 },
+                { id: uid('lk'), kind: 'flow', from: drag.from, fromPort: drag.port || 'out', to, toPort: 'in' },
               ],
             }))
         }
@@ -413,7 +413,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     const out = []
     const g = graphRef.current
     const entries = g.nodes.filter((n) => isEntryPart(n, g.links))
-    if (!entries.length) out.push('⚠ nothing to run — add an ENTER; only ENTER (and SOURCE) parts start chains')
+    if (!entries.length) out.push('⚠ nothing to run — add an ENTER; only ENTER parts start chains')
     else out.push(`ℹ ${entries.length} chain ${entries.length === 1 ? 'entry' : 'entry points'} — they re-run whenever their chain finishes`)
     if (!g.nodes.some((x) => x.kind === 'exit'))
       out.push('ℹ no EXIT part yet — add one per ending (e.g. victory, defeat) and the MACHINE node grows a port for it')
@@ -437,9 +437,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   }
   const startSim = () =>
     setSim({
-      amounts: Object.fromEntries(graphRef.current.nodes.filter((n) => n.kind === 'pool').map((n) => [n.id, n.init || 0])),
       // the SESSION store object itself, not a copy: SET here is visible in
-      // every other machine's next run; only pools reset per run
+      // every other machine's next run
       mem: { tokens: [], g: gstore ? gstore.vals(globals) : Object.fromEntries((globals || []).map((v) => [v.id, globalValue(v)])) },
       log: ['— chain simulation started —', ...diagnostics()],
       steps: 0,
@@ -448,14 +447,13 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     setSim((s) => {
       if (!s) return s
       const g = graphRef.current
-      let amounts = s.amounts
       const log = [...s.log]
       const mem = JSON.parse(JSON.stringify(s.mem || {}))
       for (let i = 0; i < k; i++) {
-        amounts = stepOnce(g.nodes, g.links, amounts, log, mem, assets)
+        stepOnce(g.nodes, g.links, log, mem, assets)
         log.push(`— step ${s.steps + i + 1} —`)
       }
-      return { amounts, mem, log: log.slice(-400), steps: s.steps + k }
+      return { mem, log: log.slice(-400), steps: s.steps + k }
     })
   // clicking a part releases the chain token waiting there (action / ⏳ block)
   const clickNode = (id) => {
@@ -470,8 +468,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
         t.ready = true
       })
       const log = [...s.log]
-      const amounts = stepOnce(g.nodes, g.links, s.amounts, log, mem, assets)
-      return { amounts, mem, log: log.slice(-400), steps: s.steps + 1 }
+      stepOnce(g.nodes, g.links, log, mem, assets)
+      return { mem, log: log.slice(-400), steps: s.steps + 1 }
     })
   }
 
@@ -535,7 +533,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
             <button className="btn" onClick={startSim}>↺ reset</button>
           </>
         ) : (
-          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => ['pool', 'syscall', 'enter', 'source'].includes(n.kind))}>
+          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => n.kind === 'enter')}>
             ▶ simulate
           </button>
         )}
@@ -578,7 +576,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   const a = startOf(l)
                   const b = endOf(l)
                   if (!a || !b) return null
-                  const { d, mid } = routePath(a, b, l.anchors)
+                  const { d } = routePath(a, b, l.anchors)
                   const isSel = sel === l.id
                   return (
                     <g
@@ -603,25 +601,6 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                       <title>flow — click selects · dbl-click drops an anchor to steer the line · Del removes</title>
                       <path d={d} className="edge-hit" />
                       <path d={d} className="edge-line" markerEnd={isSel ? 'url(#marw-sel)' : 'url(#marw)'} />
-                      <circle
-                        className="edge-amt"
-                        cx={mid.x}
-                        cy={mid.y}
-                        r={9}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setSel(l.id)
-                          const v = window.prompt('tokens transferred per flow:', String(l.amount ?? 1))
-                          if (v === null) return
-                          const n = Number(v)
-                          if (Number.isFinite(n) && n >= 0) mutate((g) => ({ ...g, links: g.links.map((x) => (x.id === l.id ? { ...x, amount: n } : x)) }))
-                        }}
-                      >
-                        <title>amount — click to change</title>
-                      </circle>
-                      <text className="edge-amt-text" x={mid.x} y={mid.y + 3.5} textAnchor="middle">
-                        {l.amount ?? 1}
-                      </text>
                     </g>
                   )
                 })}
@@ -768,13 +747,12 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               {graph.nodes.length === 0 && (
                 <div className="canvas-empty">
                   <p>
-                    <b>Empty machine.</b> Add parts from the bar above: POOLS hold tokens, SOURCES pour them in,
-                    DRAINS/ADDs move them around, ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
+                    <b>Empty machine.</b> Add parts from the bar above: ENTER/EXIT doors frame the chain, STEPs walk it,
+                    ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
                   </p>
                   <p>
-                    chain sim — every part with no flow input is an entry point; chains walk downstream one hop per step and the entry re-runs when its chains
-                    end · click ○ = amount · teal squares wire typed data · click ⏳/▶ parts to continue a frozen chain · pools with ⇣ in write back to their
-                    origin · an EXIT announces its variables: wire a producer into its ⇣ and the MACHINE node above grows a matching ⇡ port.
+                    chain sim — ENTER doors start chains; chains walk downstream one hop per step and the door re-runs when its chains
+                    end · teal squares wire typed data ⇣/⇡ · click ⏳/▶ parts to continue a frozen chain · an EXIT announces its variables: wire a producer into its ⇣ and the MACHINE node above grows a matching ⇡ port.
                   </p>
                 </div>
               )}

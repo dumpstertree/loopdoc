@@ -6,32 +6,28 @@ import { runDRC } from '../src/drc.js'
 import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf } from '../src/model.js'
 
 const n = (kind, extra = {}) => ({ id: 'n' + kind + (extra.tag || Math.random().toString(36).slice(2, 6)), kind, x: 0, y: 0, ...extra })
-const flow = (a, b) => ({ id: 'f' + Math.random().toString(36).slice(2, 8), kind: 'flow', from: a.id, fromPort: 'out', to: b.id, toPort: 'in', amount: 1 })
+const flow = (a, b) => ({ id: 'f' + Math.random().toString(36).slice(2, 8), kind: 'flow', from: a.id, fromPort: 'out', to: b.id, toPort: 'in' })
 const data = (a, ap, b, bp) => ({ id: 'd' + Math.random().toString(36).slice(2, 8), kind: 'data', from: a.id, fromPort: ap, to: b.id, toPort: bp })
 
-test('entry rule: fed parts, portless parts and silent parts never enter', () => {
-  const src = n('source')
+test('entry rule: ENTER doors always enter, nothing else does', () => {
   const en = n('enter')
-  const pool = n('pool')
-  const dr = n('drain')
-  const ad = n('add')
-  const st = n('setg', { gRef: 'g' })
+  const st = n('step')
+  const st2 = n('step')
+  const stg = n('setg', { gRef: 'g' })
   const ex = n('exit')
-  const links = [flow(src, pool)]
-  assert.ok(isEntryPart(src, links))
-  assert.ok(isEntryPart(en, [flow(pool, en)]), 'ENTER is ALWAYS an entry — it cannot be suppressed')
-  assert.ok(!isEntryPart(pool, links), 'fed pool is not an entry')
-  assert.ok(!isEntryPart(n('pool'), []), 'an unconnected pool no longer self-starts')
-  for (const silent of [dr, ad, st, ex]) assert.ok(!isEntryPart(silent, []), `${silent.kind} never enters`)
+  assert.ok(isEntryPart(en, []), 'ENTER is ALWAYS an entry — it cannot be suppressed')
+  assert.ok(!isEntryPart(st, [flow(en, st)]), 'a fed step is not an entry')
+  assert.ok(!isEntryPart(st2, []), 'an unconnected part no longer self-starts')
+  for (const silent of [stg, ex]) assert.ok(!isEntryPart(silent, []), `${silent.kind} never enters`)
 })
 
 test('asset ports wire like types — asset ⇡ feeds any, never int', () => {
   const en = n('enter', { vars: [], assets: [{ id: 'ea1', asset: 'as1', name: 'sprites' }] })
-  const pool = n('pool')
+  const ib = n('ifb')
   const insp = n('inspect', { objType: 'asset' })
-  const g = { nodes: [en, pool, insp], links: [] }
+  const g = { nodes: [en, ib, insp], links: [] }
   assert.ok(dataCanConnect(g, [], en.id, 'ea1', insp.id, '__obj__').ok, 'asset → any')
-  const bad = dataCanConnect(g, [], en.id, 'ea1', pool.id, '__in__')
+  const bad = dataCanConnect(g, [], en.id, 'ea1', ib.id, '__a__')
   assert.ok(!bad.ok && bad.why.includes('asset'), 'asset → int refused, and the why says so')
 })
 
@@ -39,10 +35,10 @@ test('data rule matrix: same, mismatch, self, if-operand sides alike', () => {
   const assets = [{ id: 'as', name: 's', api: [{ id: 'fn', name: 'f', inputs: [], outputs: [{ id: 'v', name: 'o', type: 'int' }] }] }]
   const sys = n('syscall', { calls: [{ asset: 'as', fn: 'fn' }] })
 
-  // int ⇡ → int ⇣ (pool fed window) is fine; a text ⇡ into an int ⇣ is not
-  const pool = n('pool')
-  const gg = { nodes: [sys, pool], links: [] }
-  assert.ok(dataCanConnect(gg, assets, sys.id, 'v', pool.id, '__in__').ok, 'int → int')
+  // int ⇡ → int ⇣ (loop's counted-to window) is fine
+  const fr = n('for')
+  const gg = { nodes: [sys, fr], links: [] }
+  assert.ok(dataCanConnect(gg, assets, sys.id, 'v', fr.id, '__to__').ok, 'int → int')
 
   // no self-feeding
   assert.ok(!dataCanConnect(gg, assets, sys.id, 'v', sys.id, '__in__').ok, 'no self-feeding')
@@ -56,16 +52,16 @@ test('data rule matrix: same, mismatch, self, if-operand sides alike', () => {
 })
 
 test('compatTargets pulses exactly the accepting ports', () => {
-  const pool = n('pool')
-  const other = n('pool')
+  const act = n('action')
+  const fr = n('for')
   const sys = n('syscall', { calls: [{ asset: 'as', fn: 'fn' }] })
   const assets = [{ id: 'as', name: 's', api: [{ id: 'fn', name: 'f', inputs: [], outputs: [{ id: 'v', name: 'o', type: 'int' }] }] }]
-  const g = { nodes: [sys, pool, other], links: [] }
-  const keys = [`${pool.id}:in:in`, `${other.id}:in:in`, `${pool.id}:__int__:out`, `${sys.id}:in:in`]
+  const g = { nodes: [sys, act, fr], links: [] }
+  const keys = [`${act.id}:in:in`, `${fr.id}:in:in`, `${fr.id}:out:out`, `${sys.id}:in:in`]
   const flowPulse = compatTargets(g, assets, { kind: 'flow', from: sys.id, port: 'out' }, keys)
-  assert.deepEqual(flowPulse.sort(), [`${other.id}:in:in`, `${pool.id}:in:in`].sort())
-  const dataPulse = compatTargets(g, assets, { kind: 'data', from: sys.id, port: 'v' }, [...keys, `${other.id}:__in__:in`])
-  assert.ok(dataPulse.includes(`${other.id}:__in__:in`), 'int output pulses matching ⇣ in')
+  assert.deepEqual(flowPulse.sort(), [`${fr.id}:in:in`, `${act.id}:in:in`].sort())
+  const dataPulse = compatTargets(g, assets, { kind: 'data', from: sys.id, port: 'v' }, [...keys, `${fr.id}:__to__:in`])
+  assert.ok(dataPulse.includes(`${fr.id}:__to__:in`), 'int output pulses matching ⇣ in')
   assert.ok(!dataPulse.some((k) => k.endsWith(':out')), 'outputs never pulse')
 })
 
@@ -105,25 +101,25 @@ test('MACHINE node mirrors EXIT variables as one complete ⇡ output list', () =
       links: [],
     },
   })
-  const pool = n('pool')
+  const fr = n('for')
   const sink = n('inspect', { objType: 'any' })
-  const g = { nodes: [m, pool, sink], links: [] }
+  const g = { nodes: [m, fr, sink], links: [] }
   const vs = exitVarsOf(m.graph)
   assert.equal(vs.length, 2, 'every EXIT door’s variables join the MACHINE node’s ⇡ list')
   assert.deepEqual(vs.map((v) => v.exit), ['win', 'flee'], 'each ⇡ is tagged with the door it leaves through')
   assert.equal(vs[1].id, 'x2', 'two doors may announce the same name and keep their own port')
-  assert.ok(dataCanConnect(g, [], m.id, 'x1', pool.id, '__in__').ok, 'the int score feeds an ⇣ int above')
-  assert.ok(!dataCanConnect(g, [], m.id, 'x2', pool.id, '__in__').ok, 'the string score refuses an int')
+  assert.ok(dataCanConnect(g, [], m.id, 'x1', fr.id, '__to__').ok, 'the int score feeds an ⇣ int above')
+  assert.ok(!dataCanConnect(g, [], m.id, 'x2', fr.id, '__to__').ok, 'the string score refuses an int')
   assert.ok(dataCanConnect(g, [], m.id, 'x2', sink.id, '__obj__').ok, 'the string score feeds an ⇣ any')
 })
 
 test('DRC still runs clean over a wired machine and flags a closed cycle', () => {
-  const src = n('source')
-  const pool = n('pool')
-  const doc = { design: { id: 'g', mode: 'machine', name: 'x', nodes: [src, pool], links: [flow(src, pool)] }, assets: [], types: [], vars: [] }
+  const en = n('enter', { tag: 'a' })
+  const st2 = n('step', { tag: 'b' })
+  const doc = { design: { id: 'g', mode: 'machine', name: 'x', nodes: [en, st2], links: [flow(en, st2)] }, assets: [], types: [], vars: [] }
   assert.equal(runDRC(doc).filter((f) => f.sev === 'error').length, 0)
-  const p1 = n('pool')
-  const p2 = n('pool')
+  const p1 = n('step', { tag: 'c' })
+  const p2 = n('step', { tag: 'd' })
   const cycle = { id: 'g2', mode: 'machine', name: 'y', nodes: [p1, p2], links: [flow(p1, p2), flow(p2, p1)] }
   const found = runDRC({ design: cycle, assets: [], types: [], vars: [] })
   assert.ok(found.some((f) => f.text.includes('no entry')), 'closed cycle without an entry is an error')
@@ -193,13 +189,13 @@ test('DRC flags a VAR with no name and one making a vanished type', () => {
 test('VAR is pure data — takes no flow, and its ⇡ carries the picked type', () => {
   const v = n('var', { variable: { name: 'hero', type: 'Foe', value: {} } })
   const step = n('step')
-  const pool = n('pool')
+  const fr = n('for')
   const insp = n('inspect', { objType: 'any' })
   assert.ok(!takesFlow(v), 'no flow in or out of a VAR')
   assert.ok(takesFlow(step), 'ordinary flow parts still take flow')
-  const g = { nodes: [v, step, pool, insp], links: [] }
+  const g = { nodes: [v, step, fr, insp], links: [] }
   assert.ok(dataCanConnect(g, VTYPES, v.id, '__val__', insp.id, '__obj__').ok, 'Foe ⇡ feeds any ⇣')
-  const bad = dataCanConnect(g, VTYPES, v.id, '__val__', pool.id, '__in__')
+  const bad = dataCanConnect(g, VTYPES, v.id, '__val__', fr.id, '__to__')
   assert.ok(!bad.ok && bad.why.toLowerCase().includes('foe'), 'Foe ⇡ refuses an int ⇣ and says why')
   const notyped = n('var', { variable: { name: 'x', type: '', value: '' } })
   const g2 = { nodes: [notyped, insp], links: [] }
@@ -239,8 +235,8 @@ test('DRC flags flow wired into a VAR and a VAR set as entry', () => {
 // pulling a second connection off of it (both canvases call this) -------------
 
 test('a flow branch shares the run up to the grabbed anchor, then breaks to the new part', () => {
-  const [a, b, c] = [n('source'), n('pool'), n('drain')]
-  const src = { ...flow(a, b), id: 'L', amount: 3, anchors: [{ x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }] }
+  const [a, b, c] = [n('enter'), n('step'), n('action')]
+  const src = { ...flow(a, b), id: 'L', anchors: [{ x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }] }
   const g = { id: 'g', mode: 'machine', name: '', entry: null, nodes: [a, b, c], links: [src] }
   const r = branchLink(g, [], src, 1, c.id, 'in')
   assert.ok(r.ok, r.why)
@@ -248,14 +244,13 @@ test('a flow branch shares the run up to the grabbed anchor, then breaks to the 
   assert.equal(r.link.from, a.id, 'branch grows from the same source port')
   assert.equal(r.link.fromPort, 'out')
   assert.equal(r.link.to, c.id)
-  assert.equal(r.link.amount, 3, 'the branch carries the source wire\u2019s amount')
   assert.deepEqual(r.link.anchors, [{ x: 10, y: 10 }, { x: 20, y: 20 }], 'shares the stem up to the grabbed anchor')
   r.link.anchors[0].x = 999
   assert.equal(src.anchors[0].x, 10, 'the stem is a copy — moving the branch never drags the original')
 })
 
 test('flow branch rejections echo the wire grammar', () => {
-  const [a, b] = [n('source'), n('pool')]
+  const [a, b] = [n('enter'), n('step')]
   const v = n('var', { variable: { name: 'x', type: 'int' } })
   const src = { ...flow(a, b), id: 'L', anchors: [{ x: 1, y: 1 }] }
   const g = { id: 'g', mode: 'machine', name: '', entry: null, nodes: [a, b, v], links: [src] }
@@ -267,17 +262,17 @@ test('flow branch rejections echo the wire grammar', () => {
 
 test('a data branch obeys types, existing connections and the anchor stem too', () => {
   const v = n('var', { variable: { name: 'hp', type: 'int' } })
-  const [p1, p2] = [n('pool'), n('pool')]
-  const src = { ...data(v, '__val__', p1, '__in__'), id: 'D', anchors: [{ x: 5, y: 5 }] }
+  const [p1, p2] = [n('for'), n('for')]
+  const src = { ...data(v, '__val__', p1, '__to__'), id: 'D', anchors: [{ x: 5, y: 5 }] }
   const g = { id: 'g', mode: 'machine', name: '', entry: null, nodes: [v, p1, p2], links: [src] }
-  const ok = branchLink(g, [], src, 0, p2.id, '__in__')
+  const ok = branchLink(g, [], src, 0, p2.id, '__to__')
   assert.ok(ok.ok, ok.why)
   assert.equal(ok.link.kind, 'data')
-  assert.equal(ok.link.toPort, '__in__')
+  assert.equal(ok.link.toPort, '__to__')
   assert.deepEqual(ok.link.anchors, [{ x: 5, y: 5 }], 'the branch clones the run so far')
-  assert.match(branchLink(g, [], src, 0, p1.id, '__in__').why, /already runs there/, 'the original target is not a new branch')
+  assert.match(branchLink(g, [], src, 0, p1.id, '__to__').why, /already runs there/, 'the original target is not a new branch')
   const sv = n('var', { variable: { name: 's', type: 'string' } })
-  const ssrc = { ...data(sv, '__val__', p1, '__in__'), anchors: [] }
+  const ssrc = { ...data(sv, '__val__', p1, '__to__'), anchors: [] }
   const g2 = { ...g, nodes: [...g.nodes, sv] }
-  assert.match(branchLink(g2, [], ssrc, -1, p2.id, '__in__').why, /type mismatch/, 'string cannot branch into an int window')
+  assert.match(branchLink(g2, [], ssrc, -1, p2.id, '__to__').why, /type mismatch/, 'string cannot branch into an int window')
 })

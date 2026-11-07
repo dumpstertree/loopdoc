@@ -668,8 +668,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 <p>
                   <b>Empty graph.</b> Add nodes from the bar above or double-click here to drop a STEP.
                 </p>
-                <p>▶ marks the entry · IF/CHOICE branch · GRAPH nests another loop · MACHINE nests an economy sim.</p>
-                <p>EVENT nodes call ⚙️ systems; teal squares carry typed data between calls and pool amounts.</p>
+                <p>▶ marks the entry · IF/CHOICE branch · GRAPH nests another loop · MACHINE nests a chain sim.</p>
+                <p>EVENT nodes call ⚙️ systems; teal squares carry typed data between calls.</p>
               </div>
             )}
           </div>

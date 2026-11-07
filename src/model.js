@@ -5,16 +5,15 @@
 //   Doc  ▸ Graph ▸ Node + Link            (assets live on the Doc)
 //
 // A Graph is either `flow` (the game-loop canvas: control flow between nodes)
-// or `machine` (a Machinations-style economy sim). Both share the same node
+// or `machine` (a chain-execution sim: entry doors, steps, waits, data wires). Both share the same node
 // and link shapes, the same port model and the same typed data-wire rules.
 //
 //   Node { id, kind, name, x, y, ...kind fields }
-//   Link { id, kind:'flow'|'data', from, fromPort, to, toPort, amount?, anchors? }
+//   Link { id, kind:'flow'|'data', from, fromPort, to, toPort, anchors? }
 //
-// Flow links move control (flow graphs) or resource tokens (machines).
+// Flow links move control (flow graphs) or carry the chain forward (machines).
 // Data links carry a typed value from a ⇡ output port to a ⇣ input port of
-// the same type — pools expose their amount as `int`, system calls expose
-// their fn's variables.
+// the same type — doors, vars and system calls expose their typed values.
 // ---------------------------------------------------------------------------
 
 let seq = 0
@@ -100,10 +99,9 @@ export function varValue(v) {
 }
 
 // the session store for globals — the game's live state. ONE store per open
-// document: machine sims READ and WRITE it in place (SET, fed-pool write-
-// through), so exploration's depth hands straight through to combat's next
-// run. Pools still reset every run; globals only reset here (↺ / new doc /
-// open file), which is what makes scenes one game instead of one sim each.
+// document: machine sims READ and WRITE it in place (SET and GET parts).
+// Globals only reset here (↺ / new doc / open file), which is what makes
+// scenes one game instead of one sim each.
 export function makeGlobalsStore() {
   let g = null
   return {
@@ -121,7 +119,7 @@ export function makeGlobalsStore() {
 
 // ---- shared wire routing -----------------------------------------------------
 // straight lines with 90° turns: horizontal → vertical → horizontal,
-// plus the midpoint of the (vertical) leg where the amount circle sits
+// plus the midpoint of the (vertical) leg where edge extras hang
 export function orth(sx, sy, tx, ty) {
   const mx = sx + Math.max(30, (tx - sx) / 2)
   return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
@@ -132,7 +130,7 @@ export function orth(sx, sy, tx, ty) {
 // horizontal elbow the plain wire uses, so placing a point on a line BENDS it
 // instead of pulling it into a diagonal. Legs that land where they started
 // collapse to nothing, so a hop sharing an x or a y is simply a straight run.
-// mid lands on the middle hop's vertical leg, where the amount circle sits.
+// mid lands on the middle hop's vertical leg, where edge extras hang.
 export function routePath(a, b, anchors) {
   if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
   const pts = [a, ...anchors, b]
@@ -280,7 +278,7 @@ const arrOut = (n) => ({
 // One registry for both graph modes. Each kind declares:
 //   mode     'flow' | 'machine'
 //   ports()  flow ports: [{ id, dir, label }]
-//   data()   typed data ports from the node's system calls / pool amount
+//   data()   typed data ports from the node's system calls / func ports
 //   fields   which kind-specific fields the editor shows
 export const KINDS = {
   // ---- flow graph nodes -----------------------------------------------------
@@ -391,35 +389,6 @@ export const KINDS = {
       ],
     }),
   },
-  source: {
-    mode: 'machine',
-    label: 'SOURCE',
-    cls: 'mc-source',
-    hint: 'chain entry — re-fires when its chain ends, adding amounts to downstream pools',
-    ports: () => [{ id: 'out', dir: 'out', label: '' }],
-  },
-  drain: {
-    mode: 'machine',
-    label: 'DRAIN',
-    cls: 'mc-drain',
-    hint: 'removes its amount from upstream pools — the chain may continue out, so what follows reads the drained value · wire ⇣ in:int to dictate the amount',
-    ports: () => [
-      { id: 'in', dir: 'in', label: '' },
-      { id: 'out', dir: 'out', label: '' },
-    ],
-    data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
-  },
-  add: {
-    mode: 'machine',
-    label: 'ADD',
-    cls: 'mc-add',
-    hint: 'drain’s mirror — adds its amount to upstream pools (negative subtracts, e.g. −1) · chain continues out so what follows reads the new value · wire ⇣ in:int to dictate the amount',
-    ports: () => [
-      { id: 'in', dir: 'in', label: '' },
-      { id: 'out', dir: 'out', label: '' },
-    ],
-    data: () => ({ in: [{ id: '__in__', type: 'int', name: 'in' }], out: [] }),
-  },
   getg: {
     mode: 'flow',
     label: 'GET GLOBAL',
@@ -468,20 +437,6 @@ export const KINDS = {
       'calls one isolated function — pick it from the ƒ FUNCTIONS list on the data tab · double-click or ▶ enter walks into its body · its ⇣/⇡ mirror the function’s ENTER/EXIT variables',
     ports: flowIO(),
     data: (n, funcs) => funcPorts(n, funcs),
-  },
-  pool: {
-    mode: 'machine',
-    label: 'POOL',
-    cls: 'mc-pool',
-    hint: 'token pool ⇡ int data · wire ⇣ in:int = live window onto that value — drains/sources edit it and write back to the origin',
-    ports: () => [
-      { id: 'in', dir: 'in', label: '' },
-      { id: 'out', dir: 'out', label: '' },
-    ],
-    data: () => ({
-      in: [{ id: '__in__', type: 'int', name: 'in' }],
-      out: [{ id: '__int__', type: 'int', name: 'amount' }],
-    }),
   },
   ifb: {
     mode: 'machine',
@@ -592,7 +547,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'CLONE',
     cls: 'mc-clone',
-    hint: 'pure data — ⇡ a deep copy of ⇣ val: windows, pools and write-backs touch the copy, never the base value',
+    hint: 'pure data — ⇡ a deep copy of ⇣ val: mutations of the copy never touch the base value',
     ports: () => [],
     data: (n) => ({
       in: [{ id: '__val__', type: 'any', name: 'val' }],
@@ -603,7 +558,7 @@ export const KINDS = {
     mode: 'machine',
     label: 'ACTION',
     cls: 'mc-action',
-    hint: 'chain waits here — click to fire (consumes amounts from input pools)',
+    hint: 'chain waits here — click to fire',
     ports: flowIO(),
   },
   syscall: {
@@ -716,7 +671,7 @@ export const kindMeta = (node) => KINDS[node.kind] || {}
 
 // Data ports of a node: { in: [{id,type,name}], out: [...] }
 // event/syscall nodes expose every resolved system call's fn variables;
-// pools expose their amount as int.
+// ENTER/EXIT doors and VAR parts expose their typed values.
 // coerce a VAR fill-in into its runtime value — leaf strings become their
 // declared numbers/bools, structs and arrays keep their shape and recurse.
 // `types` may be missing (engine mem without the doc) — then struct leaves
@@ -775,11 +730,7 @@ export function newNode(kind, x, y) {
   if (kind === 'var') n.variable = { name: '', type: 'string', value: '' }
   if (kind === 'graph') n.graph = newGraph('flow', n.name || 'sub graph')
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
-  if (kind === 'pool') n.init = 10
   if (kind === 'func') n.func = null
-  if (kind === 'drain') n.drain = 1
-  if (kind === 'add') n.gain = 1
-  if (kind === 'source' || kind === 'drain') n.auto = true
   if (kind === 'foreach') n.itemType = '?'
   if (['append', 'join', 'remove', 'removeat', 'sort'].includes(kind)) n.itemType = null // learns from the first array wired in
   if (kind === 'sort') n.field = ''

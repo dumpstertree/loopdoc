@@ -19,68 +19,36 @@
           "id": "g_combat",
           "mode": "machine",
           "name": "combat",
-          "entry": null,
+          "entry": "e_turn",
           "nodes": [
-            { "id": "t_note", "kind": "text", "name": "⚔ 1–3 players vs 1–6 enemies — set players & enemies pools before combat. Each turn click ⚔ ATTACK or ✨ MAGIC on a player's turn.", "x": 60, "y": 20 },
+            { "id": "t_note", "kind": "text", "name": "⚔ 1–3 players vs 1–6 enemies — each turn click ⚔ ATTACK or ✨ MAGIC on a player's turn.", "x": 60, "y": 20 },
 
-            { "id": "s_turn", "kind": "source", "name": "", "x": 60, "y": 120, "auto": true },
-            { "id": "p_turn", "kind": "pool", "name": "turn", "x": 280, "y": 120, "init": 0 },
+            { "id": "e_turn", "kind": "enter", "name": "turn", "x": 60, "y": 120, "vars": [
+              { "id": "v_pow", "name": "power", "type": "int" },
+              { "id": "v_foes", "name": "foes", "type": "int" }
+            ] },
+            { "id": "st_turn", "kind": "step", "name": "whose turn", "x": 280, "y": 120 },
 
             { "id": "a_attack", "kind": "action", "name": "", "x": 520, "y": 40 },
-            { "id": "p_atksig", "kind": "pool", "name": "attack signal", "x": 760, "y": 60, "init": 0 },
-
             { "id": "a_magic", "kind": "action", "name": "", "x": 520, "y": 240 },
-            { "id": "p_spellsig", "kind": "pool", "name": "spell signal", "x": 760, "y": 240, "init": 0 },
-
-            { "id": "s_mana", "kind": "source", "name": "", "x": 60, "y": 380, "auto": true },
-            { "id": "p_mana", "kind": "pool", "name": "mana", "x": 280, "y": 380, "init": 6 },
-
-            { "id": "p_power", "kind": "pool", "name": "attack power", "x": 60, "y": 540, "init": 10 },
-            { "id": "p_enemies", "kind": "pool", "name": "enemies (1–6)", "x": 280, "y": 540, "init": 4 },
-            { "id": "p_spellpow", "kind": "pool", "name": "spell power", "x": 520, "y": 540, "init": 25 },
 
             { "id": "x_roll", "kind": "syscall", "name": "", "x": 1000, "y": 40, "calls": [{ "asset": "sys_rpg", "fn": "fn_roll" }], "out": { "rd_dmg": 12 } },
-            { "id": "p_hits", "kind": "pool", "name": "hit landed", "x": 1260, "y": 60, "init": 0 },
-
             { "id": "x_cast", "kind": "syscall", "name": "", "x": 1000, "y": 240, "calls": [{ "asset": "sys_rpg", "fn": "fn_cast" }], "out": { "cs_dmg": 25 } },
-            { "id": "p_spland", "kind": "pool", "name": "spell landed", "x": 1260, "y": 240, "init": 0 },
 
-            { "id": "p_ehp", "kind": "pool", "name": "enemy hp", "x": 640, "y": 700, "init": 60 },
-            { "id": "c_hit", "kind": "drain", "name": "", "x": 940, "y": 660 },
-            { "id": "c_spell", "kind": "drain", "name": "", "x": 940, "y": 800 },
-            { "id": "p_slain", "kind": "pool", "name": "hp destroyed", "x": 1260, "y": 720, "init": 0 },
-
-            { "id": "p_php", "kind": "pool", "name": "player hp (×players)", "x": 60, "y": 780, "init": 30 },
-            { "id": "d_revenge", "kind": "drain", "name": "", "x": 360, "y": 800, "auto": true }
+            { "id": "x_end", "kind": "exit", "name": "", "x": 1260, "y": 140 }
           ],
           "links": [
-            { "id": "l1", "kind": "flow", "from": "s_turn", "fromPort": "out", "to": "p_turn", "toPort": "in", "amount": 1 },
-            { "id": "l2", "kind": "flow", "from": "p_turn", "fromPort": "out", "to": "a_attack", "toPort": "in", "amount": 1 },
-            { "id": "l3", "kind": "flow", "from": "p_turn", "fromPort": "out", "to": "a_magic", "toPort": "in", "amount": 1 },
-            { "id": "l4", "kind": "flow", "from": "a_attack", "fromPort": "out", "to": "p_atksig", "toPort": "in", "amount": 1 },
-            { "id": "l5", "kind": "flow", "from": "a_magic", "fromPort": "out", "to": "p_spellsig", "toPort": "in", "amount": 1 },
+            { "id": "l1", "kind": "flow", "from": "e_turn", "fromPort": "out", "to": "st_turn", "toPort": "in", "anchors": [] },
+            { "id": "l2", "kind": "flow", "from": "st_turn", "fromPort": "out", "to": "a_attack", "toPort": "in", "anchors": [] },
+            { "id": "l3", "kind": "flow", "from": "st_turn", "fromPort": "out", "to": "a_magic", "toPort": "in", "anchors": [] },
+            { "id": "l4", "kind": "flow", "from": "a_attack", "fromPort": "out", "to": "x_roll", "toPort": "in", "anchors": [] },
+            { "id": "l5", "kind": "flow", "from": "a_magic", "fromPort": "out", "to": "x_cast", "toPort": "in", "anchors": [] },
+            { "id": "l6", "kind": "flow", "from": "x_roll", "fromPort": "out", "to": "x_end", "toPort": "in", "anchors": [] },
+            { "id": "l7", "kind": "flow", "from": "x_cast", "fromPort": "out", "to": "x_end", "toPort": "in", "anchors": [] },
 
-            { "id": "l6", "kind": "flow", "from": "s_mana", "fromPort": "out", "to": "p_mana", "toPort": "in", "amount": 1 },
-            { "id": "l7", "kind": "flow", "from": "p_mana", "fromPort": "out", "to": "a_magic", "toPort": "in", "amount": 2 },
-
-            { "id": "l8", "kind": "flow", "from": "p_atksig", "fromPort": "out", "to": "x_roll", "toPort": "in", "amount": 1 },
-            { "id": "l9", "kind": "flow", "from": "x_roll", "fromPort": "out", "to": "p_hits", "toPort": "in", "amount": 1 },
-            { "id": "l10", "kind": "flow", "from": "p_spellsig", "fromPort": "out", "to": "x_cast", "toPort": "in", "amount": 1 },
-            { "id": "l11", "kind": "flow", "from": "x_cast", "fromPort": "out", "to": "p_spland", "toPort": "in", "amount": 1 },
-
-            { "id": "l12", "kind": "flow", "from": "p_ehp", "fromPort": "out", "to": "c_hit", "toPort": "in", "amount": 12 },
-            { "id": "l13", "kind": "flow", "from": "p_hits", "fromPort": "out", "to": "c_hit", "toPort": "in", "amount": 1 },
-            { "id": "l14", "kind": "flow", "from": "c_hit", "fromPort": "out", "to": "p_slain", "toPort": "in", "amount": 12 },
-
-            { "id": "l15", "kind": "flow", "from": "p_ehp", "fromPort": "out", "to": "c_spell", "toPort": "in", "amount": 25 },
-            { "id": "l16", "kind": "flow", "from": "p_spland", "fromPort": "out", "to": "c_spell", "toPort": "in", "amount": 1 },
-            { "id": "l17", "kind": "flow", "from": "c_spell", "fromPort": "out", "to": "p_slain", "toPort": "in", "amount": 25 },
-
-            { "id": "l18", "kind": "flow", "from": "p_php", "fromPort": "out", "to": "d_revenge", "toPort": "in", "amount": 8 },
-
-            { "id": "d1", "kind": "data", "from": "p_power", "fromPort": "__int__", "to": "x_roll", "toPort": "rd_p" },
-            { "id": "d2", "kind": "data", "from": "p_enemies", "fromPort": "__int__", "to": "x_roll", "toPort": "rd_f" },
-            { "id": "d3", "kind": "data", "from": "p_spellpow", "fromPort": "__int__", "to": "x_cast", "toPort": "cs_p" }
+            { "id": "d1", "kind": "data", "from": "e_turn", "fromPort": "v_pow", "to": "x_roll", "toPort": "rd_p" },
+            { "id": "d2", "kind": "data", "from": "e_turn", "fromPort": "v_foes", "to": "x_roll", "toPort": "rd_f" },
+            { "id": "d3", "kind": "data", "from": "e_turn", "fromPort": "v_pow", "to": "x_cast", "toPort": "cs_p" }
           ]
         }
       },

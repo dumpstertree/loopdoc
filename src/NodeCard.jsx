@@ -520,18 +520,9 @@ export default function NodeCard({
   const H = isText ? node.h || undefined : undefined
 
   // machine live values
-  let amount
   let tokHere = 0
   let tokWait = false
-  // pool mirroring a wired ⇣ in:int instead of its own initial + tokens
-  const poolFed =
-    node.kind === 'pool' && (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
-  // drain/add whose per-step amount comes from a wired int instead of the field
-  const drainFed =
-    (node.kind === 'drain' || node.kind === 'add') &&
-    (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === '__in__')
   if (sim) {
-    if (node.kind === 'pool') amount = sim.amounts[node.id] ?? node.init ?? 0
     const tk = ((sim.mem || {}).tokens || []).filter((t) => t.node === node.id)
     tokHere = tk.length
     tokWait = tk.some((x) => x.wait)
@@ -558,21 +549,6 @@ export default function NodeCard({
 
       <div className="nd-head" onPointerDown={(e) => onHeaderDown(e, node.id)}>
         <span className="nd-kind">{meta.label}</span>
-        {node.kind === 'pool' && (
-          <span className={`mc-amount ${(amount > 0 && sim) || poolFed ? 'full' : ''}`} title={poolFed ? 'window onto the wired value — changes write back to its origin' : undefined}>
-            {sim ? amount : poolFed ? '⇣' : node.init ?? 0}
-          </span>
-        )}
-        {isMachineKind && node.kind === 'drain' && (
-          <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'tokens removed from each upstream pool per step'}>
-            {drainFed ? '⇣' : `−${node.drain ?? 1}`}
-          </span>
-        )}
-        {isMachineKind && node.kind === 'add' && (
-          <span className="mc-amount" title={drainFed ? 'mirroring ⇣ in:int' : 'value added to each upstream pool per pass — negative subtracts'}>
-            {drainFed ? '⇣' : `${(node.gain ?? 1) >= 0 ? '+' : ''}${node.gain ?? 1}`}
-          </span>
-        )}
         {sim && tokHere > 0 && (
           <span
             className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
@@ -906,56 +882,6 @@ export default function NodeCard({
         {node.kind === 'step' && (
           <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
         )}
-        {isMachineKind && !sim && node.kind === 'pool' && !poolFed && (
-          <div className="nd-row">
-            <span className="nd-sub">initial</span>
-            <input className="inp" style={{ width: 52 }} type="number" value={node.init ?? 0} onChange={(e) => onPatch({ init: Math.max(0, Number(e.target.value) || 0) })} />
-          </div>
-        )}
-        {isMachineKind && node.kind === 'drain' && !drainFed && (
-          <div className="nd-row">
-            <span className="nd-sub">drain</span>
-            <input
-              className="inp"
-              style={{ width: 52 }}
-              type="number"
-              title="tokens removed from each upstream pool per step — overrides the link amount circle"
-              value={node.drain ?? 1}
-              onChange={(e) => onPatch({ drain: Math.max(0, Number(e.target.value) || 0) })}
-            />
-            <span className="nd-sub">/step</span>
-          </div>
-        )}
-        {isMachineKind && node.kind === 'add' && !drainFed && (
-          <div className="nd-row">
-            <span className="nd-sub">add</span>
-            <input
-              className="inp"
-              style={{ width: 52 }}
-              type="number"
-              title="value added to each upstream pool per pass — negative subtracts (e.g. −1 for ascend)"
-              value={node.gain ?? 1}
-              onChange={(e) => onPatch({ gain: Number(e.target.value) || 0 })}
-            />
-            <span className="nd-sub">/pass</span>
-          </div>
-        )}
-        {isMachineKind && node.kind === 'drain' && (
-          <div className="dvar" title="wire an int in — the drain removes that many per pool each step (field hides)">
-            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
-            <span>
-              ⇣ in:<b>int</b>
-            </span>
-          </div>
-        )}
-        {isMachineKind && node.kind === 'add' && (
-          <div className="dvar" title="wire an int in — the add applies that many per pool each pass, signed (field hides)">
-            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
-            <span>
-              ⇣ in:<b>int</b>
-            </span>
-          </div>
-        )}
         {node.kind === 'getg' && graph.mode !== 'machine' && (
           <div className="nd-row">
             <span className="nd-sub">global</span>
@@ -1103,49 +1029,6 @@ export default function NodeCard({
             )}
           </div>
         )}
-        {isMachineKind && node.kind === 'pool' && (
-          <div className="dvar" title="wire an int in — the pool mirrors it and drops its own initial">
-            <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
-            <span>
-              ⇣ in:<b>int</b>
-            </span>
-          </div>
-        )}
-        {isMachineKind && !sim && node.kind === 'pool' && (
-          <div className="dvar out" title="the pool's amount as int data">
-            <span className="nd-sub">⇡</span>
-            <span>
-              <b>int</b>
-            </span>
-            <span
-              className="port-data out"
-              data-port={portKey(node.id, '__int__', 'out')}
-              title="drag onto an ⇣ int input"
-              onPointerDown={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                onDataPortDown(e, node.id, '__int__')
-              }}
-            />
-          </div>
-        )}
-        {isMachineKind && sim && node.kind === 'pool' && (
-          <div className="dvar out">
-            <span>
-              ⇡ <b>int</b>
-            </span>
-            <span className="dval">{amount}</span>
-            <span
-              className="port-data out"
-              data-port={portKey(node.id, '__int__', 'out')}
-              onPointerDown={(e) => {
-                e.stopPropagation()
-                e.preventDefault()
-                onDataPortDown(e, node.id, '__int__')
-              }}
-            />
-          </div>
-        )}
         {sim && node.kind === 'action' && <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>}
         {sim && node.kind === 'syscall' && (
           <div className={`mc-click${tokWait ? '' : ' info'}`}>
@@ -1274,7 +1157,7 @@ export default function NodeCard({
                   </div>
                 ))}
                 {dp.out.map((p) => {
-                  const d = sim ? dataValue(graph.nodes, graph.links, sim.amounts || {}, sim.mem || {}, node.id, p.id) : null
+                  const d = sim ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, p.id) : null
                   return (
                     <div className="dvar out" key={p.id} title="the computed array — any consumer can read it">
                       <span>
@@ -1452,7 +1335,7 @@ export default function NodeCard({
                 through a matching ⇡ port on the MACHINE node above */}
             {(node.vars || []).map((v, i) => {
               const live = sim
-                ? dataValue(graph.nodes, graph.links, sim.amounts || {}, sim.mem || {}, node.id, v.id)
+                ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, v.id)
                 : null
               return (
                 <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

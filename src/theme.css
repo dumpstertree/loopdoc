@@ -494,30 +494,6 @@ svg.edges .edge {
 .edge-data.edge-sel .edge-line {
   stroke: var(--magenta);
 }
-.edge-amt {
-  fill: var(--bg-3);
-  stroke: var(--line-hi);
-  stroke-width: 1.5;
-  cursor: pointer;
-  pointer-events: auto;
-}
-.edge-amt:hover {
-  stroke: var(--cyan);
-  fill: var(--bg-4);
-}
-.edge-amt-text {
-  fill: var(--clay);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  pointer-events: none;
-}
-.edge-sel .edge-amt {
-  stroke: var(--magenta);
-}
-.edge-sel .edge-amt-text {
-  fill: var(--magenta);
-}
 .edge-anchor {
   fill: var(--bg-3);
   stroke: var(--line-hi);
@@ -766,12 +742,8 @@ svg.edges .edge {
 .nd-var { --kc: var(--amber); }
 .nd-graph { --kc: var(--magenta); border-style: double; border-width: 3px; }
 .nd-machine { --kc: var(--mint); border-style: double; border-width: 3px; }
-.mc-source { --kc: var(--lime); }
-.mc-drain { --kc: var(--urgent); }
-.mc-add { --kc: var(--lime); }
 .mc-getg { --kc: var(--magenta); }
 .mc-setg { --kc: var(--amber); border-style: dashed; }
-.mc-pool { --kc: var(--cyan); }
 .mc-func { --kc: #b39df5; border-style: dashed; }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }

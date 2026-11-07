@@ -35,7 +35,7 @@ const onPath = (p, m) =>
 test('a plain wire is one horizontal → vertical → horizontal elbow', () => {
   const { d, mid } = orth(0, 0, 200, 100)
   assert.equal(d, 'M 0 0 L 100 0 L 100 100 L 200 100')
-  assert.deepEqual(mid, { x: 100, y: 50 }, 'the amount badge sits mid-way on the vertical leg')
+  assert.deepEqual(mid, { x: 100, y: 50 }, 'the elbow mid lands mid-way on the vertical leg')
 })
 
 test('a steered wire keeps the 90° breaks — dropping a point bends it, never diagonalises it', () => {
@@ -129,7 +129,7 @@ test('nested graphs are repaired too — machines included', () => {
     mode: 'machine',
     name: 'inner',
     entry: null,
-    nodes: [{ id: 'p', kind: 'pool', x: -900, y: -10 }],
+    nodes: [{ id: 'p', kind: 'action', x: -900, y: -10 }],
     links: [],
   }
   const back = parseDoc(serializeDoc(d))
@@ -163,10 +163,10 @@ test('pasting a machine keeps ⇡ exit wires — they follow the copy’s own EX
       links: [],
     },
   }
-  const pool = { id: 'p', kind: 'pool', x: 200, y: 0 }
+  const sink = { id: 'p', kind: 'ifb', x: 200, y: 0 }
   // the clipboard clip is the machine AND its consumer, so the ⇡ wire is part
   // of the paste and must be rewired to the copy’s freshly re-id’d exit var
-  const clip = { id: 'g1', mode: 'flow', name: '', entry: null, nodes: [machine, pool], links: [{ id: 'l1', kind: 'data', from: 'm', fromPort: 'v1', to: 'p', toPort: '__in__' }] }
+  const clip = { id: 'g1', mode: 'flow', name: '', entry: null, nodes: [machine, sink], links: [{ id: 'l1', kind: 'data', from: 'm', fromPort: 'v1', to: 'p', toPort: '__a__' }] }
   const pasted = reidGraph(JSON.parse(JSON.stringify(clip)))
   const copy = pasted.nodes.find((n) => n.kind === 'machine')
   const wire = pasted.links[0]
@@ -176,5 +176,5 @@ test('pasting a machine keeps ⇡ exit wires — they follow the copy’s own EX
     exitVarsOf(copy.graph).some((v) => v.id === wire.fromPort),
     `the ⇡ wire lands on one of the copy’s own exit variables (${exitVarsOf(copy.graph).map((v) => v.id)})`,
   )
-  assert.equal(wire.to, pasted.nodes.find((n) => n.kind === 'pool').id, 'and still reaches the pasted pool')
+  assert.equal(wire.to, pasted.nodes.find((n) => n.kind === 'ifb').id, 'and still reaches the pasted consumer')
 })

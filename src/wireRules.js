@@ -5,10 +5,10 @@
 import { kindMeta, dataPortType, uid } from './model.js'
 
 // Entry parts are EXPLICIT: ENTER is the machine's door — always a start,
-// impossible to suppress — and SOURCE keeps its legacy self-firing. Nothing
-// else enters a chain by being unconnected any more.
+// impossible to suppress. Nothing else enters a chain by being unconnected
+// any more.
 export function isEntryPart(n) {
-  return n.kind === 'enter' || n.kind === 'source'
+  return n.kind === 'enter'
 }
 
 // may a flow wire touch this node at all? Pure-data parts (VAR) say no —
@@ -81,6 +81,6 @@ export function branchLink(g, assets, src, idx, to, toPort, funcs = []) {
     return { ok: false, why: '⚠ those ports are already wired' }
   return {
     ok: true,
-    link: { id: uid('lk'), kind: 'flow', from: src.from, fromPort: src.fromPort, to, toPort: 'in', amount: src.amount ?? 1, anchors: stem },
+    link: { id: uid('lk'), kind: 'flow', from: src.from, fromPort: src.fromPort, to, toPort: 'in', anchors: stem },
   }
 }

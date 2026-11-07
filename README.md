@@ -3,7 +3,7 @@
 A design-doc authoring tool for game loops. One vocabulary, two canvases:
 
 - **flow graphs** — the game-loop canvas: control flow between typed nodes
-- **machines** — chain-execution sims: entry points, running chains, pools of data
+- **machines** — chain-execution sims: entry doors, running chains, typed data wires
 
 Both are `Graph ▸ Node + Link`. Both use the same node card, the same port
 model, and the same **typed data wires**.
@@ -30,16 +30,15 @@ npm run dev
 | `Doc`    | `{ app, version, name, design: Graph, notes, assets: Asset[], types: Type[] }` |
 | `Graph`  | `{ id, mode:'flow'│'machine', name, entry, nodes[], links[] }`     |
 | `Node`   | `{ id, kind, name, x, y, …kind fields }`                           |
-| `Link`   | `{ id, kind:'flow'│'data', from, fromPort, to, toPort, amount? }`  |
+| `Link`   | `{ id, kind:'flow'│'data', from, fromPort, to, toPort, anchors? }` |
 | `Asset`  | `{ id, kind, name, note, api? }` — systems carry an `api`          |
 | `api fn` | `{ id, name, inputs:[{id,name,type}], outputs:[…] }`               |
 
 A `flow` graph moves **control** between nodes. A `machine` graph runs
 **chains**: `ENTER` parts are its *entry points* — always the start, never
-implicit (legacy `SOURCE` parts still self-fire too); a chain walks
+implicit; a chain walks
 downstream one hop per step, and the entry re-fires when all of its chains
-reach an end. Link circles set the `amount` a chain adds/removes from pools
-it passes through. `data` links carry a typed value from a ⇡ output
+reach an end. `data` links carry a typed value from a ⇡ output
 to a ⇣ input **of the same type** (types compare case-insensitively).
 
 ## Node kinds
@@ -67,16 +66,10 @@ each publishes ⇡ data inside the machine and grows a matching
 ⇣ input on the parent's MACHINE node · plus **📦 assets** — `+ asset` picks
 any doc asset on the card, and its handle publishes ⇡ inside as the base
 type `asset`, likewise growing a ⇣ asset input on the MACHINE node above) ·
-`SOURCE` (legacy chain entry) · `DRAIN` (removes its amount from
-upstream pools — and its `out` lets the chain continue **after** the subtraction,
-so an `IF` placed there reads drained values; set `n` on the card, or wire ⇣
-`in:int` and the field hides) · `ADD` (drain's mirror — adds its amount to
-upstream pools per pass, **signed**: `+1` for descend, `−1` for ascend; ⇣
-`in:int` dictates) · `GET GLOBAL` (reads a ⚙ doc-wide variable) · `SET GLOBAL` (writes
+`GET GLOBAL` (reads a ⚙ doc-wide variable) · `SET GLOBAL` (writes
 one as the chain passes) · `FUNC` (its dropdown picks one **ƒ function** defined on
 the DATA tab — the call names an isolated computation whose parts live in the
-function's own `func` graph, not here) · `POOL` (its amount is ⇡
-`int` data — wire ⇣ `in:int` for a write-back window, see below) ·
+function's own `func` graph, not here) ·
 `IF` (compares ⇣ `a` ⟨sign⟩ ⇣ `b` — `< · <= · == · != · >= · >` — over `int`
 or `bool`, both sides alike; an unwired side takes a **custom value** typed on
 the card; chain leaves via **true** or **false**, and ⇡ `result:bool`
@@ -86,8 +79,7 @@ count on trigger; one iteration per step once the previous body chain has
 ended, ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array,
 from a sys-call output; one iteration per step, ⇡ `item:T` + ⇡ `index:int`;
 **end** out continues the chain once the last body chain finishes) ·
-`ACTION` (the chain waits here — click to fire; refuses to fire while input
-pools are short) · `SYS CALL` (calls its system fn as the chain
+`ACTION` (the chain waits here — click to fire) · `SYS CALL` (calls its system fn as the chain
 passes · tick **⏳ can block** and it stays *opened* — the chain freezes
 until you click it to return) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT` ·
@@ -96,7 +88,7 @@ value at the end) · `JOIN` (⇣ a + ⇣ b → one array) · `REMOVE` (drops eve
 element equal to ⇣ val) · `REMOVE AT` (cuts the element at ⇣ `at:int`) ·
 `SORT` (ascending — by a chosen field of struct items, or by value) · they all
 learn their item type from the first array wired in; `CLONE` takes any ⇣ value
-and ⇡ a deep copy — windows, pools and foreach write-backs touch the copy,
+and ⇡ a deep copy — the copy is what downstream write-backs (e.g. a foreach item) touch,
 **never** the base value ·
 `TODO` (checklist leaf on **both** canvases — add task lines, tick the
 checkboxes, `Enter` adds the next task; drag its corner grip to widen it and
@@ -115,13 +107,6 @@ victory — gold: 12 · party: [goblin, orc]`)
 
 Chain sim visuals: parts with a chain token in flight glow teal; waiting
 parts (⏳ ACTION / blocked SYS CALL) pulse amber and are clickable.
-
-Pool windows: wire a value into a pool's ⇣ `in:int` and it becomes a live
-window onto that value — chains never add or subtract from it; only `drain`
-edits the number, and at the end of every step it is **written back to its
-origin** (e.g. the `Entity` inside a foreach's array), so the next read
-anywhere — next iteration, next round — sees the change. The sim log marks
-writes with ✎.
 
 Array data: give a system fn an output typed `Foo[]` and edit its sim value
 as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
@@ -142,7 +127,7 @@ types.
 Define a ⚙️ **system** asset and give it an API: function names with typed
 ⇣ inputs and ⇡ outputs. EVENT nodes and SYS CALL nodes pick a system + fn
 and grow typed port squares. Drag ⇡ → ⇣ to wire data; mismatches are refused
-with a warning. In machines, pools feed `int` into fn inputs. A sys call is a
+with a warning. In machines, typed wires feed values into fn inputs. A sys call is a
 black box: while **simulating**, its ⇡ rows become editable so you type the
 answer the black box returns (a blocking call stays open until you click it);
 typed answers persist across rounds and show as `(your value)` in the sim log.
@@ -180,9 +165,9 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   pausing at IF/CHOICE; nested graphs run and RETURN pops back
 - **⚙ GLOBALS** (DATA tab): document-wide named variables with defaults —
   the **live session state of the game**: machine sims read and write the one
-  shared store (SET GLOBAL parts *and* fed pools writing through their window), so
-  exploration's `depth` hands straight through to combat's next run; pools
-  still reset per run — only ↺ defaults / opening a file starts a new session
+  shared store (SET GLOBAL parts write as the chain passes), so
+  exploration's `depth` hands straight through to combat's next run; only
+  ↺ defaults / opening a file starts a new session
   (**GET GLOBAL** parts, flow & machine, read; **SET GLOBAL** parts write)
 - **ƒ FUNCTIONS** (DATA tab): document-wide **isolated functions** — each one is a
   name, a note and its own `func` body graph holding its parts; a `FUNC` part on
@@ -204,8 +189,7 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
   inside one yet — the engine logs the call and passes the chain through
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
-  loop body, no entry), last-iteration item reads on end chains, drain vs
-  reader races, unreachable exits, dangling data wires, deleted-type drift;
+  loop body, no entry), last-iteration item reads on end chains, unreachable exits, dangling data wires, deleted-type drift;
   ✕ errors · ⚠ warnings · ℹ info, click a finding to jump to its graph
 - **Ctrl+S** save / open `.json` (File System Access API; autosaves to
   localStorage meanwhile)
