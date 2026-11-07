@@ -122,6 +122,98 @@ body {
   color: var(--lime);
 }
 
+/* the two circular dials in the top right: ☰ menu · ⚙ settings */
+.round-btn {
+  width: var(--round-btn-size);
+  height: var(--round-btn-size);
+  border-radius: var(--round-btn-border-radius);
+  background: var(--round-btn-background);
+  border: var(--round-btn-border);
+  color: var(--round-btn-color);
+  font-size: var(--round-btn-font-size);
+  display: grid;
+  place-items: center;
+  padding: var(--round-btn-padding);
+  margin: var(--round-btn-margin);
+  cursor: pointer;
+}
+.round-btn:hover {
+  color: var(--round-btn-hover-color);
+  border-color: var(--round-btn-hover-border-color);
+}
+.round-btn.round-on {
+  border-color: var(--round-btn-on-border-color);
+  color: var(--round-btn-on-color);
+}
+/* modals they open: fixed panels hanging at the right under the topbar */
+.modal {
+  position: fixed;
+  top: var(--modal-top);
+  right: var(--modal-right);
+  width: var(--modal-width);
+  background: var(--modal-background);
+  border: var(--modal-border);
+  border-radius: var(--modal-border-radius);
+  z-index: var(--modal-z-index);
+  padding: var(--modal-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--modal-gap);
+  box-shadow: var(--modal-box-shadow);
+}
+.modal-title {
+  color: var(--dim);
+  font-size: var(--modal-title-font-size);
+  letter-spacing: var(--modal-title-letter-spacing);
+}
+.modal-item {
+  background: transparent;
+  border: none;
+  color: var(--modal-item-color);
+  font-size: var(--modal-item-font-size);
+  display: flex;
+  align-items: center;
+  gap: var(--modal-item-gap);
+  cursor: pointer;
+  width: var(--modal-item-width);
+  text-align: left;
+  font-family: inherit;
+  border-radius: var(--modal-item-border-radius);
+}
+.modal-item:hover {
+  background: var(--modal-item-hover-background);
+  color: var(--modal-item-hover-color);
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--dim);
+  font-size: var(--modal-item-font-size);
+  cursor: pointer;
+  font-family: inherit;
+}
+.modal-close:hover {
+  color: var(--urgent);
+}
+/* one line of feedback under the styles editor */
+.modal-note {
+  color: var(--dim);
+  font-size: var(--modal-note-font-size);
+}
+/* the styles.json editor textarea: monospace, fixed height, scrolls inside */
+.styles-edit {
+  flex: none;
+  height: var(--styles-edit-height);
+  resize: none;
+  background: var(--styles-edit-background);
+  border: var(--styles-edit-border);
+  border-radius: var(--styles-edit-border-radius);
+  color: var(--styles-edit-color);
+  font-family: var(--mono);
+  font-size: var(--styles-edit-font-size);
+  padding: var(--styles-edit-padding);
+}
+
 /* blocky buttons: hover inverts */
 .btn {
   background: var(--bg-3);
@@ -263,12 +355,6 @@ select.inp {
 .tb-btn:hover {
   border-color: var(--accent-c, var(--cyan));
   color: var(--accent-c, var(--cyan));
-}
-.tb-hint {
-  color: var(--dim);
-  font-size: var(--tb-hint-font-size);
-  font-weight: var(--tb-hint-font-weight);
-  margin-left: var(--tb-hint-margin-left);
 }
 .warn {
   color: var(--amber);

@@ -518,25 +518,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
           </button>
         ))}
         <span className="tb-sep" />
-        {/* buttons removed for machine graphs */}
-        <span className="tb-hint">
-          {graph.mode === 'func'
-            ? 'drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · its ENTER/EXIT are permanent — they move and take vars, never copy or Del · dbl-click a FUNC (or ▶ enter) walks into it, the depth bar walks back'
-            : 'drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · space finds parts · chains run from ENTER parts · click ⏳/▶ part to continue · Del removes selection'}
-        </span>
         <span className="spacer" />
-        {graph.mode === 'func' ? null : sim ? (
-          <>
-            <button className="btn" onClick={() => stepN(1)}>step</button>
-            <button className="btn" onClick={() => stepN(10)}>step ×10</button>
-            <button className="btn" onClick={() => setSim(null)}>■ stop</button>
-            <button className="btn" onClick={startSim}>↺ reset</button>
-          </>
-        ) : (
-          <button className="btn btn-hi" onClick={startSim} disabled={!graph.nodes.some((n) => n.kind === 'enter')}>
-            ▶ simulate
-          </button>
-        )}
         {msg && <span className="warn">{msg}</span>}
       </div>
       <div className="machine-view">

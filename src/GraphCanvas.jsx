@@ -24,7 +24,7 @@ const homeOrigin = (g) => {
   return { x: 40 - Math.min(0, minX), y: 40 - Math.min(0, minY) }
 }
 
-export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph, toolbarExtra }) {
+export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph }) {
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
@@ -449,10 +449,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-hint">drag empty = box-select · shift-click adds · Ctrl+C/X/V · dbl-click a wire drops an anchor · drag anchor = move · Ctrl+drag anchor = branch · dbl-click GRAPH/MACHINE enters it · dbl-click surface adds a STEP · space finds nodes · Del deletes</span>
         {msg && <span className="warn">{msg}</span>}
         <span className="spacer" />
-        {toolbarExtra}
       </div>
       <div className="canvas-wrap">
         {palette && (

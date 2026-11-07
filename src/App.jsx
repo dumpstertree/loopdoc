@@ -8,7 +8,7 @@ import { AssetsTab, DataTab } from './AssetsPanel.jsx'
 import DRCPanel from './DRCPanel.jsx'
 import Traverse from './Traverse.jsx'
 import BusinessDashboard from './BusinessDashboard.jsx'
-import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, walkGraphs, makeGlobalsStore, resolveGraph, replaceGraph } from './model.js'
+import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, makeGlobalsStore, resolveGraph, replaceGraph } from './model.js'
 import { exportForLLM } from './llmExport.js'
 import { runDRC } from './drc.js'
 
@@ -29,6 +29,10 @@ export default function App() {
   const [showTraverse, setShowTraverse] = useState(false)
   const [showDRC, setShowDRC] = useState(false)
   const [drcScope, setDrcScope] = useState('doc') // 'doc' | 'graph'
+  const [menu, setMenu] = useState(false) // ☰ dial: opens the menu modal
+  const [settings, setSettings] = useState(false) // ⚙ dial: opens the settings modal
+  const [stylesSrc, setStylesSrc] = useState('') // styles.json text shown in the settings editor
+  const [stylesNote, setStylesNote] = useState('') // last editor outcome, shown under the textarea
   const handleRef = useRef(null)
   const docRef = useRef(doc)
   docRef.current = doc
@@ -70,6 +74,30 @@ export default function App() {
   }
   // ⤓ llm — one plain-text brief of everything (graphs, machines, types,
   // globals, assets) written to be read by a language model, not re-imported
+  // the settings editor: POST the edited styles.json text to the dev server
+  // (vite.config.js route), which writes the file and reruns the generator
+  const applyStylesJson = (t) => {
+    if (!t.trim()) {
+      setStylesNote('✕ nothing typed yet')
+      return
+    }
+    try {
+      JSON.parse(t)
+    } catch {
+      setStylesNote('✕ invalid json — not saved')
+      return
+    }
+    fetch('/styles.json', { method: 'POST', body: t })
+      .then(async (r) => {
+        const msg = await r.text()
+        if (r.ok) {
+          setStylesSrc(t)
+          setStylesNote('✓ written to styles.json · styles.gen.css regenerated')
+        } else setStylesNote('✕ ' + msg)
+      })
+      .catch(() => setStylesNote('✕ no route — this only works on the vite dev server'))
+  }
+
   const doExportLLM = () => {
     const text = exportForLLM(docRef.current)
     const name = `${(docRef.current.name || 'design').replace(/[^\w\- ]+/g, '')}.llm.md`
@@ -194,13 +222,6 @@ export default function App() {
     return [...doc.assets, ...gen]
   }, [doc.assets, graph.nodes])
 
-  const totalNodes = (() => {
-    let c = 0
-    walkGraphs(doc.design, () => c++)
-    return c
-  })()
-
-  // design rule check — recomputed live while the panel is open
   const drc = useMemo(() => (showDRC ? runDRC(doc, drcScope === 'graph' ? path : null) : []), [doc, showDRC, drcScope, path])
   const drcErr = drc.filter((f) => f.sev === 'error').length
   const drcWarn = drc.filter((f) => f.sev === 'warn').length
@@ -245,25 +266,67 @@ export default function App() {
           ))}
         </nav>
         <span className="spacer" />
-        <div className="topbar-block">
-          <span className={`save-state ${dirty ? 'dirty' : 'saved'}`}>{dirty ? '● unsaved' : savedAt ? `✓ ${savedAt}` : '✓ local'}</span>
-          <button className="btn" onClick={doOpen} title="open .json">
+        <span className={`save-state ${dirty ? 'dirty' : 'saved'}`}>{dirty ? '● unsaved' : savedAt ? `✓ ${savedAt}` : '✓ local'}</span>
+        {/* the two dials top right: only one modal can be open at a time */}
+        <button
+          className={`round-btn ${menu ? 'round-on' : ''}`}
+          onClick={() => {
+            if (menu) setMenu(false)
+            else {
+              setMenu(true)
+              setSettings(false)
+            }
+          }}
+          title="menu — open · save · export llm · new · check · traverse"
+        >
+          ☰
+        </button>
+        <button
+          className={`round-btn ${settings ? 'round-on' : ''}`}
+          onClick={() => {
+            if (settings) setSettings(false)
+            else {
+              setSettings(true)
+              setMenu(false)
+              fetch('/styles.json')
+                .then(async (r) => {
+                  const t = await r.text()
+                  if (r.ok) {
+                    setStylesSrc(t)
+                    setStylesNote('')
+                  } else setStylesNote('✕ styles.json could not load')
+                })
+                .catch(() => setStylesNote('✕ styles.json could not load'))
+            }
+          }}
+          title="settings"
+        >
+          ⚙
+        </button>
+      </header>
+
+      {/* a click on the panel itself, not on an item, closes the modal */}
+      {menu && (
+        <div className="modal modal-menu" onClick={(e) => { if (e.target === e.currentTarget) setMenu(false) }}>
+          <div className="modal-title">menu</div>
+          <button className="modal-item" onClick={() => { doOpen(); setMenu(false) }} title="open .json">
             open
           </button>
-          <button className="btn" onClick={doSave} title="Ctrl+S">
+          <button className="modal-item" onClick={() => { doSave(); setMenu(false) }} title="Ctrl+S">
             💾 save
           </button>
-          <button className="btn" onClick={doExportLLM} title="export the whole document as one plain-text brief written for an LLM to build a game from (.llm.md)">
-            ⤓ llm
+          <button className="modal-item" onClick={() => { doExportLLM(); setMenu(false) }} title="export the whole document as one plain-text brief written for an LLM to build a game from (.llm.md)">
+            ⤓ export llm
           </button>
-          <button className="btn" onClick={newDocument}>
+          <button className="modal-item" onClick={() => { newDocument(); setMenu(false) }} title="start a fresh document">
             new
           </button>
-        </div>
-        <div className="topbar-block">
           <button
-            className={`btn ${showDRC ? 'btn-hi' : ''}`}
-            onClick={() => setShowDRC(!showDRC)}
+            className="modal-item"
+            onClick={() => {
+              setShowDRC(!showDRC)
+              setMenu(false)
+            }}
             title="design rule check — scans the open graph or the whole doc"
           >
             ⚑ check
@@ -275,11 +338,39 @@ export default function App() {
             )}
             {showDRC && drc.length === 0 && <span className="drc-badge drc-clean-badge">✓</span>}
           </button>
-          <button className={`btn ${showTraverse ? 'btn-hi' : ''}`} onClick={() => setShowTraverse(!showTraverse)}>
+          <button className="modal-item" onClick={() => { setShowTraverse(!showTraverse); setMenu(false) }} title="walk the doc part by part, one screen at a time">
             ▶ traverse
           </button>
+          <button className="modal-close" onClick={() => setMenu(false)}>
+            ✕ close
+          </button>
         </div>
-      </header>
+      )}
+      {settings && (
+        <div
+          className="modal modal-settings"
+          onClick={(e) => { if (e.target === e.currentTarget) setSettings(false) }}
+        >
+          <div className="modal-title">settings — styles.json</div>
+          <textarea
+            className="styles-edit"
+            spellCheck={false}
+            value={stylesSrc}
+            onChange={(e) => {
+              setStylesSrc(e.target.value)
+              setStylesNote('✎ edited — press 💾 apply to write it to styles.json')
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+          <button className="modal-item" onClick={() => applyStylesJson(stylesSrc)} title="write this text to styles.json and regenerate the theme">
+            💾 apply
+          </button>
+          <div className="modal-note">{stylesNote}</div>
+          <button className="modal-close" onClick={() => setSettings(false)}>
+            ✕ close
+          </button>
+        </div>
+      )}
 
       <div className="main">
         <div className="stage">
@@ -296,11 +387,6 @@ export default function App() {
                   funcs={doc.funcs || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
-                  toolbarExtra={
-                    <span className="tb-hint">
-                      graph {totalNodes} · nodes {graph.nodes.length} · links {graph.links.length}
-                    </span>
-                  }
                 />
               )}
               {path.length > 0 && (
