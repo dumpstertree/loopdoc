@@ -498,6 +498,14 @@
       "todo-line-flex": "1",
       "todo-line-min-width": "0",
       "todo-line-line-height": "1.25"
+    },
+    "the styles json editor textarea monospac": {
+      "modal-settings-top": "50%",
+      "modal-settings-left": "50%",
+      "modal-settings-transform": "translate(-50%, -50%)",
+      "modal-settings-width": "min(780px, 88vw)",
+      "modal-settings-height": "min(58vh, 640px)",
+      "modal-settings-styles-edit-height": "42vh"
     }
   }
 }

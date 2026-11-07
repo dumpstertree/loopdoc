@@ -231,6 +231,6 @@ const mode = process.argv[2]
 if (mode === '--gen') generate(JSON.parse(readFileSync(JSON_PATH, 'utf8')))
 else if (mode === '--check') process.exit(check() > 0 ? 1 : 0)
 else if (mode === '--watch') {
-  watchFile(JSON_PATH, 800, () => generate(JSON.parse(readFileSync(JSON_PATH, 'utf8'))))
+  watchFile(JSON_PATH, { interval: 800 }, () => generate(JSON.parse(readFileSync(JSON_PATH, 'utf8'))))
   console.log('watching styles.json…')
 } else harvest()

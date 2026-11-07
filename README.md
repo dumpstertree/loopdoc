@@ -132,6 +132,35 @@ black box: while **simulating**, its ⇡ rows become editable so you type the
 answer the black box returns (a blocking call stays open until you click it);
 typed answers persist across rounds and show as `(your value)` in the sim log.
 
+## ⌁ Loopdoc files on the web
+
+The bulk of the DATA comes from the web: the ⚙ **settings** dial keeps a list
+of **loopdoc files** — one plain **URL row** each, no ids. Every URL holds a
+`loopdoc.yaml` (a small indentation dialect: `Name:` · `Types:` · `Ledger:` ·
+`Static:`), fetched live when the list changes (per-row status: ✓ ok · ✕ cors /
+unreachable · ⌁ cached from localStorage — or ✕ with a registration reason, see
+below). **One file = one ⚙ system package**, and the yaml's own **`Name:` IS the
+package**: it names the system, is the namespace every web type carries, and is
+the `⌁ web` tag — a type `fov` in a file named `camera` is `camera:fov`. Every
+type reference splits at the **first `:`**: the left half names a **package**,
+the right half the type there (`curio_core:vector3`);
+a bare name inside a package resolves to that package's own namespace.
+Requirements **resolve on fetch, never by fetching more**: at fetch time every
+`pkg:Type` claim is checked against the packages this very fetch registers — it
+passes when a registered package has that name **and** declares that type
+(basic types like `int` carry no claim). A package whose requirement misses —
+or that has no `Name:` while carrying content, or collides with another
+fetched file under the same `Name` — refuses to land and its row shows ✕ with
+the reason; since one refusal can break another package's requirement,
+resolution iterates until stable. **DATA stays application-only**: ⌁ fetched
+systems and types never render there — the canvases' pick dropdowns read them
+straight from the doc. Fetched items are tagged `⌁ web` — re-fetching replaces
+them, deleting a row drops them, and local declarations stay yours. A rename
+in the yaml propagates on the next fetch: type names are paired old↔new by
+position and cascaded through every VAR card, GET/SET GLOBAL, FOREACH and
+function body, and since fetched items keep their slot ids, SYS CALL parts and
+📊 ledger picks stay attached and just show the new name.
+
 ## Interactions
 
 - both canvases share one look & feel: **orthogonal wires** (90° turns), exit
@@ -198,6 +227,7 @@ typed answers persist across rounds and show as `(your value)` in the sim log.
 
 ```
 src/model.js         schema, kind registry, factories, graph ops — single source of truth
+src/loopdoc.js       loopdoc.yaml dialect parser + web package builder (⌁ settings list)
 src/drc.js           design rule check — pure static analysis over graphs/doc
 src/DRCPanel.jsx     docked live DRC results with scope + severity filters
 src/NodeCard.jsx     the node renderer shared by both canvases

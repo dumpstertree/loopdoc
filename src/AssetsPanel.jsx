@@ -162,16 +162,21 @@ function GlobalsSection({ globals, onGlobals, onResetGlobals, types, gstore }) {
 function TypesSection({ types, onTypes }) {
   const set = (fn) => onTypes(fn(types))
   const upd = (i, patch) => set((list) => list.map((t, j) => (j === i ? { ...t, ...patch } : t)))
+  // ⌁ web types stay in the doc list (canvases pick them) but are fetched,
+  // not declared — they render nowhere here; indices keep addressing the
+  // full list so edits never drift off their doc slot
+  const shown = types.filter((t) => !t.web).length
   return (
     <div className="types-box">
       <div className="io-label head">
-        ≡ TYPES — named data shapes · {types.length}
+        ≡ TYPES — named data shapes · {shown}
         <button className="tb-btn" style={{ marginLeft: 'auto' }} onClick={() => set((l) => [...l, newType('NewType')])}>
           + type
         </button>
       </div>
-      {types.length === 0 && <div className="reg-empty">declare the shapes your data travels in — every fn variable and ⇣ port picks from these</div>}
-      {types.map((t, i) => (
+      {shown === 0 && <div className="reg-empty">declare the shapes your data travels in — every fn variable and ⇣ port picks from these</div>}
+      {types.map((t, i) =>
+        t.web ? null : (
         <div className="ty-card" key={t.id}>
           <div className="ty-head">
             <span className="ty-badge">≡</span>
@@ -542,7 +547,9 @@ export function AssetsTab({ doc, types = [], onAssets, onRemove }) {
 export function DataTab({ doc, types, onTypes, funcs = [], onFuncs, globals = [], onGlobals, onResetGlobals, gstore, onAssets, onRemove }) {
   const [sub, setSub] = useState('systems')
   const ops = useAssetOps(doc, onAssets, onRemove)
-  const systems = ops.assets.filter((a) => a.kind === 'system')
+  // DATA is application data only — ⌁ web loopdoc items live in the doc for
+  // the canvases' pick dropdowns but are not declared here, so they stay off
+  const systems = ops.assets.filter((a) => a.kind === 'system' && !a.web)
   // how many FUNC parts anywhere in the doc pick each function
   const uses = {}
   const countUses = (g) => {
@@ -556,7 +563,7 @@ export function DataTab({ doc, types, onTypes, funcs = [], onFuncs, globals = []
         items={[
           ['systems', `⚙️ SYSTEMS · ${systems.length}`],
           ['globals', `⚙ GLOBAL VARIABLES · ${globals.length}`],
-          ['types', `≡ TYPES · ${(types || []).length}`],
+          ['types', `≡ TYPES · ${(types || []).filter((t) => !t.web).length}`],
           ['funcs', `ƒ FUNCTIONS · ${(funcs || []).length}`],
         ]}
         value={sub}

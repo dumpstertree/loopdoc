@@ -185,6 +185,7 @@ export function renameTypeInDoc(doc, oldName, newName) {
     for (const n of g.nodes) {
       if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
       if (n.kind === 'var' && n.variable) n.variable.type = fix(n.variable.type || '')
+      for (const v of n.vars || []) v.type = fix(v.type) // ENTER/EXIT door variables
       if (n.kind === 'getg' || n.kind === 'setg') {
         n.gType = fix(n.gType || '')
         if (n.gName === oldName) n.gName = newName
@@ -193,6 +194,7 @@ export function renameTypeInDoc(doc, oldName, newName) {
     }
   }
   walk(d.design)
+  for (const f of d.funcs || []) if (f.graph) walk(f.graph) // ƒ bodies live beside design, not under it
   return d
 }
 

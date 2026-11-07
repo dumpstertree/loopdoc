@@ -459,4 +459,10 @@ export const T = {
   todoLineFlex: "1",
   todoLineMinWidth: "0",
   todoLineLineHeight: "1.25",
+  modalSettingsTop: "50%",
+  modalSettingsLeft: "50%",
+  modalSettingsTransform: "translate(-50%, -50%)",
+  modalSettingsWidth: "min(780px, 88vw)",
+  modalSettingsHeight: "min(58vh, 640px)",
+  modalSettingsStylesEditHeight: "42vh",
 }

@@ -1,0 +1,34 @@
+Name: "myCustomPackage"
+Types:
+    myCustomType:
+        - field: "myNum"
+          type: "int" 
+    myCustomTypeWithRequirement1:
+        - field: "fov"
+          type: "camera:fov" 
+    myCustomTypeWithRequirement2:
+        - field: "vec"
+          type: "core:Vector3" 
+
+Ledger: 
+    entry1:
+        - field: "ledger_val1"
+          type: "int" 
+    entry2:
+        - field: "val1"
+          type: "string[]" 
+        - field: "val2"
+          type: "string[]" 
+
+Static: 
+    name: "my_static_fn"
+    inputs:
+        - field: "input_a"
+          type: "int" 
+        - field: "input_b"
+          type: "core:Vector3[]" 
+    outputs:
+        - field: "output_a"
+          type: "string" 
+        - field: "output_b"
+          type: "int[]" 

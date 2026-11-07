@@ -274,6 +274,21 @@ body {
   padding: var(--styles-edit-padding);
 }
 
+/* the settings popup: a big panel centered on the viewport, not the thin
+   ribbon hanging under the topbar — room to edit styles and test urls */
+.modal-settings {
+  top: var(--modal-settings-top);
+  left: var(--modal-settings-left);
+  right: auto;
+  transform: var(--modal-settings-transform);
+  width: var(--modal-settings-width);
+  height: var(--modal-settings-height);
+  flex: none;
+}
+.modal-settings .styles-edit {
+  height: var(--modal-settings-styles-edit-height);
+}
+
 /* blocky buttons: hover inverts */
 .btn {
   background: var(--bg-3);

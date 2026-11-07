@@ -11,8 +11,12 @@ import BusinessDashboard from './BusinessDashboard.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, makeGlobalsStore, resolveGraph, replaceGraph } from './model.js'
 import { exportForLLM } from './llmExport.js'
 import { runDRC } from './drc.js'
+import { parseLoopDoc, registerPackages, corsUrl } from './loopdoc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
+// the settings list of web loopdoc files (id + url per row) + their fetch cache
+const WEB_LS = 'loopdoc-composer:webfiles'
+const WEB_CACHE = 'loopdoc-composer:webcache'
 
 export default function App() {
   const [doc, setDoc] = useState(() => {
@@ -34,6 +38,10 @@ export default function App() {
   const [rail, setRail] = useState(true) // the vertical add-buttons rail on the left of canvases
   const [stylesSrc, setStylesSrc] = useState('') // styles.json text shown in the settings editor
   const [stylesNote, setStylesNote] = useState('') // last editor outcome, shown under the textarea
+  const [webFiles, setWebFiles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(WEB_LS) || '[]').map((e) => ({ url: String(e.url || '') })) } catch { return [] }
+  }) // ⌁ loopdoc files: plain [{url}] — the yaml's own Name: is the package identity
+  const [webStatus, setWebStatus] = useState([]) // per-row outcome: {row, url, ok, msg} — fetch status or the registration refusal
   const handleRef = useRef(null)
   const docRef = useRef(doc)
   docRef.current = doc
@@ -98,6 +106,84 @@ export default function App() {
       })
       .catch(() => setStylesNote('✕ no route — this only works on the vite dev server'))
   }
+
+  // ---- ⌁ loopdoc web packages ------------------------------------------------
+  // the settings list holds plain url rows — the yaml's own `Name:` IS the
+  // package (namespace, web tag and slot-id prefix all come from it), and
+  // inline `pkg:Type` references resolve at fetch time against what this very
+  // fetch registers: a package whose requirement misses (or whose Name
+  // collides, or forgets Name:) simply refuses to land, so its ⚙ system and
+  // types stay out of the doc and the row says why
+  const saveWebFiles = (list) => {
+    setWebFiles(list)
+    try { localStorage.setItem(WEB_LS, JSON.stringify(list)) } catch {}
+  }
+  const runWeb = (list) => {
+    let cache = {}
+    try { cache = JSON.parse(localStorage.getItem(WEB_CACHE) || '{}') } catch {}
+    // every fetch run is a genuine fresh read: raw hosts answer with long
+    // Cache-Control heads, so a plain re-fetch would happily hand back the
+    // previous revision of the file and ↻ fetch now would never see the user's
+    // edit — bypass the browser cache AND bust the CDN's with a run-unique ?c=
+    const bust = '?c=' + Date.now()
+    const grab = (u) => fetch(u, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : null))
+    Promise.all(
+      list.map(async (e, row) => {
+        const url = (e.url || '').trim()
+        if (!url) return { row, url, ok: false, msg: 'no url yet', text: null }
+        const raw = corsUrl(url) // GitHub blob/raw pages are html w/o CORS — the raw host is text with it
+        try {
+          const text = (await grab(raw + bust)) ?? (await grab(raw)) // hosts that choke on the param get a plain shot
+          if (text == null) throw new Error('http')
+          cache[raw] = { at: Date.now(), text } // WEB_CACHE stays keyed on the bare url — ⌁ fallback reads it
+          return { row, url, ok: true, msg: '', text }
+        } catch (err) {
+          const c = cache[raw]
+          if (c) return { row, url, ok: '⌁ cached', msg: String(err.message || err), text: c.text }
+          return { row, url, ok: false, msg: '✕ cors / unreachable', text: null }
+        }
+      }),
+    ).then((rs) => {
+      // registration happens against the whole fetch at once — requirements
+      // never pull more urls, they only check the registered Name set
+      const reg = new Map(registerPackages(rs.map((r) => ({ key: r.row, pkg: r.text == null ? null : parseLoopDoc(r.text) }))).map((x) => [x.key, x]))
+      const built = { types: [], assets: [] }
+      let d = docRef.current
+      const status = rs.map((r) => {
+        const g = reg.get(r.row)
+        if (g && g.ok === false) return { row: r.row, url: r.url, ok: false, msg: g.msg } // the yaml itself refused — ✕ with its reason
+        if (g?.built) {
+          // a rename in the yaml keeps its slot: pair this package's old and
+          // new qualified type names by position and cascade each change —
+          // renameTypeInDoc rewrites the name through api fn var types,
+          // globals, foreach itemTypes and VAR `variable.type` in every graph,
+          // so a VAR typed curio:vector2 becomes curio:vec2 the moment its
+          // definition renames upstream, instead of keeping a dead old name
+          const oldNames = (docRef.current.types || []).filter((t) => t.web === g.name).map((t) => t.name)
+          for (let i = 0; i < Math.min(oldNames.length, g.built.types.length); i++)
+            if (oldNames[i] !== g.built.types[i].name) d = renameTypeInDoc(d, oldNames[i], g.built.types[i].name)
+          built.types.push(...g.built.types)
+          built.assets.push(g.built.asset)
+        }
+        return { row: r.row, url: r.url, ok: r.ok, msg: r.msg } // ✓ ok · ⌁ cached · ✕ cors
+      })
+      try { localStorage.setItem(WEB_CACHE, JSON.stringify(cache)) } catch {}
+      setWebStatus(status)
+      commit({
+        ...d,
+        types: [...(d.types || []).filter((t) => !t.web), ...built.types],
+        assets: [...(d.assets || []).filter((a) => !a.web), ...built.assets],
+      })
+    })
+  }
+  // the list itself (and only the list) drives the fetch: boot with saved rows,
+  // every add / remove / edit of a row re-runs all of them (debounced so typing
+  // a url does not fire a fetch per keystroke)
+  useEffect(() => {
+    if (webFiles.length === 0) return
+    const t = setTimeout(() => runWeb(webFiles), 400)
+    return () => clearTimeout(t)
+  }, [webFiles])
 
   const doExportLLM = () => {
     const text = exportForLLM(docRef.current)
@@ -168,6 +254,7 @@ export default function App() {
       setPath([])
       setTab('design')
       setDirty(false)
+      if (webFiles.length) runWeb(webFiles) // the doc's ⌁ packages rejoin its web list
     } catch (e) {
       if (e?.name === 'AbortError') return
       alert(e?.message === 'not a loopdoc composer file' ? 'open failed: not a loopdoc composer file' : `open failed: ${e.message}`)
@@ -180,6 +267,7 @@ export default function App() {
     setDoc(newDoc())
     setPath([])
     setDirty(false)
+    if (webFiles.length) runWeb(webFiles) // the new doc still pulls its ⌁ packages
   }
   useEffect(() => {
     const onKey = (e) => {
@@ -358,7 +446,7 @@ export default function App() {
           className="modal modal-settings"
           onClick={(e) => { if (e.target === e.currentTarget) setSettings(false) }}
         >
-          <div className="modal-title">settings — styles.json</div>
+          <div className="modal-title">settings — styles.json · ⌁ loopdoc files</div>
           <textarea
             className="styles-edit"
             spellCheck={false}
@@ -373,6 +461,61 @@ export default function App() {
             💾 apply
           </button>
           <div className="modal-note">{stylesNote}</div>
+          <div className="modal-sub">
+            ⌁ loopdoc files — one package per row: id + url
+            <button
+              className="tb-btn"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => saveWebFiles([...webFiles, { url: '' }])}
+              title="add a loopdoc file row"
+            >
+              + add
+            </button>
+          </div>
+          {webFiles.map((w, i) => (
+            <div
+              key={`webrow${i}`}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}
+            >
+              <input
+                className="inp"
+                placeholder="https://…/loopdoc.yaml"
+                style={{ flex: 1 }}
+                value={w.url}
+                onChange={(e) => {
+                  const next = [...webFiles]
+                  next[i] = { ...next[i], url: e.target.value }
+                  saveWebFiles(next)
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              <span className="modal-note" title="last fetch — ⌁ packages resolve their requirements against each other at fetch time">
+                {(() => {
+                  const s = webStatus.find((x) => x.row === i)
+                  if (!s) return '…'
+                  if (s.ok === true) return '✓ ok'
+                  if (s.ok === '⌁ cached') return `⌁ cached${s.msg ? ' · ' + s.msg : ''}`
+                  return `✕ ${s.msg}`
+                })()}
+              </span>
+              <button
+                className="icon-btn"
+                title="remove this loopdoc file (its types · system drop out of the doc)"
+                onClick={() => saveWebFiles(webFiles.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {webFiles.length === 0 && (
+            <div className="modal-note">
+              no loopdoc files — add a url row to pull its Types · Ledger · Statics into the doc; the yaml&apos;s
+              own Name: section is what names (and namespaces) the package
+            </div>
+          )}
+          <button className="modal-item" onClick={() => runWeb(webFiles)} title="re-fetch every loopdoc file right now — bypasses browser · CDN caches and rebuilds every ⌁ connection">
+            ↻ fetch now
+          </button>
           <button className="modal-close" onClick={() => setSettings(false)}>
             ✕ close
           </button>
