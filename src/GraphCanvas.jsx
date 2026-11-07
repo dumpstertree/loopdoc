@@ -24,7 +24,7 @@ const homeOrigin = (g) => {
   return { x: 40 - Math.min(0, minX), y: 40 - Math.min(0, minY) }
 }
 
-export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph }) {
+export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph, rail = true }) {
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
@@ -437,11 +437,14 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
   return (
     <>
       <div className="graph-toolbar">
+        {msg && <span className="warn">{msg}</span>}
+      </div>
+      <div className={`rail ${rail ? '' : 'rail-out'}`}>
         <span className="tb-label">ADD</span>
         {kindsFor(graph.mode).map((k) => (
           <button
             key={k}
-            className="tb-btn"
+            className="rail-btn"
             style={{ '--accent-c': `var(--${k === 'event' ? 'magenta' : k === 'condition' ? 'cyan' : 'mint'})` }}
             title={KINDS[k].hint}
             onClick={() => addNode(k)}
@@ -449,8 +452,6 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
             {KINDS[k].label}
           </button>
         ))}
-        {msg && <span className="warn">{msg}</span>}
-        <span className="spacer" />
       </div>
       <div className="canvas-wrap">
         {palette && (

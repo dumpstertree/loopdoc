@@ -61,15 +61,6 @@ body {
   border-right: var(--topbar-block-border-right);
   height: var(--topbar-block-height);
 }
-.app-title {
-  color: var(--bg);
-  background: var(--magenta);
-  font-weight: var(--app-title-font-weight);
-  letter-spacing: var(--app-title-letter-spacing);
-  padding: var(--app-title-padding);
-  display: flex;
-  align-items: center;
-}
 .doc-name {
   background: transparent;
   border: var(--doc-name-border);
@@ -109,6 +100,10 @@ body {
   flex: var(--spacer-flex);
 }
 .save-state {
+  position: fixed;
+  bottom: var(--save-state-bottom);
+  right: var(--save-state-right);
+  z-index: var(--save-state-z-index);
   color: var(--dim);
   font-size: var(--save-state-font-size);
   display: flex;
@@ -120,6 +115,71 @@ body {
 }
 .save-state.saved {
   color: var(--lime);
+}
+
+/* vertical add-buttons rail on the left of a canvas, slid in/out via ⋮ toggle */
+.rail {
+  position: fixed;
+  top: var(--rail-top);
+  bottom: var(--rail-bottom);
+  left: var(--rail-left);
+  width: var(--rail-width);
+  background: var(--rail-background);
+  border: var(--rail-border);
+  border-radius: var(--rail-border-radius);
+  z-index: var(--rail-z-index);
+  display: flex;
+  flex-direction: column;
+  gap: var(--rail-gap);
+  padding: var(--rail-padding);
+  overflow: var(--rail-overflow);
+  transition: var(--rail-transition);
+}
+.rail.rail-out {
+  transform: var(--rail-out-transform);
+  opacity: var(--rail-out-opacity);
+  pointer-events: none;
+}
+/* keep the rail's own rows from squashing when the list overflows and scrolls */
+.rail > * {
+  flex: none;
+}
+.rail-btn {
+  background: var(--rail-btn-background);
+  border: var(--rail-btn-border);
+  border-radius: var(--rail-btn-border-radius);
+  color: var(--rail-btn-color);
+  font-size: var(--rail-btn-font-size);
+  font-weight: var(--rail-btn-font-weight);
+  font-family: inherit;
+  width: var(--rail-btn-width);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rail-btn:hover {
+  border-color: var(--rail-btn-hover-border-color);
+  color: var(--rail-btn-hover-color);
+}
+/* topbar ⋮: slides the add rail in and out */
+.rail-toggle {
+  background: var(--bg-2);
+  border: var(--rail-toggle-border);
+  color: var(--rail-toggle-color);
+  font-size: var(--rail-toggle-font-size);
+  font-weight: var(--rail-toggle-font-weight);
+  font-family: inherit;
+  padding: var(--rail-toggle-padding);
+  margin: var(--rail-toggle-margin);
+  cursor: pointer;
+}
+.rail-toggle:hover {
+  color: var(--rail-toggle-hover-color);
+  border-color: var(--rail-toggle-hover-border-color);
+}
+.rail-toggle.rail-toggle-on {
+  color: var(--rail-toggle-on-color);
+  border-color: var(--rail-toggle-on-border-color);
 }
 
 /* the two circular dials in the top right: ☰ menu · ⚙ settings */
@@ -825,13 +885,6 @@ svg.edges .edge {
 }
 .mc-click.warn {
   color: var(--amber);
-}
-.tb-sep {
-  width: var(--tb-sep-width);
-  height: var(--tb-sep-height);
-  background: var(--line);
-  margin: var(--tb-sep-margin);
-  flex: none;
 }
 .todo-check {
   accent-color: var(--amber);

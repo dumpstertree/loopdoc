@@ -12,7 +12,7 @@ import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 // ---- editor ------------------------------------------------------------------
 // wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
 
-export default function MachineCanvas({ graph, assets, types, globals = [], funcs = [], gstore, onChange, onOpenNode }) {
+export default function MachineCanvas({ graph, assets, types, globals = [], funcs = [], gstore, onChange, onOpenNode, rail = true }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
@@ -511,15 +511,15 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   return (
     <>
       <div className="graph-toolbar">
+        {msg && <span className="warn">{msg}</span>}
+      </div>
+      <div className={`rail ${rail ? '' : 'rail-out'}`}>
         <span className="tb-label">ADD</span>
         {(graph.mode === 'func' ? funcKinds : kindsFor('machine')).map((k) => (
-          <button key={k} className="tb-btn" title={KINDS[k].hint} onClick={() => addNode(k)}>
+          <button key={k} className="rail-btn" title={KINDS[k].hint} onClick={() => addNode(k)}>
             {KINDS[k].label}
           </button>
         ))}
-        <span className="tb-sep" />
-        <span className="spacer" />
-        {msg && <span className="warn">{msg}</span>}
       </div>
       <div className="machine-view">
         <div className="canvas-wrap">

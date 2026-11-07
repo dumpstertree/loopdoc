@@ -31,6 +31,7 @@ export default function App() {
   const [drcScope, setDrcScope] = useState('doc') // 'doc' | 'graph'
   const [menu, setMenu] = useState(false) // ☰ dial: opens the menu modal
   const [settings, setSettings] = useState(false) // ⚙ dial: opens the settings modal
+  const [rail, setRail] = useState(true) // the vertical add-buttons rail on the left of canvases
   const [stylesSrc, setStylesSrc] = useState('') // styles.json text shown in the settings editor
   const [stylesNote, setStylesNote] = useState('') // last editor outcome, shown under the textarea
   const handleRef = useRef(null)
@@ -242,7 +243,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="app-title">loopdoc composer</span>
+        <button
+          className={`rail-toggle ${rail ? 'rail-toggle-on' : ''}`}
+          onClick={() => setRail(!rail)}
+          title="node kinds rail — slides the add-buttons list in and out on the left"
+        >
+          {rail ? '⋮' : '⊘'}
+        </button>
         <div className="topbar-block">
           <input
             className="doc-name"
@@ -266,7 +273,7 @@ export default function App() {
           ))}
         </nav>
         <span className="spacer" />
-        <span className={`save-state ${dirty ? 'dirty' : 'saved'}`}>{dirty ? '● unsaved' : savedAt ? `✓ ${savedAt}` : '✓ local'}</span>
+        <span className={`save-state ${dirty ? 'dirty' : 'saved'}`}>{dirty ? '● unsaved' : savedAt ? `✓ ${savedAt}` : '✓ saved'}</span>
         {/* the two dials top right: only one modal can be open at a time */}
         <button
           className={`round-btn ${menu ? 'round-on' : ''}`}
@@ -377,7 +384,7 @@ export default function App() {
           {tab === 'design' ? (
             <>
               {['machine', 'func'].includes(graph.mode) ? (
-                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} funcs={doc.funcs || []} gstore={gstore} onChange={updateGraph} onOpenNode={(id) => setPath([...path, id])} />
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} funcs={doc.funcs || []} gstore={gstore} onChange={updateGraph} onOpenNode={(id) => setPath([...path, id])} rail={rail} />
               ) : (
                 <GraphCanvas
                   graph={graph}
@@ -387,6 +394,7 @@ export default function App() {
                   funcs={doc.funcs || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
+                  rail={rail}
                 />
               )}
               {path.length > 0 && (
