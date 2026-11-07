@@ -9,14 +9,14 @@
 // carry the chain along; the typed ⇣/⇡ data wires carry the values that parts
 // read (incl. the ⚙ global session store passed as mem.g, shared across
 // machines).
-import { resolveCall, fnSig, varValue, assetIcon, typedValue } from './model.js'
+import { resolveCall, fnSig, varValue, assetIcon, typedValue, MATH } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const fmt = (v) =>
   Array.isArray(v)
-    ? `[${v.join(', ')}]`
+    ? `[${v.map((x) => fmt(x)).join(', ')}]`
     : v && typeof v === 'object'
-      ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${x}`).join(', ')} }`
+      ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${fmt(x)}`).join(', ')} }`
       : v
 
 // ascending order: numbers numerically, everything else as text
@@ -25,6 +25,33 @@ const cmpVals = (a, b) => {
   const y = Number(b)
   if (!Number.isNaN(x) && !Number.isNaN(y)) return x - y
   return String(a).localeCompare(String(b))
+}
+
+// math parts — number in both sides, number out; int ÷ int is integer
+// division, a float operand makes the answer decimal; mod by zero is empty
+const numSide = (v) => {
+  const x = typeof v === 'boolean' ? Number(v) : Number(v)
+  return Number.isFinite(x) ? x : null
+}
+const mathCustom = (n, port) => {
+  const c = port === '__a__' ? n.aVal : n.bVal
+  return String(c ?? '').trim() === '' ? null : numSide(c)
+}
+export function mathVal(nodes, links, mem, n, depth = 0) {
+  const side = (port) => {
+    const d = dataValue(nodes, links, mem, n.id, port, depth + 1)
+    if (d) return d.val === null || d.val === undefined ? null : numSide(d.val)
+    return mathCustom(n, port)
+  }
+  const x = side('__a__')
+  const y = side('__b__')
+  if (x === null || y === null) return null
+  const kind = n.kind
+  if (kind === 'add') return x + y
+  if (kind === 'sub') return x - y
+  if (kind === 'mul') return x * y
+  if (kind === 'div') return y === 0 ? null : Number.isInteger(x) && Number.isInteger(y) ? Math.trunc(x / y) : x / y
+  return y === 0 ? null : x % y // mod
 }
 
 function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
@@ -47,6 +74,8 @@ function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
     return { val: v === undefined ? null : v, from: `${src.name || 'inspect'}.${f?.name || '?'}` }
   }
   if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
+  if (MATH[src.kind])
+    return { val: mathVal(nodes, links, mem, src, depth + 1), from: src.name || src.kind }
   if (src.kind === 'getg') return { val: (mem.g || {})[src.gRef] ?? null, from: `⚙ ${src.gName || 'global'}` }
   if (src.kind === 'var') {
     // a made value — coerced through its declared type (nested structs too);
@@ -137,7 +166,13 @@ function callSystem(n, nodes, links, mem, log, assets) {
   for (const v of r.fn.inputs || []) {
     if (!v.name && !v.type) continue // blank var left in the API
     const d = dataValue(nodes, links, mem, n.id, v.id)
-    if (!d) log.push(`    ⚠ in ${v.name || '?'}:${v.type || '?'} — no data wire`)
+    if (!d) {
+      // no wire — the value typed on the card's ⇣ takes its place, like math's aVal/bVal
+      const c = (n.cVals || {})[v.id]
+      if (c !== undefined && String(c).trim() !== '')
+        log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${fmt(c)} ← card value`)
+      else log.push(`    ⚠ in ${v.name || '?'}:${v.type || '?'} — no data wire`)
+    }
     else if (d.val === null) log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ⋯ ("${d.from}" never fired)`)
     else log.push(`    ⇂ ${v.name || '?'}:${v.type || '?'} = ${fmt(d.val)} ← "${d.from}"`)
   }
@@ -296,6 +331,31 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
       ;(mem.ifres = mem.ifres || {})[n.id] = res
       log.push(`${res ? '✓' : '✗'} ${n.name || 'if'}: ${fmt(da.val)} ${op} ${fmt(db.val)} → ${res ? 'true' : 'false'}`)
       advance(t, n, res ? 'true' : 'false')
+      continue
+    }
+
+    if (MATH[n.kind]) {
+      // the chain passes through as the part computes — wired operands wait for
+      // their producers to fire (like if does), unwired sides read the card
+      const da = dataValue(nodes, links, mem, n.id, '__a__')
+      const db = dataValue(nodes, links, mem, n.id, '__b__')
+      const waiting = (da && (da.val === null || da.val === undefined)) || (db && (db.val === null || db.val === undefined))
+      if (waiting) {
+        if (!t.armed)
+          log.push(`⏳ ${n.name || n.kind} holding — operand from "${(da && (da.val === null || da.val === undefined) ? da : db).from}" has no number yet`)
+        t.armed = true
+        put(t)
+        continue
+      }
+      const va = da ? da.val : mathCustom(n, '__a__')
+      const vb = db ? db.val : mathCustom(n, '__b__')
+      const r = mathVal(nodes, links, mem, n)
+      log.push(
+        r === null
+          ? `∘ ${n.name || n.kind} — ⇡ result stays empty: a side has no number (or the divisor is 0)`
+          : `∘ ${n.name || n.kind}: ${fmt(va)} ${MATH[n.kind]} ${fmt(vb)} = ${fmt(r)}`,
+      )
+      advance(t, n)
       continue
     }
 

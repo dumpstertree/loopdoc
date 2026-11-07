@@ -452,10 +452,11 @@ select.inp {
   position: relative;
   /* light dots on the 26px snap grid + a softly glowing magenta major dot
      every 5th intersection for coarse alignment — both follow the pan
-     origin (backgroundPosition is set inline on the flow canvas) */
+     origin (backgroundPosition is set inline on the flow canvas). The
+     circles sit at each tile's corner so dots land EXACTLY on snap points */
   background-image:
-    radial-gradient(rgba(242, 159, 245, 0.16) 1.6px, transparent 2.2px),
-    radial-gradient(rgba(230, 215, 232, 0.2) 1px, transparent 1.4px);
+    radial-gradient(circle at 0px 0px, rgba(242, 159, 245, 0.16) 1.6px, transparent 2.2px),
+    radial-gradient(circle at 0px 0px, rgba(230, 215, 232, 0.2) 1px, transparent 1.4px);
   background-size: var(--canvas-surface-background-size);
 }
 .canvas-dragging {
@@ -949,6 +950,7 @@ svg.edges .edge {
 .mc-setledger { --kc: var(--amber); }
 .mc-func { --kc: var(--mc-func-kc); }
 .mc-ifb { --kc: var(--amber); }
+.mc-math { --kc: var(--cyan); }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
 .mc-inspect { --kc: var(--mc-inspect-kc); }

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isEntryPart, dataCanConnect, compatTargets, takesFlow, branchLink } from '../src/wireRules.js'
 import { runDRC } from '../src/drc.js'
-import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf } from '../src/model.js'
+import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf, syncMath, patchNode, pruneLinks } from '../src/model.js'
 
 const n = (kind, extra = {}) => ({ id: 'n' + kind + (extra.tag || Math.random().toString(36).slice(2, 6)), kind, x: 0, y: 0, ...extra })
 const flow = (a, b) => ({ id: 'f' + Math.random().toString(36).slice(2, 8), kind: 'flow', from: a.id, fromPort: 'out', to: b.id, toPort: 'in' })
@@ -123,6 +123,58 @@ test('DRC still runs clean over a wired machine and flags a closed cycle', () =>
   const cycle = { id: 'g2', mode: 'machine', name: 'y', nodes: [p1, p2], links: [flow(p1, p2), flow(p2, p1)] }
   const found = runDRC({ design: cycle, assets: [], types: [], vars: [] })
   assert.ok(found.some((f) => f.text.includes('no entry')), 'closed cycle without an entry is an error')
+})
+
+// ---- ledger parts and the flow grammar ------------------------------------
+test('ledger grammar: GET LEDGER is pure data, SET LEDGER passes the chain through', () => {
+  const gl = n('getledger', { lRef: 's1', lName: 'hp', lType: 'int', lVarId: 'lv1' })
+  const sl = n('setledger', { lRef: 's1', lName: 'hp', lType: 'int', lVarId: 'lv1' })
+  const gg = n('getg', { gRef: 'g1', gName: 'hp', gType: 'int' })
+  const sg = n('setg', { gRef: 'g1', gName: 'hp', gType: 'int' })
+  const step = n('step')
+  assert.ok(!takesFlow(gl), 'GET LEDGER takes no flow — it sits beside the chain')
+  assert.ok(!takesFlow(gg), 'GET GLOBAL likewise')
+  assert.ok(takesFlow(sl), 'SET LEDGER takes flow in and out — the chain carries the write')
+  assert.ok(takesFlow(sg), 'SET GLOBAL wears the same pass-through pair')
+  // GET LEDGER ⇡ publishes the ledger value; SET LEDGER ⇣ is fed to write
+  const fr = n('for')
+  const g = { nodes: [gl, sl, fr], links: [] }
+  assert.ok(dataCanConnect(g, [], gl.id, '__val__', fr.id, '__to__').ok, 'GET LEDGER ⇡ int feeds an ⇣ int')
+  assert.ok(dataCanConnect(g, [], fr.id, '__i__', sl.id, '__val__').ok, 'SET LEDGER ⇣ still takes its value wire')
+  assert.ok(!dataCanConnect(g, [], sl.id, '__val__', fr.id, '__to__').ok, 'the write ⇣ is not a feed source')
+  // DRC: a GET LEDGER wired into the flow or set as entry is flagged, a quiet one is clean
+  const wired = { id: 'lf', kind: 'flow', from: step.id, fromPort: 'out', to: gl.id, toPort: 'in' }
+  const found = runDRC({ design: { mode: 'flow', nodes: [gl, step], links: [wired] }, assets: [], types: [], vars: [] })
+  assert.ok(found.some((f) => f.sev === 'error' && f.text.includes('flow wires')), 'flow into GET LEDGER is an error')
+  const asEntry = runDRC({ design: { mode: 'flow', entry: gl.id, nodes: [gl], links: [] }, assets: [], types: [], vars: [] })
+  assert.ok(asEntry.some((f) => f.sev === 'error' && f.text.includes('graph entry')), 'GET LEDGER cannot be the entry')
+  const clean = runDRC({ design: { mode: 'flow', nodes: [sl, gl, step], links: [{ ...wired, from: sl.id, to: step.id }] }, assets: [], types: [], vars: [] })
+  assert.ok(!clean.some((f) => f.text.includes('flow wires')), 'SET LEDGER on the chain raises no flow error')
+})
+
+// ---- STEP typed variables --------------------------------------------------
+test('STEP grows typed ⇣ inputs and ⇡ outputs that wire like any other ports', () => {
+  const st = n('step', {
+    inVars: [{ id: 'i1', name: 'hp', type: 'int' }],
+    outVars: [{ id: 'o1', name: 'roll', type: 'int' }],
+  })
+  const fr = n('for')
+  const insp = n('inspect', { objType: 'any' })
+  const g = { nodes: [st, fr, insp], links: [] }
+  assert.ok(dataCanConnect(g, [], st.id, 'o1', fr.id, '__to__').ok, 'STEP ⇡ int feeds an ⇣ int')
+  assert.ok(dataCanConnect(g, [], fr.id, '__i__', st.id, 'i1').ok, 'an int ⇡ feeds STEP ⇣')
+  const st2 = n('step', { outVars: [{ id: 'o2', name: 'msg', type: 'string' }] })
+  const bad = dataCanConnect({ nodes: [st2, fr], links: [] }, [], st2.id, 'o2', fr.id, '__to__')
+  assert.ok(!bad.ok && bad.why.toLowerCase().includes('int'), 'type mismatch still explains itself')
+  const v = n('var', { variable: { name: 'x', type: 'string', value: '' } })
+  const gv = { nodes: [st, v], links: [] }
+  assert.ok(!dataCanConnect(gv, [], v.id, '__val__', st.id, 'i1').ok, 'string VAR cannot feed an int ⇣')
+  assert.ok(takesFlow(st), 'STEP still passes the chain through')
+  // renaming a type cascades into STEP variables too
+  const doc = { assets: [], vars: [], design: { nodes: [{ ...st, id: 's1', x: 0, y: 0 }], links: [] } }
+  const d = renameTypeInDoc(doc, 'int', 'Foe')
+  assert.equal(d.design.nodes[0].inVars[0].type, 'Foe', '⇣ type follows the rename')
+  assert.equal(d.design.nodes[0].outVars[0].type, 'Foe', '⇡ type follows the rename')
 })
 
 // ---- VAR typed fill-in -------------------------------------------------------
@@ -275,4 +327,65 @@ test('a data branch obeys types, existing connections and the anchor stem too', 
   const ssrc = { ...data(sv, '__val__', p1, '__to__'), anchors: [] }
   const g2 = { ...g, nodes: [...g.nodes, sv] }
   assert.match(branchLink(g2, [], ssrc, -1, p2.id, '__to__').why, /type mismatch/, 'string cannot branch into an int window')
+})
+
+// ---- math parts — add/sub/mul/div/mod share one operand grammar ----------
+test('math operands accept int and float only', () => {
+  const aInt = n('var', { variable: { name: 'hp', type: 'int', value: 7 } })
+  const aFlt = n('var', { variable: { name: 'rate', type: 'float', value: 1.5 } })
+  const aStr = n('var', { variable: { name: 'who', type: 'string', value: 'x' } })
+  const add = n('add')
+  assert.ok(dataCanConnect({ nodes: [aInt, add], links: [] }, [], aInt.id, '__val__', add.id, '__a__').ok, 'an int feeds ⇣ a')
+  assert.ok(dataCanConnect({ nodes: [aFlt, add], links: [] }, [], aFlt.id, '__val__', add.id, '__b__').ok, 'a float feeds ⇣ b')
+  const bad = dataCanConnect({ nodes: [aStr, add], links: [] }, [], aStr.id, '__val__', add.id, '__a__')
+  assert.ok(!bad.ok && bad.why.includes('math parts take int or float'), 'a string is refused with an explanation')
+})
+
+test('math ⇡ learns float from a float operand and reverts on unwrap', () => {
+  const flt = n('var', { variable: { name: 'rate', type: 'float', value: 1.5 } })
+  const add = n('add')
+  const g = { nodes: [flt, add], links: [data(flt, '__val__', add, '__a__')] }
+  const synced = syncMath(g, [], [])
+  const learned = synced.nodes.find((x) => x.id === add.id)
+  assert.equal(learned.rType, 'float', 'a float operand makes the ⇡ result a float')
+  const back = syncMath({ ...g, links: [] }, [], [])
+  assert.equal(back.nodes.find((x) => x.id === add.id).rType, 'int', 'with no float side it falls back to int')
+})
+
+test('math ⇡ learns float from a decimal custom value', () => {
+  const add = n('add', { aVal: '3', bVal: '1.5' })
+  const g = syncMath({ nodes: [add], links: [] }, [], [])
+  assert.equal(g.nodes.find((x) => x.id === add.id).rType, 'float', 'a decimal custom value counts as a float side')
+  const add2 = n('add', { aVal: '3', bVal: '2' })
+  const whole = syncMath({ nodes: [add2], links: [] }, [], [])
+  assert.equal(whole.nodes.find((x) => x.id === add2.id).rType, 'int', 'whole custom values keep the result int')
+})
+
+test('DRC: call input with a card value is no longer blind', () => {
+  const assets = [{ id: 'asa', name: 'sys', api: [{ id: 'fb', name: 'mv', inputs: [{ id: 'p1', name: 'to', type: 'int' }], outputs: [] }] }]
+  const bare = n('syscall', { calls: [{ asset: 'asa', fn: 'fb' }] })
+  const fed = { ...bare, cVals: { p1: '7' } }
+  const g = (nodes) => runDRC({ design: { mode: 'machine', nodes, links: [] }, assets, types: [], vars: [] })
+  assert.ok(g([bare]).some((f) => f.text.includes('runs blind')), 'unwired and untyped warns')
+  assert.ok(!g([fed]).some((f) => f.text.includes('runs blind')), 'the card value silences it')
+})
+
+
+// ---- node patches must never prune ports that still exist ----
+test('editing a node keeps its live ports — STEP flow-in and FUNC ⇣ survive patches', () => {
+  const en = n('enter')
+  const st = n('step')
+  const l = flow(en, st)
+  const g = { nodes: [en, st], links: [l] }
+  const renamed = pruneLinks(patchNode(g, st.id, { name: 'renamed step' }), [], st.id, [])
+  assert.ok(renamed.links.some((x) => x.id === l.id), 'renaming a STEP keeps its incoming flow (implicit in port)')
+
+  const fn = { id: 'f9', graph: { nodes: [{ kind: 'enter', vars: [{ id: 'e1', name: 'to', type: 'vector2' }, { id: 'e2', name: 'speed', type: 'int' }] }], links: [] } }
+  const gv = n('var')
+  const fc = n('func', { func: 'f9' })
+  const d1 = data(gv, 'out', fc, 'e1')
+  const d2 = data(gv, 'out', fc, 'e2')
+  const g2 = { nodes: [gv, fc], links: [d1, d2] }
+  const edited = pruneLinks(patchNode(g2, fc.id, { cVals: { e1: { x: 3, y: 4 } } }), [], fc.id, [fn])
+  assert.equal(edited.links.length, 2, 'a vector2 card-value edit keeps every FUNC input wire')
 })

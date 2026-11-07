@@ -363,10 +363,9 @@ function ApiEditor({ asset, onChange, types }) {
   )
 }
 
-// ledger variables section for ⚙ systems: dropdowns to pick data types from types
-// and their array variants, plus array size hints
+// ledger variables section for ⚙ systems: dropdowns offering every type
+// (base + declared) and their array variants, plus array size hints
 function LedgerVariables({ ledger, onUpdate, types = [] }) {
-  const typeNames = (types || []).map((t) => t.name) || []
   if (!ledger || !Array.isArray(ledger)) return null
   const set = (fn) => onUpdate(fn(ledger))
   const upd = (i, patch) => set((l) => l.map((v, j) => (j === i ? { ...v, ...patch } : v)))
@@ -399,15 +398,12 @@ function LedgerVariables({ ledger, onUpdate, types = [] }) {
             onChange={(e) => upd(i, { name: e.target.value })}
             onKeyDown={(e) => e.stopPropagation()}
           />
-          <select className="inp" title="data type from types or array variants" value={v.type} onChange={(e) => upd(i, { type: e.target.value })}>
-            <option value="">— pick type —</option>
-            {typeNames.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-            {typeNames.map((t) => (
-              <option key={`${t}-array`} value={`${t}[]`}>{t}[]</option>
-            ))}
-          </select>
+          <TypeSelect
+            types={types}
+            value={v.type}
+            onChange={(type) => upd(i, { type })}
+            title="ledger variable type"
+          />
           <input
             className="inp"
             placeholder="size…"

@@ -377,3 +377,93 @@ test('VAR ⇡ reads through a data wire as its typed runtime value', () => {
   assert.equal(d.val, 5, 'the "5" fill-in arrives as a number')
   assert.ok(d.from.includes('count'), 'provenance names the variable')
 })
+
+// ---- math parts — add/sub/mul/div/mod run as the chain passes through ----
+test('add logs its arithmetic and a consumer reads the result', () => {
+  const src = n('enter')
+  const made = n('var', { variable: { name: 'hp', type: 'int', value: '7' } })
+  const add = n('add', { name: 'sum', bVal: '3' })
+  const sink = n('step', { name: 'sink' })
+  const nodes = [src, made, add, sink]
+  const links = [flow(src, add), flow(add, sink), data(made, '__val__', add, '__a__'), data(add, '__val__', sink, '__in__')]
+  const mem = { tokens: [] }
+  const { log } = run(nodes, links, 8, mem)
+  assert.ok(log.some((l) => l.includes('7 + 3 = 10')), 'the chain logs sum: 7 + 3 = 10')
+  const got = dataValue(nodes, links, mem, sink.id, '__in__')
+  assert.ok(got && got.val === 10, 'the consumer reads 10 from the math ⇡')
+})
+
+test('int ÷ int is integer division; mod by zero is empty', () => {
+  const src = n('enter')
+  const dv = n('div', { name: 'share', aVal: '7', bVal: '2' })
+  const md = n('mod', { name: 'rest', aVal: '7', bVal: '0' })
+  const nodes = [src, dv, md]
+  const links = [flow(src, dv), flow(dv, md)]
+  const mem = { tokens: [] }
+  const { log } = run(nodes, links, 8, mem)
+  assert.ok(log.some((l) => l.includes('7 ÷ 2 = 3')), '7 ÷ 2 truncates to 3')
+  assert.ok(log.some((l) => l.includes('stays empty')), 'mod by zero leaves an empty result')
+  assert.ok(!log.some((l) => l.includes('= 0')), 'the empty mod never logs a zero')
+})
+
+test('a float operand makes the answer decimal', () => {
+  const src = n('enter')
+  const rate = n('var', { variable: { name: 'rate', type: 'float', value: '2.5' } })
+  const add = n('add', { bVal: '1' })
+  const nodes = [src, rate, add]
+  const links = [flow(src, add), data(rate, '__val__', add, '__a__')]
+  const mem = { tokens: [] }
+  const { log } = run(nodes, links, 8, mem)
+  assert.ok(log.some((l) => l.includes('2.5 + 1 = 3.5')), '2.5 + 1 = 3.5 stays decimal')
+})
+
+// ---- card custom values — unwired call inputs take the typed value ----
+test('syscall inputs fall back to the value typed on the card', () => {
+  const assets = [
+    {
+      id: 'asx',
+      name: 'map',
+      api: [{ id: 'fnx', name: 'place', inputs: [{ id: 'ix', name: 'at', type: 'int' }], outputs: [] }],
+    },
+  ]
+  const src = n('enter')
+  const sys = n('syscall', { calls: [{ asset: 'asx', fn: 'fnx' }], cVals: { ix: '42' } })
+  const nodes = [src, sys]
+  const links = [flow(src, sys)]
+  const { log } = run(nodes, links, 8, { tokens: [] }, assets)
+  assert.ok(log.some((l) => l.includes('at:int = 42') && l.includes('card value')), 'the card value feeds the call')
+  assert.ok(!log.some((l) => l.includes('no data wire')), 'no blind-input warning when a card value exists')
+  const bare = n('syscall', { calls: [{ asset: 'asx', fn: 'fnx' }] })
+  const { log: log2 } = run([src, bare], [flow(src, bare)], 8, { tokens: [] }, assets)
+  assert.ok(log2.some((l) => l.includes('no data wire')), 'without a card value the warning still fires')
+})
+
+test('card values can be structured — a struct and a struct list log by field', () => {
+  const assets = [
+    {
+      id: 'asv',
+      kind: 'system',
+      name: 'geo',
+      api: [
+        {
+          id: 'fvp',
+          name: 'move',
+          inputs: [
+            { id: 'p2', name: 'to', type: 'vector2' },
+            { id: 'p3', name: 'path', type: 'vector2[]' },
+          ],
+          outputs: [],
+        },
+      ],
+    },
+  ]
+  const src = n('enter')
+  const sys = n('syscall', {
+    calls: [{ asset: 'asv', fn: 'fvp' }],
+    cVals: { p2: { x: 3, y: 4 }, p3: [{ x: 0, y: 0 }, { x: 1, y: 2 }] },
+  })
+  const { log } = run([src, sys], [flow(src, sys)], 8, { tokens: [] }, assets)
+  assert.ok(log.some((l) => l.includes('to:vector2 = { x: 3, y: 4 }')), 'the struct card value logs by field')
+  assert.ok(log.some((l) => l.includes('path:vector2[] = [{ x: 0, y: 0 }, { x: 1, y: 2 }]')), 'struct lists log item by item')
+  assert.ok(!log.some((l) => l.includes('no data wire')), 'both structured values silence the blind warning')
+})

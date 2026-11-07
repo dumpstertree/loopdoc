@@ -42,7 +42,12 @@ function applyEnter(node, st, graph) {
         L.push(`   ⚙️ ${r.asset.name || 'system'} → ${r.fn.name || '?'}(${sig.in}) ⇡ ${sig.out}`)
         for (const v of r.fn.inputs || []) {
           const w = (graph.links || []).find((l) => l.kind === 'data' && l.to === node.id && l.toPort === v.id)
-          if (!w) L.push(`      ⚠ input ${v.name || '?'}:${v.type || '?'} has no data wire`)
+          if (!w) {
+            const c = (node.cVals || {})[v.id]
+            if (c !== undefined && String(c).trim() !== '')
+              L.push(`      ⇂ input ${v.name || '?'}:${v.type || '?'} = ${fmtV(c)} (typed on the card)`)
+            else L.push(`      ⚠ input ${v.name || '?'}:${v.type || '?'} has no data wire`)
+          }
         }
       }
       break

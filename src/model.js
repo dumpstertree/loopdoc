@@ -185,7 +185,8 @@ export function renameTypeInDoc(doc, oldName, newName) {
     for (const n of g.nodes) {
       if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
       if (n.kind === 'var' && n.variable) n.variable.type = fix(n.variable.type || '')
-      for (const v of n.vars || []) v.type = fix(v.type) // ENTER/EXIT door variables
+      for (const key of ['vars', 'inVars', 'outVars']) // ENTER/EXIT doors + STEP's ⇣/⇡ variables
+        for (const v of n[key] || []) v.type = fix(v.type || '')
       if (n.kind === 'getg' || n.kind === 'setg') {
         n.gType = fix(n.gType || '')
         if (n.gName === oldName) n.gName = newName
@@ -276,6 +277,17 @@ const arrOut = (n) => ({
   name: 'arr',
 })
 
+// ---- math ops ----------------------------------------------------------------
+// ADD · SUBTRACT · MULTIPLY · DIVIDE · MOD share one card shape and one port
+// layout: ⇣ a and ⇣ b are number operands (type 'num' — int or float only),
+// ⇡ result carries the answer. Their ⇡ type learns from the operands: float
+// when either side is a float, int otherwise.
+export const MATH = { add: '+', sub: '−', mul: '×', div: '÷', mod: 'mod' }
+const mathData = (n) => ({
+  in: [{ id: '__a__', type: 'num', name: 'a' }, { id: '__b__', type: 'num', name: 'b' }],
+  out: [{ id: '__val__', type: n.rType || 'int', name: 'result' }],
+})
+
 // ---- node kinds --------------------------------------------------------------
 // One registry for both graph modes. Each kind declares:
 //   mode     'flow' | 'machine'
@@ -288,9 +300,13 @@ export const KINDS = {
     canvas: ['flow'],
     label: 'STEP',
     cls: 'nd-step',
-    hint: 'plain step in the loop — flow passes through',
+    hint: 'plain step in the loop — flow passes through · its ⇣/⇡ variables are typed data ports any producer or consumer can wire',
     ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
-    shape: { title: true, in: true, outs: true, rows: 'note' },
+    data: (n) => ({
+      in: (n.inVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
+      out: (n.outVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
+    }),
+    shape: { title: true, in: true, outs: true, rows: 'step', actions: ['invar', 'outvar'] },
   },
   event: {
     canvas: ['flow'],
@@ -404,6 +420,8 @@ export const KINDS = {
   },
   getg: {
     canvas: ['flow', 'machine', 'func'],
+    // pure data like VAR — the value publishes through its ⇡ alone
+    dataOnly: true,
     label: 'GET GLOBAL',
     cls: 'mc-getg',
     hint: 'reads a document-wide global — pick it here · ⇡ publishes its value (live during sim, the default while editing)',
@@ -421,10 +439,12 @@ export const KINDS = {
       { id: 'out', dir: 'out', label: '' },
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }], out: [] }),
-    shape: { title: true, rows: 'global', data: true },
+    shape: { title: true, in: true, outs: true, rows: 'global', data: true },
   },
   getledger: {
     canvas: ['flow', 'machine', 'func'],
+    // pure data — the ledger value publishes through its ⇡, no chain touches it
+    dataOnly: true,
     label: 'GET LEDGER',
     cls: 'mc-getledger',
     hint: 'reads a system ledger variable — pick the system and variable · ⇡ publishes its value',
@@ -442,7 +462,9 @@ export const KINDS = {
       { id: 'out', dir: 'out', label: '' },
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }], out: [] }),
-    shape: { title: true, rows: 'ledger', data: true },
+    // in the chain — its flow in/out pair is declared in ports(), and the
+    // shape marks it as a pass-through part (SET GLOBAL wears the same pair)
+    shape: { title: true, in: true, outs: true, rows: 'ledger', data: true },
   },
   func: {
     canvas: ['flow', 'machine', 'func'],
@@ -581,6 +603,52 @@ export const KINDS = {
       out: [{ id: '__val__', type: n.vType || '?', name: 'copy' }],
     }),
     shape: { title: true, rows: 'list', data: true },
+  },
+  // ---- math ops — one card shape for all five, on every canvas ----------------
+  add: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'ADD',
+    cls: 'mc-math',
+    hint: 'chain passes through · ⇡ result = ⇣ a + ⇣ b — operands only take int or float · an unwired ⇣ falls back to the custom value typed on the card',
+    ports: flowIO(),
+    data: mathData,
+    shape: { title: true, in: true, outs: true, rows: 'math', data: true },
+  },
+  sub: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'SUBTRACT',
+    cls: 'mc-math',
+    hint: 'chain passes through · ⇡ result = ⇣ a − ⇣ b — operands only take int or float · an unwired ⇣ falls back to the custom value typed on the card',
+    ports: flowIO(),
+    data: mathData,
+    shape: { title: true, in: true, outs: true, rows: 'math', data: true },
+  },
+  mul: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'MULTIPLY',
+    cls: 'mc-math',
+    hint: 'chain passes through · ⇡ result = ⇣ a × ⇣ b — operands only take int or float · an unwired ⇣ falls back to the custom value typed on the card',
+    ports: flowIO(),
+    data: mathData,
+    shape: { title: true, in: true, outs: true, rows: 'math', data: true },
+  },
+  div: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'DIVIDE',
+    cls: 'mc-math',
+    hint: 'chain passes through · ⇡ result = ⇣ a ÷ ⇣ b — int ÷ int is integer division, a float operand makes it decimal · operands only take int or float',
+    ports: flowIO(),
+    data: mathData,
+    shape: { title: true, in: true, outs: true, rows: 'math', data: true },
+  },
+  mod: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'MOD',
+    cls: 'mc-math',
+    hint: 'chain passes through · ⇡ result = remainder of ⇣ a ÷ ⇣ b — operands only take int or float · an unwired ⇣ falls back to the custom value typed on the card',
+    ports: flowIO(),
+    data: mathData,
+    shape: { title: true, in: true, outs: true, rows: 'math', data: true },
   },
   action: {
     canvas: ['machine', 'func'],
@@ -746,6 +814,25 @@ export function dataPortType(graph, assets, nodeId, portId, dir, funcs = []) {
   return p ? (p.type || '').trim().toLowerCase() : null
 }
 
+// Keep math parts in step with their operands: after any wire lands or
+// leaves, re-derive each ⇡ result type — float when either side (wired
+// value or custom value typed on the card) is float, int otherwise.
+export function syncMath(g, assets, funcs = []) {
+  const rType = (n) => {
+    for (const [port, custom] of [['__a__', n.aVal], ['__b__', n.bVal]]) {
+      const w = (g.links || []).find((l) => l.kind === 'data' && l.to === n.id && l.toPort === port)
+      if (w) {
+        if (dataPortType(g, assets, w.from, w.fromPort, 'out', funcs) === 'float') return 'float'
+      } else {
+        const c = Number(custom)
+        if (String(custom ?? '').trim() !== '' && Number.isFinite(c) && !Number.isInteger(c)) return 'float'
+      }
+    }
+    return 'int'
+  }
+  return { ...g, nodes: (g.nodes || []).map((n) => (MATH[n.kind] ? { ...n, rType: rType(n) } : n)) }
+}
+
 // The data a call takes/returns, for logs and labels. Blank input vars
 // (leftovers from API editing) are ignored.
 export function fnSig(r) {
@@ -768,6 +855,11 @@ export function newNode(kind, x, y) {
   if (['append', 'join', 'remove', 'removeat', 'sort'].includes(kind)) n.itemType = null // learns from the first array wired in
   if (kind === 'sort') n.field = ''
   if (kind === 'clone') n.vType = ''
+  if (MATH[kind]) {
+    n.aVal = ''
+    n.bVal = ''
+    n.rType = 'int' // learns 'float' while any operand side is a float
+  }
   if (kind === 'inspect') n.objType = 'any'
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}
@@ -821,12 +913,16 @@ export function removeNode(graph, id) {
 }
 
 // Remove links that no longer make sense after a node edit (ports vanished).
-export function pruneLinks(graph, assets, nodeId) {
+export function pruneLinks(graph, assets, nodeId, funcs = []) {
   const node = graph.nodes.find((n) => n.id === nodeId)
   if (!node) return graph
   const meta = kindMeta(node)
   const flowIds = new Set(meta.ports ? meta.ports(node).map((p) => p.id) : [])
-  const dp = dataPorts(node, assets)
+  // chained parts (STEP, EVENT…) take flow in through an implicit 'in' port
+  // that ports() never declares — incoming flow links ride it
+  if (!meta.dataOnly && (meta.shape?.in === true || (meta.ports ? meta.ports(node) : []).some((p) => p.dir === 'in')))
+    flowIds.add('in')
+  const dp = dataPorts(node, assets, funcs)
   const dataIds = new Set([...dp.in.map((p) => p.id), ...dp.out.map((p) => p.id)])
   return {
     ...graph,
@@ -1037,8 +1133,10 @@ function intoView(g) {
   const dx = pts.reduce((m, p) => Math.min(m, (p.x || 0) - CANVAS_MARGIN), 0)
   const dy = pts.reduce((m, p) => Math.min(m, (p.y || 0) - CANVAS_MARGIN), 0)
   if (dx >= 0 && dy >= 0) return
-  const sx = dx < 0 ? -dx : 0
-  const sy = dy < 0 ? -dy : 0
+  // shift by WHOLE GRID steps — a part parked on a snap point must stay there
+  // after the repair, or every snapped graph loads with the grid skewed under it
+  const sx = dx < 0 ? Math.ceil(-dx / GRID) * GRID : 0
+  const sy = dy < 0 ? Math.ceil(-dy / GRID) * GRID : 0
   for (const n of g.nodes || []) {
     n.x = (n.x || 0) + sx
     n.y = (n.y || 0) + sy

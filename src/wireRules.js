@@ -11,10 +11,16 @@ export function isEntryPart(n) {
   return n.kind === 'enter'
 }
 
-// may a flow wire land on this node at all? the shape says: a part with no
-// in-slot is pure data or a chain starter, and flow never enters it.
+// may a flow wire land on this node at all? two declarations say yes: the
+// shape's implicit flow-in slot (`in: true` — the pass-through convention on
+// the canvases) or an explicit ⇣ flow port in ports() (SET GLOBAL/SET LEDGER
+// wear the pair). A part flagged dataOnly (VAR, GET GLOBAL, GET LEDGER) lives
+// outside the chain entirely — nothing flows into or out of it.
 export function takesFlow(n) {
-  return kindMeta(n).shape?.in === true
+  const m = kindMeta(n)
+  if (m.dataOnly) return false
+  if (m.shape?.in === true) return true
+  return (m.ports ? m.ports(n) : []).some((p) => p.dir === 'in')
 }
 
 // may data port A feed data port B? returns { ok } or { ok: false, why }
@@ -35,6 +41,11 @@ export function dataCanConnect(g, assets, from, fromPort, to, toPort, funcs = []
       return { ok: false, why: `⚠ if-compares both sides alike — ⇣ ${otherPort} is already ${ot}` }
     return { ok: true }
   }
+  // math-operands: int or float only — their ⇣ ports wear the type 'num'
+  if (tb === 'num')
+    return ta === 'int' || ta === 'float'
+      ? { ok: true }
+      : { ok: false, why: `⚠ math parts take int or float — not ${ta}` }
   if (!(ta === tb || tb === 'any' || (tb === 'array' && ta.includes('[]'))))
     return { ok: false, why: `⚠ type mismatch — ⇡ ${ta} cannot feed ⇣ ${tb}` }
   return { ok: true }

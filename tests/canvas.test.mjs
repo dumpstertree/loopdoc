@@ -178,3 +178,17 @@ test('pasting a machine keeps ⇡ exit wires — they follow the copy’s own EX
   )
   assert.equal(wire.to, pasted.nodes.find((n) => n.kind === 'ifb').id, 'and still reaches the pasted consumer')
 })
+
+// ---- load repair must keep parts on the 26px snap grid ----
+test('load repair keeps snapped parts snapped — shifts are whole GRID steps', () => {
+  const back = parseDoc(
+    serializeDoc(
+      docWith([
+        { id: 'a', kind: 'step', x: 0, y: 26 },
+        { id: 'b', kind: 'step', x: -52, y: 260 },
+      ]),
+    ),
+  )
+  const ns = back.design.nodes
+  assert.ok(ns.every((n) => n.x % 26 === 0 && n.y % 26 === 0), `every snapped part loads snapped: ${JSON.stringify(ns)}`)
+})

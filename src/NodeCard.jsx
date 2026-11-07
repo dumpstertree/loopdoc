@@ -5,8 +5,9 @@
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
 import { T } from './styles.gen.js' // every styling value, generated from styles.json
-import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, fieldsOf, emptyValue, typedValue } from './model.js'
-import { dataValue, fmt } from './engine.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, fieldsOf, emptyValue, typedValue, MATH } from './model.js'
+import { takesFlow } from './wireRules.js'
+import { dataValue, fmt, mathVal } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
 
 // one width for every kind — the card is one shape, so both canvases agree
@@ -35,7 +36,23 @@ function Dock({ actions, dock }) {
 
 // system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
 // pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
-function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut, onDataOut, onGrow }) {
+function CallsEditor({ node, assets, types, multiple, simCall, sim, links, onPatch, onSimOut, onDataOut, onGrow }) {
+  // an unwired ⇣ call input falls back to a custom value typed on the card,
+  // kept per port in node.cVals — exactly like math parts' aVal/bVal
+  const wired = (pid) => (links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+  // custom-value editor shared with the FUNC card — scalars take a text field,
+  // declared structs grow one field row per member, struct[] lists grow rows
+  const unwiredValue = (v) => {
+    const cur = (node.cVals || {})[v.id]
+    if (sim)
+      return (
+        cur !== undefined && cur !== '' &&
+        <div className="nd-row">
+          <span className="dval">{fmt(cur)}</span>
+        </div>
+      )
+    return UnwiredValue({ v, cVals: node.cVals || {}, types, onPatch })
+  }
   const calls = node.calls || []
   const systems = assets.filter((a) => a.kind === 'system')
   const patch = (next) => onPatch({ calls: next })
@@ -98,14 +115,28 @@ function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut
             </div>
             {fn && (
               <>
-                {(fn.inputs || []).map((v) => (
-                  <div className="dvar" key={v.id} title={`data needed (${v.type || '?'}) — wire a matching ⇡ in`}>
-                    <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
-                    <span>
-                      ⇣ {v.name || '?'}:<b>{v.type || '?'}</b>
-                    </span>
-                  </div>
-                ))}
+                {(fn.inputs || []).map((v) => {
+                  const hasWire = wired(v.id)
+                  return (
+                    <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div
+                        className="dvar"
+                        key={v.id}
+                        title={
+                          hasWire
+                            ? `data needed (${v.type || '?'}) — fed by the wire from a matching ⇡`
+                            : `data needed (${v.type || '?'}) — wire a matching ⇡ in, or type the value below`
+                        }
+                      >
+                        <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                        <span>
+                          ⇣ {v.name || '?'}:<b>{v.type || '?'}</b>
+                        </span>
+                      </div>
+                      {!hasWire && unwiredValue(v)}
+                    </div>
+                  )
+                })}
                 {(fn.outputs || []).map((v) => (
                   <div className="dvar out" key={v.id} title={`data returned (${v.type || '?'})`}>
                     <span>
@@ -256,6 +287,55 @@ function StructArrayInputs({ v, simCall, types, onSimOut }) {
         + {tdef.name || 'item'}
       </button>
     </div>
+  )
+}
+
+// custom value for an unwired ⇣ port — same editors the sim answers use:
+// a declared struct grows one field row per member, a struct list grows rows
+// per item (with + add / × remove), plain lists take comma-separated fields,
+// scalars take a single text field
+function UnwiredValue({ v, cVals, types, onPatch }) {
+  const t = String(v.type || '')
+  const set = (val) => onPatch({ cVals: { ...(cVals || {}), [v.id]: val } })
+  if ((types || []).some((x) => x.name.toLowerCase() === t.toLowerCase()))
+    return <StructInputs v={v} simCall={cVals || {}} types={types} onSimOut={(_, val) => set(val)} />
+  const base = t.replace(/\[\s*\]$/, '').trim()
+  if (t.includes('[') && (types || []).some((x) => x.name.toLowerCase() === base.toLowerCase()))
+    return <StructArrayInputs v={v} simCall={cVals || {}} types={types} onSimOut={(_, val) => set(val)} />
+  const cur = (cVals || {})[v.id]
+  if (t.includes('['))
+    return (
+      <input
+        className="inp"
+        style={{ flex: 1, minWidth: 0 }}
+        placeholder="a, b, c…"
+        title="custom value while nothing is wired into ⇣ — comma-separated list"
+        value={Array.isArray(cur) ? cur.map((x) => String(x)).join(', ') : cur ?? ''}
+        onPointerDown={(e) => e.stopPropagation()}
+        onChange={(e) =>
+          set(
+            e.target.value.trim() === ''
+              ? []
+              : e.target.value.split(',').map((s) => {
+                  const s2 = s.trim()
+                  return s2 !== '' && !isNaN(s2) ? Number(s2) : s2
+                }),
+          )
+        }
+        onKeyDown={(e) => e.stopPropagation()}
+      />
+    )
+  return (
+    <input
+      className="inp"
+      style={{ flex: 1, minWidth: 0 }}
+      placeholder={`${t || 'value'}…`}
+      title="custom value while nothing is wired into ⇣"
+      value={cur ?? ''}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => set(e.target.value)}
+      onKeyDown={(e) => e.stopPropagation()}
+    />
   )
 }
 
@@ -539,7 +619,9 @@ export default function NodeCard({
   const isMachineKind = (meta.canvas || []).includes(mode)
   const ports = (meta.ports && meta.ports(node)) || []
   const flowOuts = ports.filter((p) => p.dir === 'out')
-  const hasIn = mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
+  // what flow slots the card wears — same rule the canvases enforce, so a
+  // phantom ⇣ never decorates a part that refuses flow (VAR, GET …)
+  const hasIn = mode === 'flow' ? takesFlow(node) : ports.some((p) => p.dir === 'in')
   const isText = node.kind === 'text'
   // TEXT and TODO carry their own width (corner grip); TODO grows its height
   // from the task lines and VAR from its typed fill-in, so those store w only
@@ -596,11 +678,96 @@ export default function NodeCard({
   // the row family this card wears, and the buttons it docks at the foot
   const rows =
     {
-      // STEP — a line of prose
-      note: () =>
-        node.kind === 'step'
-          ? <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
-          : null,
+      // STEP — a line of prose plus typed ⇣ input / ⇡ output variables
+      step: () =>
+        node.kind === 'step' && (
+          <>
+            <input
+              className="inp"
+              placeholder="note (optional)"
+              value={node.note || ''}
+              onChange={(e) => onPatch({ note: e.target.value })}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            {(node.inVars || []).map((v, i) => (
+              <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div className="nd-row">
+                  <input
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    placeholder="input name…"
+                    value={v.name}
+                    onChange={(e) => onPatch({ inVars: node.inVars.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  />
+                  <TypeSelect
+                    types={types}
+                    value={v.type}
+                    title="the variable’s data type — every type with its [] array form"
+                    onChange={(type) => onPatch({ inVars: node.inVars.map((x, j) => (j === i ? { ...x, type } : x)) })}
+                  />
+                  <button
+                    className="icon-btn"
+                    title="remove input"
+                    onClick={() => onPatch({ inVars: node.inVars.filter((_, j) => j !== i) })}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="dvar" title="wire the value this step reads — any producer’s ⇡ of this type lands here">
+                  <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                  <span>
+                    ⇣ {v.name || '?'}:<b>{v.type}</b>
+                  </span>
+                </div>
+              </div>
+            ))}
+            {(node.outVars || []).map((v, i) => (
+              <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div className="nd-row">
+                  <input
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    placeholder="output name…"
+                    value={v.name}
+                    onChange={(e) => onPatch({ outVars: node.outVars.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  />
+                  <TypeSelect
+                    types={types}
+                    value={v.type}
+                    title="the variable’s data type — every type with its [] array form"
+                    onChange={(type) => onPatch({ outVars: node.outVars.map((x, j) => (j === i ? { ...x, type } : x)) })}
+                  />
+                  <button
+                    className="icon-btn"
+                    title="remove output"
+                    onClick={() => onPatch({ outVars: node.outVars.filter((_, j) => j !== i) })}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="dvar out" title="the value this step publishes — drag to feed any ⇣ of this type">
+                  <span>
+                    ⇡ {v.name || '?'}:<b>{v.type}</b>
+                  </span>
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, v.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, v.id)
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+            {grow('invar', '+ ⇣ input', () => onPatch({ inVars: [...(node.inVars || []), { id: uid('iv'), name: '', type: 'int' }] }))}
+            {grow('outvar', '+ ⇡ output', () => onPatch({ outVars: [...(node.outVars || []), { id: uid('ov'), name: '', type: 'int' }] }))}
+          </>
+        ),
 
       // IF — the test
       test: () =>
@@ -841,6 +1008,78 @@ export default function NodeCard({
           )
         })(),
 
+      // ADD · SUBTRACT · MULTIPLY · DIVIDE · MOD — two number operands, one
+      // number out; unwired sides fall back to the custom value on the card
+      math: () =>
+        MATH[node.kind] !== undefined &&
+        (() => {
+          const dp = dataPorts(node, assets)
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const live = sim ? mathVal(graph.nodes, graph.links, sim.mem || {}, node) : null
+          return (
+            <>
+              {!sim && (
+                <div className="nd-row" title="the operation applied between ⇣ a and ⇣ b">
+                  <span className="nd-sub">⇣ a</span>
+                  <span className="nd-sub">{MATH[node.kind]}</span>
+                  <span className="nd-sub">⇣ b</span>
+                </div>
+              )}
+              {dp.in.map((p) => {
+                const key = p.id === '__a__' ? 'aVal' : 'bVal'
+                return (
+                  <div
+                    className="dvar"
+                    key={p.id}
+                    title={
+                      wired(p.id)
+                        ? 'reads int or float from the wire'
+                        : 'no wire — the custom value typed here is used instead'
+                    }
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {!wired(p.id) && !sim && (
+                      <input
+                        className="inp"
+                        style={{ flex: 1 }}
+                        placeholder="number…"
+                        title="custom value while ⇣ is unwired — int or float"
+                        value={node[key] ?? ''}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onChange={(e) => onPatch({ [key]: e.target.value })}
+                      />
+                    )}
+                    {!wired(p.id) && sim && String(node[key] ?? '') !== '' && (
+                      <span className="dval">{String(node[key])}</span>
+                    )}
+                  </div>
+                )
+              })}
+              {dp.out.map((p) => (
+                <div className="dvar out" key={p.id} title="the computed number — any consumer of this type can read it">
+                  <span>
+                    ⇡ {p.name}:<b>{p.type}</b>
+                  </span>
+                  {live !== null && <span className="dval">{live}</span>}
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, p.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, p.id)
+                    }}
+                  />
+                </div>
+              ))}
+            </>
+          )
+        })(),
+
       // FOR · FOREACH — the values the loop carries
       count: () =>
         ['for', 'foreach'].includes(node.kind) && dataRows(),
@@ -1019,26 +1258,55 @@ export default function NodeCard({
                 </select>
               </div>
             )}
-            <div
-              className="dvar"
-              title={node.kind === 'getledger' ? "wire the value to read — the node publishes it" : "wire the value to write — the chain carries it"}
-            >
-              <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
-              <span>
-                ⇣ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
-              </span>
-              {sim && node.lRef && (
-                <span className="dval">
-                  {(() => {
-                    const sys = systems.find((s) => s.id === node.lRef)
-                    if (!sys) return ''
-                    const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
-                    if (!v) return ''
-                    return String(v.value ?? '')
-                  })()}
+            {node.kind === 'getledger' && (
+              <div className="dvar out" title="the ledger's value — readers wire here (live during sim, the registry value while editing)">
+                <span>
+                  ⇡ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
                 </span>
-              )}
-            </div>
+                {node.lRef && (
+                  <span className="dval">
+                    {(() => {
+                      const sys = systems.find((s) => s.id === node.lRef)
+                      if (!sys) return ''
+                      const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
+                      if (!v) return ''
+                      return String(v.value ?? '')
+                    })()}
+                  </span>
+                )}
+                {!sim && (
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, '__val__', 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, '__val__')
+                    }}
+                  />
+                )}
+              </div>
+            )}
+            {node.kind === 'setledger' && (
+              <div className="dvar" title="wire the value to write — the chain carries the write the moment it passes">
+                <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
+                <span>
+                  ⇣ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
+                </span>
+                {sim && node.lRef && (
+                  <span className="dval">
+                    {(() => {
+                      const sys = systems.find((s) => s.id === node.lRef)
+                      if (!sys) return ''
+                      const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
+                      if (!v) return ''
+                      return String(v.value ?? '')
+                    })()}
+                  </span>
+                )}
+              </div>
+            )}
           </>
         ),
 
@@ -1050,7 +1318,10 @@ export default function NodeCard({
               <>
                 <CallsEditor
                   node={node}
+                  links={graph.links || []}
                   assets={assets}
+                  types={types}
+                  sim={!!sim}
                   multiple
                   onDataOut={onDataPortDown}
                   onPatch={onPatch}
@@ -1062,9 +1333,11 @@ export default function NodeCard({
             {node.kind === 'syscall' && (
               <CallsEditor
                 node={node}
+                links={graph.links || []}
                 assets={assets}
                 types={types}
                 multiple={false}
+                sim={!!sim}
                 onDataOut={onDataPortDown}
                 onPatch={onPatch}
                 simCall={sim ? ((sim.mem || {}).call || {})[node.id] || EMPTY_CALL : undefined}
@@ -1129,14 +1402,36 @@ export default function NodeCard({
               )}
               {/* one ⇣ per ENTER variable of the definition, one ⇡ per EXIT —
                   the body lives once on the doc so every call site mirrors it */}
-              {dp.in.map((p) => (
-                <div className="dvar" key={p.id} title={`feeds ⇡ ${p.name} at the ENTER inside — wire any ${p.type} in`}>
-                  <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
-                  <span>
-                    ⇣ {p.name}:<b>{p.type}</b>
-                  </span>
-                </div>
-              ))}
+              {dp.in.map((p) => {
+                const hasWire = (graph?.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === p.id)
+                const cv = (node.cVals || {})[p.id]
+                return (
+                  <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div
+                      className="dvar"
+                      title={
+                        hasWire
+                          ? `feeds ⇡ ${p.name} at the ENTER inside — fed by the wire from a matching ⇡`
+                          : `feeds ⇡ ${p.name} at the ENTER inside — wire any ${p.type} in, or type the value below`
+                      }
+                    >
+                      <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                      <span>
+                        ⇣ {p.name}:<b>{p.type}</b>
+                      </span>
+                    </div>
+                    {!hasWire &&
+                      (sim
+                        ? cv !== undefined &&
+                          cv !== '' && (
+                            <div className="nd-row">
+                              <span className="dval">{fmt(cv)}</span>
+                            </div>
+                          )
+                        : UnwiredValue({ v: { id: p.id, type: p.type, name: p.name }, cVals: node.cVals || {}, types, onPatch }))}
+                  </div>
+                )
+              })}
               {dp.out.map((p) => (
                 <div className="dvar out" key={p.id} title={`reads ⇣ ${p.name} at the EXIT inside — drag to feed a ⇣ of the same type`}>
                   <span>

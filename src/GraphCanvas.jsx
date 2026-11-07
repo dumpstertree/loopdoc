@@ -4,7 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
-import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath } from './model.js'
+import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath, syncMath } from './model.js'
 import { dataCanConnect, compatTargets, takesFlow, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
@@ -69,7 +69,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
       return { x: pt.x - originRef.current.x, y: pt.y - originRef.current.y }
     },
   })
-  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
+  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id, funcs))
   const addNodeAt = (kind, x, y) => {
     const n = newNode(kind, snap(x), snap(y))
     mutate((g) => ({ ...g, nodes: [...g.nodes, n] }))
@@ -126,14 +126,15 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
     // ⇣ list, and every mismatch explains itself
     const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort, funcs)
     if (!chk.ok) return warn(chk.why)
-    mutate((g) => ({
+    // math parts re-derive their ⇡ result type from both operand sides after the wire
+    mutate((g) => syncMath({
       ...g,
       // a data input has exactly one producer
       links: [
         ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
         { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
       ],
-    }))
+    }, assets, funcs))
   }
 
   // ---- dragging -------------------------------------------------------------------
@@ -368,7 +369,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
           setSel({ link: s.link, anchor: null })
         } else if (s) {
           e.preventDefault()
-          mutate((g) => ({ ...g, links: g.links.filter((l) => l.id !== s.link) }))
+          // math parts left without an operand re-derive their ⇡ result type
+          mutate((g) => syncMath({ ...g, links: g.links.filter((l) => l.id !== s.link) }, assets, funcs))
           setSel(null)
         } else if (selectionRef.current.length) {
           e.preventDefault()

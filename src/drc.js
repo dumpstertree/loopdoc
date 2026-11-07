@@ -10,7 +10,7 @@
 // Finding: { sev, path, graph, node, text } — path = breadcrumb node ids to
 // the owning graph, so the panel can jump there.
 // ---------------------------------------------------------------------------
-import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf } from './model.js'
+import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf, MATH } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const label = (n) =>
@@ -146,7 +146,7 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
       else
         for (const v of r.fn.inputs || []) {
           if (!v.name && !v.type) continue // blank API var, ignored everywhere
-          if (!dataTo(n.id, v.id)) add('warn', label(n), `⇣ ${v.name || '?'}:${v.type || '?'} has no data wire — the call runs blind on it`)
+          if (!dataTo(n.id, v.id) && !hasVal((n.cVals || {})[v.id])) add('warn', label(n), `⇣ ${v.name || '?'}:${v.type || '?'} has no data wire — the call runs blind on it`)
         }
       if (n.block && !hasIn(n.id))
         add('warn', label(n), '⏳ blocking call with no flow input — every round freezes for a click before anything runs')
@@ -160,6 +160,10 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
         if (!outFrom(n.id, 'false').length) add('info', label(n), 'false branch unwired — a false chain simply ends here')
       }
     }
+    if (MATH[n.kind])
+      for (const [port, key, nm] of [['__a__', 'aVal', 'a'], ['__b__', 'bVal', 'b']])
+        if (!dataTo(n.id, port) && !hasVal(n[key]))
+          add('warn', label(n), `⇣ ${nm} has no wire and no custom value — chains passing through leave an empty ⇡ result`)
     if (n.kind === 'for' && !dataTo(n.id, '__to__')) add('error', label(n), 'counted loop has no ⇣ to:int — nothing to count to')
     if (n.kind === 'foreach' && !dataTo(n.id, '__arr__')) add('error', label(n), 'foreach has no ⇣ arr source — it can never iterate')
     if (['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind) && !dataTo(n.id, '__arr__'))

@@ -4,7 +4,7 @@
 // part reference for every kind used so the vocabulary explains itself.
 // Not re-importable — this is the communication artifact; the .json is the
 // lossless one.
-import { kindMeta, dataPorts, assetIcon, assetLabel, resolveCall, typedValue } from './model.js'
+import { kindMeta, dataPorts, assetIcon, assetLabel, resolveCall, typedValue, MATH } from './model.js'
 
 const q = (s) => (s === undefined || s === null || s === '' ? '' : `"${s}"`)
 
@@ -102,6 +102,12 @@ function detail(n, g, doc) {
       return `⇡ = ⇣ arr ascending${n.field ? ` by ${n.field} of each item` : ' by value'}`
     case 'clone':
       return '⇡ = deep copy of ⇣ val — writes to it never reach the original'
+    case 'add':
+    case 'sub':
+    case 'mul':
+    case 'div':
+    case 'mod':
+      return `⇡ = ⇣ a ${MATH[n.kind]} ⇣ b — int/float operands, unwired sides take the card's custom value`
     case 'action':
       return 'chain waits here for a click'
     case 'exit': {

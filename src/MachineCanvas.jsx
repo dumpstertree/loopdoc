@@ -4,7 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
-import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
+import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath, syncMath } from './model.js'
 import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
 import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
@@ -54,7 +54,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     getPointer: () => lastPointerRef.current,
     clamp0: true,
   })
-  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id))
+  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id, funcs))
   const surfacePoint = (e) => {
     const r = surfaceRef.current.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
@@ -113,29 +113,37 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     const chk = dataCanConnect(graphRef.current, assets, from, fromPort, to, toPort, funcs)
     if (!chk.ok) return warn(chk.why)
     const ta = dataPortType(graphRef.current, assets, from, fromPort, 'out', funcs)
-    mutate((g) => ({
-      ...g,
-      links: [
-        ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
-        { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
-      ],
-      // foreach learns its item type from the array wired in;
-      // inspect learns its type and grows one ⇡ per field; if learns its compare type
-      nodes: g.nodes.map((n) => {
-        if (n.id !== to) return n
-        if (toPort === '__arr__' && n.kind === 'foreach') return { ...n, itemType: ta.replace('[]', '') }
-        // array ops learn the item type from the array wired in first
-        if ((toPort === '__arr__' || toPort === '__a__') && ['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind))
-          return { ...n, itemType: ta.replace('[]', '') }
-        if (toPort === '__val__' && n.kind === 'clone') return { ...n, vType: ta }
-        if (toPort === '__obj__' && n.kind === 'inspect') {
-          const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
-          return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
-        }
-        if ((toPort === '__a__' || toPort === '__b__') && n.kind === 'ifb') return { ...n, cmpType: ta }
-        return n
-      }),
-    }))
+    // math parts re-derive their ⇡ result type from both operand sides after the wire
+    mutate(
+      (g) =>
+        syncMath(
+          {
+            ...g,
+            links: [
+              ...g.links.filter((l) => !(l.kind === 'data' && l.to === to && l.toPort === toPort)),
+              { id: uid('lk'), kind: 'data', from, fromPort, to, toPort },
+            ],
+            // foreach learns its item type from the array wired in;
+            // inspect learns its type and grows one ⇡ per field; if learns its compare type
+            nodes: g.nodes.map((n) => {
+              if (n.id !== to) return n
+              if (toPort === '__arr__' && n.kind === 'foreach') return { ...n, itemType: ta.replace('[]', '') }
+              // array ops learn the item type from the array wired in first
+              if ((toPort === '__arr__' || toPort === '__a__') && ['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind))
+                return { ...n, itemType: ta.replace('[]', '') }
+              if (toPort === '__val__' && n.kind === 'clone') return { ...n, vType: ta }
+              if (toPort === '__obj__' && n.kind === 'inspect') {
+                const td = (types || []).find((t) => (t.name || '').trim().toLowerCase() === ta)
+                return { ...n, objType: td ? td.name : ta, fields: fieldsOf(types, ta) || [] }
+              }
+              if ((toPort === '__a__' || toPort === '__b__') && n.kind === 'ifb') return { ...n, cmpType: ta }
+              return n
+            }),
+          },
+          assets,
+          funcs,
+        ),
+    )
   }
 
   // keep inspect in sync with the type registry (fields declared or edited
@@ -154,7 +162,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
       return { ...n, objType: td.name, fields: f }
     })
     let g2 = { ...g, nodes }
-    for (const n of g.nodes) if (n.kind === 'inspect') g2 = pruneLinks(g2, assets, n.id)
+    for (const n of g.nodes) if (n.kind === 'inspect') g2 = pruneLinks(g2, assets, n.id, funcs)
     if (nodesChanged || g2.links.length !== g.links.length) onChangeRef.current(g2)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [types])
@@ -366,7 +374,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               nodes = nodes.map((n) => (n.id === ifn.id ? { ...n, cmpType: ot && ot !== 'any' ? ot : null } : n))
             }
           }
-          onChangeRef.current({ ...g, nodes, links })
+          // math parts re-derive their ⇡ result type from whatever operands remain
+          onChangeRef.current(syncMath({ ...g, nodes, links }, assets, funcs))
         } else {
           // selected parts go through the model's removeNode so a deleted TEXT
           // frame frees the parts it was grouping instead of orphaning them —
@@ -539,7 +548,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               className="canvas-surface"
               style={{ width: surfW, height: surfH }}
               onPointerDown={onSurfaceDown}
-              onPointerMove={(e) => (lastPointerRef.current = surfacePoint(e.clientX, e.clientY))}
+              onPointerMove={(e) => (lastPointerRef.current = surfacePoint(e))}
             >
               <svg className="edges" width={surfW} height={surfH}>
                 <defs>
