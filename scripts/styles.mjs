@@ -134,9 +134,21 @@ function tokensOf(json) {
 
 function generate(json) {
   const all = tokensOf(json)
+  // values that read per-element vars (--kc is set on each card's own class rule)
+  // can't live on :root — a custom property resolves its var()s where it is
+  // declared, so on :root they would bake the fallback for every element.
+  // declare them on `*` instead: every element computes its own copy, seeing
+  // its own --kc
+  const ctxVar = /var\(--(?:kc|accent-c)[,)]/
+  const global = {}
+  const perElem = {}
+  for (const [k, v] of Object.entries(all)) (ctxVar.test(String(v)) ? perElem : global)[k] = v
   const css =
     `${GENERATED}\n:root {\n` +
-    Object.entries(all).map(([k, v]) => `  --${k}: ${v};`).join('\n') +
+    Object.entries(global).map(([k, v]) => `  --${k}: ${v};`).join('\n') +
+    `\n}\n/* these read --kc (the per-kind color): declared on * so each element
+   resolves its own — the card outline matches the kind color on the title */\n* {\n` +
+    Object.entries(perElem).map(([k, v]) => `  --${k}: ${v};`).join('\n') +
     '\n}\n'
   writeFileSync(GEN_CSS, css)
   const js =

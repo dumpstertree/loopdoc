@@ -544,13 +544,35 @@ export default function NodeCard({
   // TEXT and TODO carry their own width (corner grip); TODO grows its height
   // from the task lines and VAR from its typed fill-in, so those store w only
   const sized = isText || node.kind === 'todo' || node.kind === 'var'
-  const W = sized ? node.w || NODE_W : NODE_W
   const H = isText ? node.h || undefined : undefined
 
   // the dock at the foot: the grow buttons this card registers, keyed by
   // slot id, so the order the shape lists them in is the order they stack in
   const dock = {}
-  const showName = shape.title && (mode === 'flow' || isText || node.kind === 'todo')
+  // an EXIT part wears a red bar on its right edge — the mirror of ▶ chains
+  // begin (the lime bar on entry cards), marking where chains end
+  const isExit = node.kind === 'exit'
+
+  // two card widths, both plain rectangles: the regular one fits nearly
+  // everything; a card whose cells are cramped horizontally — a long name, a
+  // fat type tag on a ⇣/⇡ row, a prose line, a wide option label — wears the
+  // wide width instead. character estimate, not layout: content decides, never
+  // the kind
+  const approx = (s, fs) => String(s).length * fs * 0.62
+  const labelW = (p) => approx(`${p.name || '?'}:${p.type || '?'}`, 10) + 30
+  const dp = dataPorts(node, assets)
+  const innerW = NODE_W - 2 - 2 * T.nodeGutter
+  const need = Math.max(
+    approx(meta.label, 10) + 36,
+    ...dp.in.map((p) => labelW(p)),
+    ...dp.out.map((p) => labelW(p)),
+    approx(node.note || '', 12) + 6,
+    approx(node.cond || '', 12) + 6,
+    ...(node.exits || []).map((ex) => approx(ex.label || '', 12) + 46),
+    node.variable ? approx(node.variable.name || '', 12) + approx(node.variable.type || '', 10) + 70 : 0,
+  )
+  const wide = need > innerW
+  const W = sized ? node.w || (wide ? T.nodeWWide : NODE_W) : wide ? T.nodeWWide : NODE_W
 
   // ── the slots ────────────────────────────────────────────────────────────
   // one card shape for every kind: the shape registry in model.js says which
@@ -1458,11 +1480,11 @@ export default function NodeCard({
 
   return (
     <div
-      className={`nd ${meta.cls} ${
+      className={`nd ${meta.cls} ${wide ? 'nd-wide' : ''} ${
         shape.container ? 'nd-container' : ''
       } ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''} ${
-        sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''
-      }`}
+        isExit ? 'nd-exit' : ''
+      } ${sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''}`}
       data-node-id={node.id}
       style={{ left: node.x, top: node.y, width: W, height: H }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
@@ -1483,15 +1505,6 @@ export default function NodeCard({
         <span className="nd-kind">{meta.label}</span>
         {/* the header chip is the shape marker: ▸ walks into a nest, · is a leaf */}
         <span className="nd-chip">{shape.container ? T.ndGlyphContainer : T.ndGlyphLeaf}</span>
-        {showName && (
-          <input
-            className="nd-name"
-            placeholder={meta.label.toLowerCase() + ' name…'}
-            value={node.name}
-            onChange={(e) => onPatch({ name: e.target.value })}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
-        )}
         {sim && tokHere > 0 && (
           <span
             className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
@@ -1536,7 +1549,7 @@ export default function NodeCard({
       {flowOuts.map((p, i) => (
         <span
           key={p.id}
-          className={`port port-out${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
+          className="port port-out"
           style={{ top: T.nodePortTop + i * T.nodePortStep }}
           data-port={portKey(node.id, p.id, 'out')}
           title={

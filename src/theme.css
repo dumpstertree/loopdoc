@@ -516,6 +516,12 @@ svg.edges .edge {
   border: var(--nd-border);
   border-radius: var(--nd-border-radius);
 }
+/* the regular width fits everything but cramped cells — a long name, a fat
+   type tag on a ⇣/⇡ row, a prose line that won't fit — those cards wear the
+   wide width instead, decided by content, never by kind */
+.nd-wide {
+  width: var(--node-w-wide);
+}
 /* a nested graph wears one solid extra frame — the only container marker */
 .nd-container {
   outline: var(--nd-container-outline);
@@ -527,6 +533,10 @@ svg.edges .edge {
 }
 .nd-entry {
   border-left: var(--nd-entry-border-left);
+}
+/* an EXIT part gets the mirror of the entry flag: a bar down its right edge */
+.nd-exit {
+  border-right: var(--nd-exit-border-right);
 }
 .nd-target {
   box-shadow: var(--nd-target-box-shadow);
@@ -565,21 +575,6 @@ svg.edges .edge {
   font-weight: var(--nd-chip-font-weight);
   margin-right: var(--nd-chip-margin-right);
   pointer-events: none;
-}
-.nd-name {
-  flex: var(--nd-name-flex);
-  background: transparent;
-  border: var(--nd-name-border);
-  color: var(--text);
-  font: inherit;
-  font-weight: var(--nd-name-font-weight);
-  padding: var(--nd-name-padding);
-  min-width: var(--nd-name-min-width);
-}
-.nd-name:hover,
-.nd-name:focus {
-  border-color: var(--line);
-  outline: none;
 }
 .entry-flag {
   color: var(--lime);
@@ -630,14 +625,6 @@ svg.edges .edge {
   background: var(--cyan);
   box-shadow: var(--port-out-hover-box-shadow);
 }
-.port-out.pt-true {
-  background: var(--lime);
-  border-color: var(--lime);
-}
-.port-out.pt-false {
-  background: var(--urgent);
-  border-color: var(--urgent);
-}
 .port-tag {
   position: absolute;
   right: var(--port-tag-right);
@@ -667,8 +654,8 @@ svg.edges .edge {
 .dvar .port-data.in {
   margin-left: calc(-1 * (var(--node-gutter) + var(--port-data-half)));
 }
+/* out-rows pack to the right: text right-aligned, glyph on the border */
 .dvar .port-data.out {
-  margin-left: auto;
   margin-right: calc(-1 * (var(--node-gutter) + var(--port-data-half)));
 }
 .dval {

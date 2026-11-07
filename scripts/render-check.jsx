@@ -35,7 +35,7 @@ const expect = {
   choice: ['·', '+ option'],
   todo: ['·', '+ task'],
   enter: ['·', '+ variable', '+ asset'],
-  exit: ['·', '+ variable'],
+  exit: ['·', '+ variable', 'nd-exit'],
   var: ['·'],
   step: ['·'],
 }
@@ -80,6 +80,25 @@ for (const [kind, meta] of Object.entries(KINDS)) {
       if (html.includes('dashed')) {
         bad++
         console.log(`?? ${kind}: a dashed outline inside the card`)
+      }
+      // cramped content swaps the card to the wide width — a long name, note
+      // or label must render as nd-wide, and ordinary content must not
+      if (kind === 'step' && html.includes('nd-wide')) {
+        bad++
+        console.log(`?? ${kind} on ${canvas}: wide for content that fits`)
+      }
+      if (['step', 'choice', 'var'].includes(kind)) {
+        const big = { ...node }
+        if (kind === 'step') big.note = 'a sentence of prose far too long to fit the regular card'
+        if (kind === 'choice') big.exits = [{ id: uid('ex'), label: 'the one genuinely wide option label' }]
+        if (kind === 'var') big.variable = { name: 'a longish variable', type: 'aWideType[]', value: '' }
+        const wideHtml = renderToString(
+          NodeCard({ node: big, graph, assets, types: [], globals, funcs, systems: assets.filter((a) => a.kind === 'system'), gvals: null, selected: false, isEntry: canvas === 'flow', sim: null, ...handlers }),
+        )
+        if (!wideHtml.includes('nd-wide')) {
+          bad++
+          console.log(`?? ${kind} on ${canvas}: cramped but stayed regular`)
+        }
       }
     } catch (e) {
       bad++
