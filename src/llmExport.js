@@ -116,6 +116,15 @@ function detail(n, g, doc) {
         parts.length ? ` · announces ${parts.join(' · ')} as ⇡ outputs there` : ''
       }`
     }
+    case 'exitinst': {
+      const t = (g?.nodes || []).find((x) => x.kind === 'exit' && x.id === n.exitRef)
+      const parts = t ? (t.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}`) : []
+      return t
+        ? `ends the machine via “${t.name || 'exit'}” — the target EXIT's door; ⇣ here mirror its vars${
+            parts.length ? ` · feeds ${parts.join(' · ')}` : ''
+          }`
+        : n.exitRef ? '⚠ routes to an EXIT that no longer exists — re-pick' : 'no EXIT picked yet'
+    }
     case 'enter': {
       const parts = [
         ...(n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}${String(v.value ?? '') ? ` = ${v.value}` : ''}`),
@@ -145,7 +154,7 @@ function graphSection(g, doc, heading, parentNote) {
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const datas = (g.links || []).filter((l) => l.kind === 'data')
   const portName = (node, id, dir) => {
-    const dp = dataPorts(node, doc.assets, doc.funcs || [])
+    const dp = dataPorts(node, doc.assets, doc.funcs || [], g)
     const p = (dp[dir] || []).find((x) => x.id === id)
     return p ? p.name || id : id
   }
@@ -165,7 +174,7 @@ function graphSection(g, doc, heading, parentNote) {
     for (const l of datas.filter((x) => x.to === n.id)) {
       const s = (g.nodes || []).find((x) => x.id === l.from)
       if (!s) continue
-      const out = dataPorts(s, doc.assets, doc.funcs || []).out.find((x) => x.id === l.fromPort)
+      const out = dataPorts(s, doc.assets, doc.funcs || [], g).out.find((x) => x.id === l.fromPort)
       const t = out?.type ? ` :${out.type}` : ''
       L.push(`      ⇣ ${portName(n, l.toPort, 'in')} ← ${labels[l.from]}.${out?.name || l.fromPort}${t}`)
     }

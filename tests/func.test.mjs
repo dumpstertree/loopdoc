@@ -38,8 +38,9 @@ test('a func canvas offers everything a machine canvas does — minus the doors'
   assert.ok(funcKinds.includes('func'), 'a func body may call other functions — recursion is open')
   assert.ok(!funcKinds.includes('enter'), 'ENTER never comes off the func toolbar')
   assert.ok(!funcKinds.includes('exit'), 'nor does EXIT')
+  assert.ok(!funcKinds.includes('exitinst'), 'nor EXIT REF — a func body has no machine doors to route to')
   for (const k of kindsFor('machine'))
-    if (k !== 'enter' && k !== 'exit')
+    if (k !== 'enter' && k !== 'exit' && k !== 'exitinst')
       assert.ok(funcKinds.includes(k), 'every other machine part belongs in a func body')
 })
 

@@ -5,7 +5,7 @@
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
 import { T } from './styles.gen.js' // every styling value, generated from styles.json
-import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, fieldsOf, emptyValue, typedValue, MATH } from './model.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, exitNameTaken, resolveExitRef, exitInstVars, fieldsOf, emptyValue, typedValue, MATH } from './model.js'
 import { takesFlow } from './wireRules.js'
 import { dataValue, fmt, mathVal } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
@@ -631,9 +631,9 @@ export default function NodeCard({
   // the dock at the foot: the grow buttons this card registers, keyed by
   // slot id, so the order the shape lists them in is the order they stack in
   const dock = {}
-  // an EXIT part wears a red bar on its right edge — the mirror of ▶ chains
-  // begin (the lime bar on entry cards), marking where chains end
-  const isExit = node.kind === 'exit'
+  // an EXIT / EXIT REF wears a red bar on its right edge — the mirror of ▶
+  // chains begin (the lime bar on entry cards), marking where chains end
+  const isExit = node.kind === 'exit' || node.kind === 'exitinst'
 
   // two card widths, both plain rectangles: the regular one fits nearly
   // everything; a card whose cells are cramped horizontally — a long name, a
@@ -642,7 +642,7 @@ export default function NodeCard({
   // the kind
   const approx = (s, fs) => String(s).length * fs * 0.62
   const labelW = (p) => approx(`${p.name || '?'}:${p.type || '?'}`, 10) + 30
-  const dp = dataPorts(node, assets)
+  const dp = dataPorts(node, assets, funcs, graph)
   const innerW = NODE_W - 2 - 2 * T.nodeGutter
   const need = Math.max(
     approx(meta.label, 10) + 36,
@@ -930,7 +930,7 @@ export default function NodeCard({
       cmp: () =>
         node.kind === 'ifb' &&
         (() => {
-          const dp = dataPorts(node, assets)
+          const dp = dataPorts(node, assets, funcs, graph)
           const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
           const res = sim ? (sim.mem?.ifres || {})[node.id] : undefined
           return (
@@ -1013,7 +1013,7 @@ export default function NodeCard({
       math: () =>
         MATH[node.kind] !== undefined &&
         (() => {
-          const dp = dataPorts(node, assets)
+          const dp = dataPorts(node, assets, funcs, graph)
           const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
           const live = sim ? mathVal(graph.nodes, graph.links, sim.mem || {}, node) : null
           return (
@@ -1091,7 +1091,7 @@ export default function NodeCard({
       list: () =>
         ['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&
         (() => {
-          const dp = dataPorts(node, assets)
+          const dp = dataPorts(node, assets, funcs, graph)
           const fields = node.kind === 'sort' ? fieldsOf(types, node.itemType) : null
           return (
             <>
@@ -1658,10 +1658,14 @@ export default function NodeCard({
                 className="inp"
                 style={{ width: '100%' }}
                 placeholder="exit name — victory, defeat…"
-                title="the MACHINE node in the parent graph grows an output port with this name"
+                title="the MACHINE node in the parent graph grows an output port with this name — must be unique in this machine"
                 value={node.name || ''}
                 onPointerDown={(e) => e.stopPropagation()}
-                onChange={(e) => onPatch({ name: e.target.value })}
+                onChange={(e) => {
+                  const name = e.target.value
+                  if (exitNameTaken(graph, name, node.id)) return
+                  onPatch({ name })
+                }}
               />
             )}
             {/* EXIT variables are the mirror image of ENTER ones: a producer
@@ -1733,11 +1737,65 @@ export default function NodeCard({
             {sim && <div className="mc-click info">⏏ ends the machine here</div>}
           </>
         ),
+
+      // EXIT REF — routes to an existing EXIT; ⇣ ports mirror the target live
+      exitref: () =>
+        node.kind === 'exitinst' &&
+        (() => {
+          const exits = (graph.nodes || []).filter((n) => n.kind === 'exit')
+          const target = resolveExitRef(graph, node)
+          const vars = target ? target.vars || [] : []
+          return (
+            <>
+              {!sim && (
+                <div className="nd-row">
+                  <span className="nd-sub">exit</span>
+                  <select
+                    className="inp"
+                    style={{ flex: 1 }}
+                    value={node.exitRef || ''}
+                    title="exits through this EXIT for the same reason — its name and ⇣ variables follow the target"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => onPatch({ exitRef: e.target.value || null })}
+                  >
+                    <option value="">— pick an EXIT —</option>
+                    {exits.map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.name || '(unnamed exit)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {sim && target && <div className="nd-sub">↳ {target.name || 'exit'}</div>}
+              {!sim && node.exitRef && !target && <div className="mc-click warn">⚠ target EXIT is missing</div>}
+              {!sim && !node.exitRef && <div className="nd-sub">pick the EXIT this route ends at</div>}
+              {target && vars.length === 0 && <div className="nd-sub">target has no variables</div>}
+              {vars.map((v) => {
+                const live = sim ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, v.id) : null
+                return (
+                  <div
+                    className="dvar"
+                    key={v.id}
+                    title={`mirrors ⇣ ${v.name || 'var'} on “${target.name || 'exit'}” — wire a producer in here; the value leaves through that EXIT`}
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                    <span>
+                      ⇣ {v.name || '?'}:<b>{v.type || 'int'}</b>
+                    </span>
+                    {sim && live && live.val !== null && <span className="dval">{fmt(live.val)}</span>}
+                  </div>
+                )
+              })}
+              {sim && <div className="mc-click info">⏏ exits via {target ? target.name || 'exit' : '—'}</div>}
+            </>
+          )
+        })(),
     }[shape.rows] || (() => null)
 
   // the typed ⇣/⇡ rows FOR, FOREACH and INSPECT share
   const dataRows = (pid) => {
-    const dp = dataPorts(node, assets)
+    const dp = dataPorts(node, assets, funcs, graph)
     const cur = sim?.mem?.cur?.[node.id]
     const live = (p) =>
       !cur ? null : p.id === '__i__' ? cur.i : p.id === '__item__' ? String(cur.item ?? '') : p.id === '__idx__' ? cur.index : null

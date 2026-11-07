@@ -262,6 +262,22 @@ export function exitVarsOf(graph) {
   return out
 }
 
+// Resolve an EXIT REF's target inside the same graph. Only real EXIT nodes
+// qualify — refs never chain through other refs.
+export function resolveExitRef(graph, node) {
+  if (!node || node.kind !== 'exitinst' || !node.exitRef) return null
+  const t = ((graph || {}).nodes || []).find((n) => n.id === node.exitRef)
+  return t && t.kind === 'exit' ? t : null
+}
+
+// The ⇣ input ports an EXIT REF mirrors from its target EXIT's variables —
+// live from the target, so the instance follows every change to the original.
+export function exitInstVars(graph, node) {
+  const t = resolveExitRef(graph, node)
+  if (!t) return []
+  return (t.vars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'var' }))
+}
+
 // ---- array-op data ports -----------------------------------------------------
 // APPEND/JOIN/REMOVE/REMOVE AT/SORT are pure data like INSPECT: they learn
 // their itemType from the array first wired in, and every port's type follows.
@@ -696,6 +712,16 @@ export const KINDS = {
     }),
     shape: { title: true, in: true, rows: 'door', actions: ['variable'], data: true },
   },
+  exitinst: {
+    canvas: ['machine'],
+    label: 'EXIT REF',
+    cls: 'mc-exit',
+    hint: 'exits through an existing EXIT for the same reason — pick the target door, wire its ⇣ variables here; the target’s name, ports and vars stay in sync',
+    ports: () => [{ id: 'in', dir: 'in', label: 'exit' }],
+    // ⇣ inputs mirror the target EXIT's variables live — no vars of its own
+    data: (n, _funcs, graph) => ({ in: exitInstVars(graph, n), out: [] }),
+    shape: { title: true, in: true, rows: 'exitref', data: true },
+  },
 }
 function flowIO() {
   return () => [
@@ -792,9 +818,9 @@ export function typedValue(typeId, value, types) {
   return value === undefined ? null : value // string · asset id · undeclared
 }
 
-export function dataPorts(node, assets, funcs = []) {
+export function dataPorts(node, assets, funcs = [], graph = null) {
   const meta = KINDS[node.kind] || {}
-  const d = meta.data ? meta.data(node, funcs) : { in: [], out: [] }
+  const d = meta.data ? meta.data(node, funcs, graph) : { in: [], out: [] }
   const out = { in: [...d.in], out: [...d.out] }
   for (const call of node.calls || []) {
     const r = resolveCall(call, assets)
@@ -809,7 +835,7 @@ export function dataPorts(node, assets, funcs = []) {
 export function dataPortType(graph, assets, nodeId, portId, dir, funcs = []) {
   const node = (graph.nodes || []).find((n) => n.id === nodeId)
   if (!node) return null
-  const set = dataPorts(node, assets, funcs)[dir]
+  const set = dataPorts(node, assets, funcs, graph)[dir]
   const p = set.find((x) => x.id === portId)
   return p ? (p.type || '').trim().toLowerCase() : null
 }
@@ -869,6 +895,8 @@ export function newNode(kind, x, y) {
   // an EXIT's variables are its ⇡ outputs — it starts with none, so the card
   // only shows the + variable button until you decide what this door announces
   if (kind === 'exit') n.vars = []
+  // an EXIT REF routes to a real EXIT by id — its ⇣ ports mirror the target
+  if (kind === 'exitinst') n.exitRef = null
   if (kind === 'getledger' || kind === 'setledger') {
     n.lRef = null
     n.lName = ''
@@ -922,7 +950,7 @@ export function pruneLinks(graph, assets, nodeId, funcs = []) {
   // that ports() never declares — incoming flow links ride it
   if (!meta.dataOnly && (meta.shape?.in === true || (meta.ports ? meta.ports(node) : []).some((p) => p.dir === 'in')))
     flowIds.add('in')
-  const dp = dataPorts(node, assets, funcs)
+  const dp = dataPorts(node, assets, funcs, graph)
   const dataIds = new Set([...dp.in.map((p) => p.id), ...dp.out.map((p) => p.id)])
   return {
     ...graph,
@@ -934,6 +962,21 @@ export function pruneLinks(graph, assets, nodeId, funcs = []) {
       return true
     }),
   }
+}
+
+// EXIT REFs mirror their target's ports live — when a real EXIT changes, prune
+// every ref that points at it so stale ⇣ wires don't linger.
+export function pruneExitInstLinks(graph, assets, exitId, funcs = []) {
+  let g = graph
+  for (const n of g.nodes || []) if (n.kind === 'exitinst' && n.exitRef === exitId) g = pruneLinks(g, assets, n.id, funcs)
+  return g
+}
+
+// Prune every EXIT REF — safe after deletes/renames that may orphan targets.
+export function pruneAllExitInstLinks(graph, assets, funcs = []) {
+  let g = graph
+  for (const n of g.nodes || []) if (n.kind === 'exitinst') g = pruneLinks(g, assets, n.id, funcs)
+  return g
 }
 
 // ---- doc-wide walks -------------------------------------------------------------
@@ -1084,9 +1127,11 @@ export function reidGraph(graph, map = new Map()) {
   // React keys) while links point at ids that no longer exist
   graph.nodes = graph.nodes.map((n) => reidNode(n, map))
   // group frames inside a paste keep their children — remap parent; when the
-  // frame itself was not part of the clipboard map.get misses and it clears
+  // frame itself was not part of the clipboard map.get misses and it clears.
+  // EXIT REFs keep their target when the target exit was copied alongside.
   graph.nodes.forEach((n) => {
     if (n.parent) n.parent = map.get(n.parent)
+    if (n.exitRef) n.exitRef = map.get(n.exitRef) || n.exitRef
   })
   graph.links = (graph.links || []).map((l) => ({
     ...l,
@@ -1098,6 +1143,33 @@ export function reidGraph(graph, map = new Map()) {
   }))
   graph.entry = map.get(graph.entry) || graph.entry
   return graph
+}
+
+// Real EXIT names must be unique within a graph (instances pick by name).
+export function exitNameTaken(graph, name, excludeId) {
+  const key = String(name || '').trim().toLowerCase()
+  if (!key) return false
+  return (graph.nodes || []).some(
+    (n) => n.kind === 'exit' && n.id !== excludeId && String(n.name || '').trim().toLowerCase() === key,
+  )
+}
+
+function dedupeExitNames(g) {
+  const seen = new Set()
+  for (const n of g.nodes || []) {
+    if (n.kind !== 'exit') continue
+    let name = String(n.name || '').trim()
+    if (!name) continue
+    let key = name.toLowerCase()
+    if (seen.has(key)) {
+      let i = 2
+      while (seen.has((name + ' ' + i).toLowerCase())) i++
+      name = name + ' ' + i
+      key = name.toLowerCase()
+      n.name = name
+    }
+    seen.add(key)
+  }
 }
 
 // ---- persistence --------------------------------------------------------------
@@ -1157,6 +1229,7 @@ export function parseDoc(text) {
   d.funcs = d.funcs || []
   const repair = (g) => {
     dedupeIds(g) // heal any doc corrupted by the old paste bug
+    dedupeExitNames(g) // real EXIT names must be unique (instances pick by name)
     intoView(g) // pull edge-parked parts back inside the reachable canvas
   }
   walkGraphs(d.design, repair)

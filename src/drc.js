@@ -10,7 +10,7 @@
 // Finding: { sev, path, graph, node, text } — path = breadcrumb node ids to
 // the owning graph, so the panel can jump there.
 // ---------------------------------------------------------------------------
-import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf, MATH } from './model.js'
+import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf, resolveExitRef, MATH } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const label = (n) =>
@@ -210,6 +210,15 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
 
   const exits = nodes.filter((n) => n.kind === 'exit')
   if (nodes.length && !exits.length) add('info', '', 'no EXIT part — this machine never announces an outcome to its parent')
+  // real EXIT names must be unique — instances pick a target by name/id
+  const exitNames = new Map()
+  for (const x of exits) {
+    const key = String(x.name || '').trim().toLowerCase()
+    if (key) {
+      if (exitNames.has(key)) add('error', label(x), `exit name "${x.name}" is used by more than one EXIT — names must be unique`)
+      else exitNames.set(key, x.id)
+    }
+  }
   for (const x of exits) {
     if (!allReach.has(x.id) && linked(x.id))
       add('warn', label(x), `exit "${x.name || '?'}" is unreachable — no flow path from any entry leads here`)
@@ -222,6 +231,23 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
           label(x),
           `exit var "${v.name || '?'}:${v.type || 'int'}" has nothing wired into its ⇣ — it announces only the value set on the card${hasVal(v.value) ? '' : ', and none is set'}`,
         )
+  }
+  // EXIT REFs route to a real EXIT — only real exits count as outcomes
+  for (const n of nodes) {
+    if (n.kind !== 'exitinst') continue
+    const target = resolveExitRef(g, n)
+    if (!n.exitRef) add('error', label(n), 'no EXIT selected — pick the EXIT this route ends at')
+    else if (!target) add('error', label(n), 'target EXIT is missing — re-pick an existing EXIT')
+    if (hasIn(n.id) && !allReach.has(n.id) && linked(n.id))
+      add('warn', label(n), 'exit ref is unreachable — no flow path from any entry leads here')
+    if (target)
+      for (const v of target.vars || [])
+        if (!dataTo(n.id, v.id))
+          add(
+            hasVal(v.value) ? 'info' : 'warn',
+            label(n),
+            `⇣ ${v.name || '?'}:${v.type || 'int'} (from “${target.name || 'exit'}”) has nothing wired in — it announces only the target’s fallback${hasVal(v.value) ? '' : ', and none is set'}`,
+          )
   }
 
   for (const n of nodes) if (n.kind !== 'text' && n.kind !== 'todo' && n.kind !== 'enter' && !n.parent && !linked(n.id)) add('info', label(n), 'orphan — no flow or data wires')

@@ -4,7 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
-import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath, syncMath } from './model.js'
+import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, pruneExitInstLinks, pruneAllExitInstLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath, syncMath } from './model.js'
 import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
 import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
@@ -54,7 +54,13 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     getPointer: () => lastPointerRef.current,
     clamp0: true,
   })
-  const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id, funcs))
+  const patch = (id, p) =>
+    mutate((g) => {
+      let g2 = pruneLinks(patchNode(g, id, p), assets, id, funcs)
+      const nn = g2.nodes.find((x) => x.id === id)
+      if (nn?.kind === 'exit') g2 = pruneExitInstLinks(g2, assets, id, funcs)
+      return g2
+    })
   const surfacePoint = (e) => {
     const r = surfaceRef.current.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
@@ -394,6 +400,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
           setSelection(ids.filter((id) => prot(id)))
           let g = g0
           for (const id of kill) g = removeNode(g, id)
+          if (kill.some((id) => (g0.nodes || []).find((x) => x.id === id)?.kind === 'exit')) g = pruneAllExitInstLinks(g, assets, funcs)
           if (kill.length) onChangeRef.current(g)
         }
       }

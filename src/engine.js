@@ -470,25 +470,36 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
       continue
     }
 
-    if (n.kind === 'exit') {
+    if (n.kind === 'exit' || n.kind === 'exitinst') {
       // the machine ends through this door — the parent graph continues from
       // the matching named port on the MACHINE node, and the door announces
       // each of its variables: whatever is wired into ⇣ inside the machine,
       // else the value typed on the EXIT card. Values ride along in mem.exits
       // so the parent side can consume them one day without replumbing.
-      const ename = n.name || 'exit'
+      // An EXIT REF behaves as reaching its target: same exit name/id in mem,
+      // values read from the instance's ⇣ wires (mirroring the target's vars).
+      let target = n
+      if (n.kind === 'exitinst') {
+        target = nodes.find((x) => x.id === n.exitRef && x.kind === 'exit')
+        if (!target) {
+          log.push(`⏏ ${n.name || 'exit ref'} — ⚠ target EXIT missing, machine exit dropped`)
+          kill(t)
+          continue
+        }
+      }
+      const ename = target.name || 'exit'
       const bag = mem.exits || (mem.exits = {})
-      const said = (n.vars || []).map((v) => {
+      const said = (target.vars || []).map((v) => {
         const fedv = dataValue(nodes, links, mem, n.id, v.id)
         const val = fedv && fedv.val !== null ? fedv.val : String(v.value ?? '') === '' ? null : varValue(v)
         return { id: v.id, name: v.name || 'var', type: v.type || 'int', val }
       })
-      bag[n.id] = { name: ename, vars: said }
+      bag[target.id] = { name: ename, vars: said }
       mem.lastExit = ename
       log.push(
         said.length
-          ? `⏏ ${ename} — machine exit · announces ${said.map((v) => `${v.name}: ${v.val === null ? '—' : fmt(v.val)}`).join(' · ')}`
-          : `⏏ ${ename} — machine exit`,
+          ? `⏏ ${ename} — machine exit${n.kind === 'exitinst' ? ' (via ref)' : ''} · announces ${said.map((v) => `${v.name}: ${v.val === null ? '—' : fmt(v.val)}`).join(' · ')}`
+          : `⏏ ${ename} — machine exit${n.kind === 'exitinst' ? ' (via ref)' : ''}`,
       )
       kill(t)
       continue
