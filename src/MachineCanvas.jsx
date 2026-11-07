@@ -2,7 +2,7 @@
 // itself is React-free in engine.js; this file is the editor — selection,
 // clipboard, wires, anchors, toolbar — plus the sim driver around it.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import NodeCard from './NodeCard.jsx'
+import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath } from './model.js'
 import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
@@ -91,7 +91,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     if (!n) return
     const p = surfacePoint(e)
     const el = e.target.closest('[data-node-id]')
-    setDrag({ kind: 'resize', id, sx: p.x, sy: p.y, sw: n.w || (el ? el.offsetWidth : 184), sh: n.h || (el ? el.offsetHeight : 60) })
+    setDrag({ kind: 'resize', id, sx: p.x, sy: p.y, sw: n.w || (el ? el.offsetWidth : NODE_W), sh: n.h || (el ? el.offsetHeight : 60) })
   }
   // pressing empty canvas starts a box-select — a click without drag just clears
   const onSurfaceDown = (e) => {
@@ -505,7 +505,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   const paletteItems = (graph.mode === 'func' ? funcKinds : kindsFor('machine')).map((k) => ({ id: k, label: KINDS[k].label, hint: KINDS[k].hint }))
   const surfW = Math.max(2600, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + 600), 0))
   const surfH = Math.max(1800, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + 600), 0))
-  const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + 184, y: byId[l.from].y + 16 } : null)
+  const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + NODE_W, y: byId[l.from].y + PORT_Y } : null)
   const endOf = (l) => portXY[`${l.to}:${l.toPort}:in`] || (byId[l.to] ? { x: byId[l.to].x, y: byId[l.to].y + 16 } : null)
 
   return (

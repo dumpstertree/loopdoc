@@ -118,9 +118,9 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
         add('info', label(n), 'sub graph returns here and nothing continues — flow ends')
       // 'both' kinds (FUNC) sit on graph canvases as much as on machines —
       // the flow rules see them as flow members there
-      if (['flow', 'both'].includes(m.mode) && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
+      if (m.canvas.includes('flow') && !['condition', 'choice', 'graph', 'machine', 'exit'].includes(n.kind) && portsOf(n).some((p) => p.dir === 'out') && hasIn(n.id) && !anyOut(n.id))
         add('info', label(n), 'flow dead-ends here')
-      if (['flow', 'both'].includes(m.mode) && !linked(n.id) && !['event', 'step'].includes(n.kind))
+      if (m.canvas.includes('flow') && !linked(n.id) && !['event', 'step'].includes(n.kind))
         add('info', label(n), 'orphan — no wires at all')
     }
     return

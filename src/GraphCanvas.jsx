@@ -2,7 +2,7 @@
 // wires, box-select, copy/paste, endless top/left growth. Shares the machine
 // canvas vocabulary: orthogonal wires, right-edge exit ports, anchors.
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import NodeCard, { NODE_W_FLOW, PORT_Y } from './NodeCard.jsx'
+import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath } from './model.js'
 import { dataCanConnect, compatTargets, takesFlow, branchLink } from './wireRules.js'
@@ -177,7 +177,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
       id,
       sx: p.x - originRef.current.x,
       sy: p.y - originRef.current.y,
-      sw: n.w || (el ? el.offsetWidth : 184),
+      sw: n.w || (el ? el.offsetWidth : NODE_W),
       sh: n.h || (el ? el.offsetHeight : 60),
     })
   }
@@ -431,7 +431,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
     const key = `${l.from}:${l.fromPort}:out`
     if (portPos[key]) return portPos[key]
     const a = byId[l.from]
-    return a ? { x: a.x + origin.x + NODE_W_FLOW, y: a.y + origin.y + PORT_Y } : null
+    return a ? { x: a.x + origin.x + NODE_W, y: a.y + origin.y + PORT_Y } : null
   }
 
   return (

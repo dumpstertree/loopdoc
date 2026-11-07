@@ -4,20 +4,38 @@
 // so the canvas can measure them for edge routing; out-ports are drag
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
+import { T } from './styles.gen.js' // every styling value, generated from styles.json
 import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, fieldsOf, emptyValue, typedValue } from './model.js'
 import { dataValue, fmt } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
 
-export const NODE_W_FLOW = 216
-export const NODE_W_MC = 184
+// one width for every kind — the card is one shape, so both canvases agree
+export const NODE_W = T.nodeW
 const EMPTY_CALL = {} // stable empty while a call hasn't fired yet this sim
-export const PORT_Y = 16
+// a port's centre sits on the header line: top offset plus half its size
+export const PORT_Y = T.nodePortTop + T.nodePortHalf
 
 const portKey = (nodeId, portId, dir) => `${nodeId}:${portId}:${dir}`
 
+// the foot of a card: the + grow buttons it offers, in the order its shape lists
+// them. a component, so it renders after the body has registered its buttons.
+function Dock({ actions, dock }) {
+  const ids = (actions || []).filter((id) => dock[id])
+  if (!ids.length) return null
+  return (
+    <div className="nd-actions">
+      {ids.map((id) => (
+        <button key={id} onClick={() => dock[id].fn()}>
+          {dock[id].label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
 // pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
-function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut, onDataOut }) {
+function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut, onDataOut, onGrow }) {
   const calls = node.calls || []
   const systems = assets.filter((a) => a.kind === 'system')
   const patch = (next) => onPatch({ calls: next })
@@ -151,7 +169,9 @@ function CallsEditor({ node, assets, types, multiple, simCall, onPatch, onSimOut
           </div>
         )
       })}
-      {multiple && (
+      {/* the + button belongs to the card's dock when the card owns one */}
+      {multiple && onGrow && onGrow('+ call system', () => patch([...calls, { asset: null, fn: null }]))}
+      {multiple && !onGrow && (
         <button className="tb-btn" style={{ width: '100%' }} onClick={() => patch([...calls, { asset: null, fn: null }])}>
           + call system
         </button>
@@ -269,15 +289,22 @@ function TaskLine({ value, done, onChange, onEnter }) {
   )
 }
 
-function GenerateAsset({ node, onPatch }) {
+function GenerateAsset({ node, onPatch, onGrow }) {
   const gen = node.gen || null
   const set = (g) => onPatch({ gen: g })
-  if (!gen)
+  const fresh = () => set({ id: uid('gen'), kind: 'art', name: '' })
+  if (!gen) {
+    // the + button belongs to the card's dock, when the card owns one
+    if (onGrow) {
+      onGrow('+ generate asset', fresh)
+      return null
+    }
     return (
-      <button className="tb-btn" style={{ width: '100%' }} onClick={() => set({ id: uid('gen'), kind: 'art', name: '' })}>
+      <button className="tb-btn" style={{ width: '100%' }} onClick={fresh}>
         + generate asset
       </button>
     )
+  }
   return (
     <div className="nd-row">
       <span title="this event generates an asset that exists only in this graph">✨</span>
@@ -506,18 +533,34 @@ export default function NodeCard({
   // a func body is a machine canvas as far as looks go — same card width,
   // same ports stacked top-right, so style it as one
   const mode = graph.mode === 'func' ? 'machine' : graph.mode
-  // 'both' kinds (FUNC) count as machine parts on a machine canvas — flow
-  // cards only when they sit on a graph canvas
-  const isMachineKind = meta.mode === 'machine' || (meta.mode === 'both' && mode === 'machine')
+  // one shape for every kind: the slots it wears come from the shape registry,
+  // which also says which canvases it may sit on
+  const shape = meta.shape || { in: false, outs: [], rows: [], actions: [] }
+  const isMachineKind = (meta.canvas || []).includes(mode)
   const ports = (meta.ports && meta.ports(node)) || []
   const flowOuts = ports.filter((p) => p.dir === 'out')
-  const hasIn = meta.dataOnly ? false : meta.mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
+  const hasIn = mode === 'flow' ? true : ports.some((p) => p.dir === 'in')
   const isText = node.kind === 'text'
   // TEXT and TODO carry their own width (corner grip); TODO grows its height
   // from the task lines and VAR from its typed fill-in, so those store w only
   const sized = isText || node.kind === 'todo' || node.kind === 'var'
-  const W = sized ? node.w || (mode === 'machine' ? NODE_W_MC : NODE_W_FLOW) : isMachineKind ? NODE_W_MC : NODE_W_FLOW
+  const W = sized ? node.w || NODE_W : NODE_W
   const H = isText ? node.h || undefined : undefined
+
+  // the dock at the foot: the grow buttons this card registers, keyed by
+  // slot id, so the order the shape lists them in is the order they stack in
+  const dock = {}
+  const showName = shape.title && (mode === 'flow' || isText || node.kind === 'todo')
+
+  // ── the slots ────────────────────────────────────────────────────────────
+  // one card shape for every kind: the shape registry in model.js says which
+  // slots it wears, and each slot is one renderer here. the title bar is always
+  // there, flow ports sit in the gutters on the header line (one ⇣ in, ⇡ out-
+  // ports stacked at one rhythm), typed ⇣/⇡ rows carry their glyphs on the
+  // card border, and every grow button docks in one list at the foot.
+  const grow = (id, label, fn, when = true) => {
+    if (when && (shape.actions || []).includes(id)) dock[id] = { label, fn }
+  }
 
   // machine live values
   let tokHere = 0
@@ -528,209 +571,24 @@ export default function NodeCard({
     tokWait = tk.some((x) => x.wait)
   }
 
-  return (
-    <div
-      className={`nd ${meta.cls} ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''} ${
-        sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''
-      }`}
-      data-node-id={node.id}
-      style={{ left: node.x, top: node.y, width: W, height: H }}
-      onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
-      onClick={() => onCardClick && onCardClick(node.id)}
-      onDoubleClick={(e) => {
-        // dbl-click a GRAPH/MACHINE/FUNC card walks into it — the open → /
-        // ▶ enter buttons stay for one-clickers; typing or clicking a control never enters
-        if (!['graph', 'machine', 'func'].includes(node.kind) || !onOpenGraph) return
-        if (e.target.closest('input, textarea, select, button, [contenteditable]')) return
-        onOpenGraph(node.id)
-      }}
-    >
-      {hasIn && <span className="port port-flow-in" data-port={portKey(node.id, 'in', 'in')} title="flow in" />}
+  // the row family this card wears, and the buttons it docks at the foot
+  const rows =
+    {
+      // STEP — a line of prose
+      note: () =>
+        node.kind === 'step'
+          ? <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
+          : null,
 
-      <div className="nd-head" onPointerDown={(e) => onHeaderDown(e, node.id)}>
-        <span className="nd-kind">{meta.label}</span>
-        {sim && tokHere > 0 && (
-          <span
-            className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
-            title={tokWait ? 'chain waiting here — click to continue' : `chain token${tokHere > 1 ? 's' : ''} here`}
-          >
-            {tokWait ? '⏳' : `●${tokHere > 1 ? tokHere : ''}`}
-          </span>
-        )}
-        {node.kind === 'todo' && (node.todos || []).length > 0 && (
-          <span
-            className={`mc-amount ${node.todos.every((t) => t.done) ? 'full' : ''}`}
-            title={`${node.todos.filter((t) => t.done).length} of ${node.todos.length} tasks done`}
-          >
-            ✓{node.todos.filter((t) => t.done).length}/{node.todos.length}
-          </span>
-        )}
-        {isEntry && <span className="entry-flag">▶ START</span>}
-        {mode === 'flow' && (
-          <button
-            className="icon-btn"
-            title={isEntry ? 'unset entry' : 'entry point of this graph'}
-            style={{ color: isEntry ? 'var(--lime)' : undefined }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleEntry(node.id)
-            }}
-          >
-            ▶
-          </button>
-        )}
-      </div>
+      // IF — the test
+      test: () =>
+        node.kind === 'condition'
+          ? <input className="inp" placeholder="if… (the test)" value={node.cond || ''} onChange={(e) => onPatch({ cond: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
+          : null,
 
-      <div className="nd-body" onPointerDown={(e) => e.stopPropagation()}>
-        {(mode === 'flow' || node.kind === 'text' || node.kind === 'todo') && (
-          <input
-            className="nd-name"
-            placeholder={meta.label.toLowerCase() + ' name…'}
-            value={node.name}
-            onChange={(e) => onPatch({ name: e.target.value })}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
-        )}
-
-        {node.kind === 'event' && (
-          <>
-            <CallsEditor node={node} assets={assets} multiple onDataOut={onDataPortDown} onPatch={onPatch} />
-            <GenerateAsset node={node} onPatch={onPatch} />
-          </>
-        )}
-        {node.kind === 'syscall' && (
-          <CallsEditor
-            node={node}
-            assets={assets}
-            types={types}
-            multiple={false}
-            onDataOut={onDataPortDown}
-            onPatch={onPatch}
-            simCall={sim ? ((sim.mem || {}).call || {})[node.id] || EMPTY_CALL : undefined}
-            onSimOut={onSimCall}
-          />
-        )}
-        {(node.kind === 'for' || node.kind === 'foreach' || node.kind === 'inspect') &&
-          (() => {
-            const dp = dataPorts(node, assets)
-            const cur = sim?.mem?.cur?.[node.id]
-            const live = (pid) =>
-              !cur ? null : pid === '__i__' ? cur.i : pid === '__item__' ? String(cur.item ?? '') : pid === '__idx__' ? cur.index : null
-            return (
-              <>
-                {dp.in.map((p) => (
-                  <div className="dvar" key={p.id} title={`needs ${p.type} data wired in`}>
-                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
-                    <span>
-                      ⇣ {p.name}:<b>{p.type}</b>
-                    </span>
-                  </div>
-                ))}
-                {dp.out.map((p) => (
-                  <div className="dvar out" key={p.id} title="current loop value — wires read this live">
-                    <span>
-                      ⇡ {p.name}:<b>{p.type}</b>
-                    </span>
-                    {sim && live(p.id) !== null && <span className="dval">{live(p.id)}</span>}
-                    <span
-                      className="port-data out"
-                      data-port={portKey(node.id, p.id, 'out')}
-                      title="drag to feed a ⇣ of the same type"
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        onDataPortDown(e, node.id, p.id)
-                      }}
-                    />
-                  </div>
-                ))}
-              </>
-            )
-          })()}
-        {node.kind === 'ifb' &&
-          (() => {
-            const dp = dataPorts(node, assets)
-            const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
-            const res = sim ? (sim.mem?.ifres || {})[node.id] : undefined
-            return (
-              <>
-                {!sim && (
-                  <div className="nd-row" title="the comparison applied between ⇣ a and ⇣ b">
-                    <span className="nd-sub">⇣ a</span>
-                    <select
-                      className="inp"
-                      style={{ width: 56 }}
-                      value={node.op || '=='}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onChange={(e) => onPatch({ op: e.target.value })}
-                    >
-                      {['<', '<=', '==', '!=', '>=', '>'].map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="nd-sub">⇣ b</span>
-                  </div>
-                )}
-                {dp.in.map((p) => {
-                  const key = p.id === '__a__' ? 'aVal' : 'bVal'
-                  return (
-                    <div
-                      className="dvar"
-                      key={p.id}
-                      title={
-                        wired(p.id)
-                          ? `reads ${p.type} from the wire`
-                          : `no wire — this ${p.type === 'bool' ? 'true/false' : 'value'} is used instead`
-                      }
-                    >
-                      <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
-                      <span>
-                        ⇣ {p.name}:<b>{p.type}</b>
-                      </span>
-                      {!wired(p.id) && !sim && (
-                        <input
-                          className="inp"
-                          style={{ flex: 1 }}
-                          placeholder="custom value…"
-                          value={node[key] ?? ''}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onChange={(e) => onPatch({ [key]: e.target.value })}
-                        />
-                      )}
-                      {sim && !wired(p.id) && String(node[key] ?? '') !== '' && (
-                        <span className="dval">{String(node[key])}</span>
-                      )}
-                    </div>
-                  )
-                })}
-                {dp.out.map((p) => (
-                  <div className="dvar out" key={p.id} title="the verdict — other parts can read it">
-                    <span>
-                      ⇡ {p.name}:<b>{p.type}</b>
-                    </span>
-                    {res !== undefined && res !== null && <span className="dval">{String(res)}</span>}
-                    <span
-                      className="port-data out"
-                      data-port={portKey(node.id, p.id, 'out')}
-                      title="drag to feed a ⇣ of the same type"
-                      onPointerDown={(e) => {
-                        e.stopPropagation()
-                        e.preventDefault()
-                        onDataPortDown(e, node.id, p.id)
-                      }}
-                    />
-                  </div>
-                ))}
-              </>
-            )
-          })()}
-        {node.kind === 'condition' && (
-          <input className="inp" placeholder="if… (the test)" value={node.cond || ''} onChange={(e) => onPatch({ cond: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
-        )}
-        {node.kind === 'choice' && (
+      // CHOICE — one row per option, + option docks
+      options: () =>
+        node.kind === 'choice' && (
           <>
             {(node.exits || []).map((ex, i) => (
               <div className="nd-row" key={ex.id}>
@@ -754,15 +612,20 @@ export default function NodeCard({
                 </button>
               </div>
             ))}
-            <button className="tb-btn" style={{ width: '100%' }} onClick={() => onPatch({ exits: [...(node.exits || []), { id: uid('ex'), label: 'option' }] })}>
-              + option
-            </button>
+            {grow('option', '+ option', () => onPatch({ exits: [...(node.exits || []), { id: uid('ex'), label: 'option' }] }))}
           </>
-        )}
-        {node.kind === 'load' && <AssetPick node={node} assets={assets} placeholder="asset to load…" onPatch={onPatch} />}
-        {node.kind === 'unload' && <AssetPick node={node} assets={assets} placeholder="asset to unload…" onPatch={onPatch} />}
-        {node.kind === 'input' && <AssetPick node={node} assets={assets} kindFilter="input" placeholder="input to apply…" onPatch={onPatch} />}
-        {node.kind === 'var' && (
+        ),
+
+      // LOAD · UNLOAD · INPUT — pick an asset
+      asset: () =>
+        node.kind === 'load' ? <AssetPick node={node} assets={assets} placeholder="asset to load…" onPatch={onPatch} />
+          : node.kind === 'unload' ? <AssetPick node={node} assets={assets} placeholder="asset to unload…" onPatch={onPatch} />
+          : node.kind === 'input' ? <AssetPick node={node} assets={assets} kindFilter="input" placeholder="input to apply…" onPatch={onPatch} />
+          : null,
+
+      // VAR — a typed value, filled in field by field
+      fields: () =>
+        node.kind === 'var' ? (
           <>
             <div className="nd-row">
               <input
@@ -824,146 +687,272 @@ export default function NodeCard({
               </div>
             )}
           </>
-        )}
-        {node.kind === 'graph' && (
-          <div className="nd-row">
-            <span className="nd-sub">
-              {node.graph.nodes.length} nodes · {node.graph.links.length} links
-            </span>
-            <button className="tb-btn" onClick={() => onOpenGraph(node.id)}>
-              open →
-            </button>
-          </div>
-        )}
-        {node.kind === 'machine' && (
-          <div className="nd-row">
-            <span className="nd-sub">
-              {node.graph.nodes.length} parts · {node.graph.links.length} flows
-            </span>
-            <button className="tb-btn" onClick={() => onOpenGraph(node.id)}>
-              open →
-            </button>
-          </div>
-        )}
-        {/* one ⇣ per ENTER variable of the nested machine — every door's
-            vars gathered into one complete input list */}
-        {node.kind === 'machine' &&
-          enterVarsOf(node.graph).map((v) => (
-            <div className="dvar" key={v.id} title={`feeds ⇡ ${v.name} on the ENTER “${v.enter}” inside — wire any ${v.type} in`}>
-              <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
-              <span>
-                ⇣ {v.name}:<b>{v.type}</b>
+        ) : null,
+
+      // GRAPH · MACHINE — how big the nest is, and the doors gathered up
+      nested: () =>
+        ['graph', 'machine'].includes(node.kind) && (
+          <>
+            <div className="nd-row">
+              <span className="nd-sub">
+                {node.graph.nodes.length} {node.kind === 'graph' ? 'nodes' : 'parts'} · {node.graph.links.length}{' '}
+                {node.kind === 'graph' ? 'links' : 'flows'}
               </span>
-              <span className="nd-sub">↳ {v.enter}</span>
             </div>
-          ))}
-        {/* the mirror image: one ⇡ per EXIT variable of the nested machine,
-            tagged with the door it leaves through — two exits may each
-            announce a same-named variable and keep their own port */}
-        {node.kind === 'machine' &&
-          exitVarsOf(node.graph).map((v) => (
-            <div className="dvar out" key={'x' + v.id} title={`leaves the “${v.exit}” EXIT inside — wire any ${v.type} out of this machine`}>
-              <span>
-                ⇡ {v.name}:<b>{v.type}</b>
-              </span>
-              <span className="nd-sub">↳ {v.exit}</span>
-              <span
-                className="port-data out"
-                data-port={portKey(node.id, v.id, 'out')}
-                title="drag to feed a ⇣ of the same type"
-                onPointerDown={(e) => {
-                  e.stopPropagation()
-                  e.preventDefault()
-                  onDataPortDown(e, node.id, v.id)
-                }}
-              />
-            </div>
-          ))}
-        {node.kind === 'step' && (
-          <input className="inp" placeholder="note (optional)" value={node.note || ''} onChange={(e) => onPatch({ note: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
-        )}
-        {node.kind === 'getg' && graph.mode !== 'machine' && (
-          <div className="nd-row">
-            <span className="nd-sub">global</span>
-            <select
-              className="inp"
-              style={{ flex: 1 }}
-              value={node.gRef || ''}
-              onChange={(e) => {
-                const g = (globals || []).find((x) => x.id === e.target.value)
-                onPatch(g ? { gRef: g.id, gName: g.name, gType: g.type } : { gRef: null, gName: '', gType: '' })
-              }}
-            >
-              <option value="">— pick a global —</option>
-              {(globals || []).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name || '(unnamed)'} : {g.type}
-                </option>
+            {/* one ⇣ per ENTER variable of the nested machine — every door's
+                vars gathered into one complete input list */}
+            {node.kind === 'machine' &&
+              enterVarsOf(node.graph).map((v) => (
+                <div className="dvar" key={v.id} title={`feeds ⇡ ${v.name} on the ENTER “${v.enter}” inside — wire any ${v.type} in`}>
+                  <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                  <span>
+                    ⇣ {v.name}:<b>{v.type}</b>
+                  </span>
+                  <span className="nd-sub">↳ {v.enter}</span>
+                </div>
               ))}
-            </select>
-          </div>
-        )}
-        {node.kind === 'getg' && graph.mode !== 'machine' && (
-          <div className="dvar out" title="the global's value — readers wire here (default while editing, live during sim)">
-            <span>
-              ⇡ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
-            </span>
-            {node.gRef && (
-              <span className="dval" title={sim || gvals ? "the session value — shared across machines" : 'default — set by the run'}>
-                {String(
-                  sim
-                    ? (sim.mem.g || {})[node.gRef]
-                    : gvals && gvals[node.gRef] !== undefined
-                      ? gvals[node.gRef]
-                      : (globals || []).find((g) => g.id === node.gRef)?.value ?? '',
+            {/* the mirror image: one ⇡ per EXIT variable of the nested machine,
+                tagged with the door it leaves through — two exits may each
+                announce a same-named variable and keep their own port */}
+            {node.kind === 'machine' &&
+              exitVarsOf(node.graph).map((v) => (
+                <div className="dvar out" key={'x' + v.id} title={`leaves the “${v.exit}” EXIT inside — wire any ${v.type} out of this machine`}>
+                  <span>
+                    ⇡ {v.name}:<b>{v.type}</b>
+                  </span>
+                  <span className="nd-sub">↳ {v.exit}</span>
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, v.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, v.id)
+                    }}
+                  />
+                </div>
+              ))}
+            {grow('open', 'open →', () => onOpenGraph(node.id), onOpenGraph)}
+          </>
+        ),
+
+      // IF — the comparison and its two ⇣
+      cmp: () =>
+        node.kind === 'ifb' &&
+        (() => {
+          const dp = dataPorts(node, assets)
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const res = sim ? (sim.mem?.ifres || {})[node.id] : undefined
+          return (
+            <>
+              {!sim && (
+                <div className="nd-row" title="the comparison applied between ⇣ a and ⇣ b">
+                  <span className="nd-sub">⇣ a</span>
+                  <select
+                    className="inp"
+                    style={{ width: 56 }}
+                    value={node.op || '=='}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => onPatch({ op: e.target.value })}
+                  >
+                    {['<', '<=', '==', '!=', '>=', '>'].map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="nd-sub">⇣ b</span>
+                </div>
+              )}
+              {dp.in.map((p) => {
+                const key = p.id === '__a__' ? 'aVal' : 'bVal'
+                return (
+                  <div
+                    className="dvar"
+                    key={p.id}
+                    title={
+                      wired(p.id)
+                        ? `reads ${p.type} from the wire`
+                        : `no wire — this ${p.type === 'bool' ? 'true/false' : 'value'} is used instead`
+                    }
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {!wired(p.id) && !sim && (
+                      <input
+                        className="inp"
+                        style={{ flex: 1 }}
+                        placeholder="custom value…"
+                        value={node[key] ?? ''}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onChange={(e) => onPatch({ [key]: e.target.value })}
+                      />
+                    )}
+                    {sim && !wired(p.id) && String(node[key] ?? '') !== '' && (
+                      <span className="dval">{String(node[key])}</span>
+                    )}
+                  </div>
+                )
+              })}
+              {dp.out.map((p) => (
+                <div className="dvar out" key={p.id} title="the verdict — other parts can read it">
+                  <span>
+                    ⇡ {p.name}:<b>{p.type}</b>
+                  </span>
+                  {res !== undefined && res !== null && <span className="dval">{String(res)}</span>}
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, p.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, p.id)
+                    }}
+                  />
+                </div>
+              ))}
+            </>
+          )
+        })(),
+
+      // FOR · FOREACH — the values the loop carries
+      count: () =>
+        ['for', 'foreach'].includes(node.kind) && dataRows(),
+
+      // INSPECT — one ⇣ to look at
+      args: () => node.kind === 'inspect' && dataRows(),
+
+      // APPEND · JOIN · REMOVE · REMOVE AT · SORT · CLONE — arrays in, array out
+      list: () =>
+        ['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&
+        (() => {
+          const dp = dataPorts(node, assets)
+          const fields = node.kind === 'sort' ? fieldsOf(types, node.itemType) : null
+          return (
+            <>
+              {node.kind === 'sort' && (
+                <div className="nd-row" title="order by one field of struct items, or by the values themselves">
+                  <span className="nd-sub">by</span>
+                  <select
+                    className="inp"
+                    style={{ flex: 1 }}
+                    value={node.field || ''}
+                    onChange={(e) => onPatch({ field: e.target.value })}
+                  >
+                    <option value="">value</option>
+                    {(fields || []).map((f) => (
+                      <option key={f.id} value={f.name}>
+                        {f.name}:{f.typeId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {dp.in.map((p) => (
+                <div className="dvar" key={p.id} title={`needs ${p.type} wired in`}>
+                  <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                  <span>
+                    ⇣ {p.name}:<b>{p.type}</b>
+                  </span>
+                </div>
+              ))}
+              {dp.out.map((p) => {
+                const d = sim ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, p.id) : null
+                return (
+                  <div className="dvar out" key={p.id} title="the computed array — any consumer can read it">
+                    <span>
+                      ⇡ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {d && d.val !== null && <span className="dval">{fmt(d.val)}</span>}
+                    <span
+                      className="port-data out"
+                      data-port={portKey(node.id, p.id, 'out')}
+                      title="drag to feed a ⇣ of the same type"
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        onDataPortDown(e, node.id, p.id)
+                      }}
+                    />
+                  </div>
+                )
+              })}
+            </>
+          )
+        })(),
+
+      // GLOBALS — pick one, and its value reads/writes as a ⇣/⇡
+      global: () =>
+        ['getg', 'setg'].includes(node.kind) && (
+          <>
+            <div className="nd-row">
+              <span className="nd-sub">global</span>
+              <select
+                className="inp"
+                style={{ flex: 1 }}
+                value={node.gRef || ''}
+                onChange={(e) => {
+                  const g = (globals || []).find((x) => x.id === e.target.value)
+                  onPatch(g ? { gRef: g.id, gName: g.name, gType: g.type } : { gRef: null, gName: '', gType: '' })
+                }}
+              >
+                <option value="">— pick a global —</option>
+                {(globals || []).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name || '(unnamed)'} : {g.type}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {node.kind === 'getg' && (
+              <div className="dvar out" title="the global's value — readers wire here (default while editing, live during sim)">
+                <span>
+                  ⇡ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
+                </span>
+                {node.gRef && (
+                  <span className="dval" title={sim || gvals ? "the session value — shared across machines" : 'default — set by the run'}>
+                    {String(
+                      sim
+                        ? (sim.mem.g || {})[node.gRef]
+                        : gvals && gvals[node.gRef] !== undefined
+                          ? gvals[node.gRef]
+                          : (globals || []).find((g) => g.id === node.gRef)?.value ?? '',
+                    )}
+                  </span>
                 )}
-              </span>
+                {!sim && (
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, '__val__', 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, '__val__')
+                    }}
+                  />
+                )}
+              </div>
             )}
-            {!sim && (
-              <span
-                className="port-data out"
-                data-port={portKey(node.id, '__val__', 'out')}
-                title="drag to feed a ⇣ of the same type"
-                onPointerDown={(e) => {
-                  e.stopPropagation()
-                  e.preventDefault()
-                  onDataPortDown(e, node.id, '__val__')
-                }}
-              />
+            {node.kind === 'setg' && (
+              <div className="dvar" title="wire the value to write — the chain carries the write the moment it passes">
+                <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
+                <span>
+                  ⇣ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
+                </span>
+                {sim && node.gRef && <span className="dval">{String((sim.mem.g || {})[node.gRef])}</span>}
+              </div>
             )}
-          </div>
-        )}
-        {node.kind === 'setg' && graph.mode !== 'machine' && (
-          <div className="nd-row">
-            <span className="nd-sub">global</span>
-            <select
-              className="inp"
-              style={{ flex: 1 }}
-              value={node.gRef || ''}
-              onChange={(e) => {
-                const g = (globals || []).find((x) => x.id === e.target.value)
-                onPatch(g ? { gRef: g.id, gName: g.name, gType: g.type } : { gRef: null, gName: '', gType: '' })
-              }}
-            >
-              <option value="">— pick a global —</option>
-              {(globals || []).map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name || '(unnamed)'} : {g.type}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        {node.kind === 'setg' && graph.mode !== 'machine' && (
-          <div className="dvar" title="wire the value to write — the chain carries the write the moment it passes">
-            <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
-            <span>
-              ⇣ {node.gName || 'value'}:<b>{node.gType || '?'}</b>
-            </span>
-            {sim && node.gRef && <span className="dval">{String((sim.mem.g || {})[node.gRef])}</span>}
-          </div>
-        )}
-        {(node.kind === 'getledger' || node.kind === 'setledger') && graph.mode !== 'machine' && (
+          </>
+        ),
+
+      // LEDGERS — pick a system and one of its variables
+      ledger: () =>
+        ['getledger', 'setledger'].includes(node.kind) && (
           <>
             <div className="nd-row">
               <span className="nd-sub">system</span>
@@ -1008,183 +997,220 @@ export default function NodeCard({
                 </select>
               </div>
             )}
-          </>
-        )}
-        {(node.kind === 'getledger' || node.kind === 'setledger') && graph.mode !== 'machine' && (
-          <div className="dvar" title={node.kind === 'getledger' ? "wire the value to read — the node publishes it" : "wire the value to write — the chain carries it"}>
-            <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
-            <span>
-              ⇣ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
-            </span>
-            {sim && node.lRef && (
-              <span className="dval">
-                {(() => {
-                  const sys = systems.find((s) => s.id === node.lRef)
-                  if (!sys) return ''
-                  const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
-                  if (!v) return ''
-                  return String(v.value ?? '')
-                })()}
+            <div
+              className="dvar"
+              title={node.kind === 'getledger' ? "wire the value to read — the node publishes it" : "wire the value to write — the chain carries it"}
+            >
+              <span className="port-data in" data-port={portKey(node.id, '__val__', 'in')} />
+              <span>
+                ⇣ {node.lName || 'value'}:<b>{node.lType || '?'}</b>
               </span>
-            )}
-          </div>
-        )}
-        {sim && node.kind === 'action' && <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>}
-        {sim && node.kind === 'syscall' && (
-          <div className={`mc-click${tokWait ? '' : ' info'}`}>
-            {tokWait ? '⏳ click to return' : node.block ? 'blocks the chain — opens here' : 'calls fn as chain passes'}
-          </div>
-        )}
-        {!sim && node.kind === 'syscall' && !resolveCall((node.calls || [])[0], assets) && (
-          <div className="mc-click warn">pick a system + fn</div>
-        )}
-        {!sim && node.kind === 'syscall' && (
-          <label className="nd-sub" style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-            <input type="checkbox" checked={!!node.block} onChange={(e) => onPatch({ block: e.target.checked })} />
-            ⏳ can block — chain waits until clicked to return
-          </label>
-        )}
-        {/* FUNC — one ƒ function defined on the data tab; its body graph lives
-            with the definition, so the card only has to pick it */}
-        {node.kind === 'func' &&
-          (() => {
-            // a body may call every function except the one you are inside —
-            // the enclosing definition never appears among its own picks
-            const here = (graph || {}).id
-            const picks = (funcs || []).filter((f) => !f.graph || f.graph.id !== here)
-            const picked = (funcs || []).find((x) => x.id === node.func)
-            const dp = dataPorts(node, assets, funcs)
-            return (
-              <>
-                <div className="nd-row">
-                  <span className="nd-sub">function</span>
-                  <select
-                    className="inp"
-                    style={{ flex: 1 }}
-                    value={node.func || ''}
-                    onChange={(e) => {
-                      e.stopPropagation()
-                      const f = (funcs || []).find((x) => x.id === e.target.value)
-                      onPatch(f ? { func: f.id, fName: f.name } : { func: null, fName: '' })
-                    }}
-                  >
-                    <option value="">— pick a ƒ function —</option>
-                    {picks.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.name || '(unnamed)'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {picked && picked.graph && (
-                  <div className="nd-row">
-                    <span className="nd-sub">
-                      {(picked.graph.nodes || []).length} parts · {(picked.graph.links || []).length} flows
-                    </span>
-                    {onOpenGraph && <button className="tb-btn" onClick={() => onOpenGraph(node.id)}>▶ enter</button>}
-                  </div>
-                )}
-                {/* one ⇣ per ENTER variable of the definition, one ⇡ per EXIT —
-                    the body lives once on the doc so every call site mirrors it */}
-                {dp.in.map((p) => (
-                  <div className="dvar" key={p.id} title={`feeds ⇡ ${p.name} at the ENTER inside — wire any ${p.type} in`}>
-                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
-                    <span>
-                      ⇣ {p.name}:<b>{p.type}</b>
-                    </span>
-                  </div>
-                ))}
-                {dp.out.map((p) => (
-                  <div className="dvar out" key={p.id} title={`reads ⇣ ${p.name} at the EXIT inside — drag to feed a ⇣ of the same type`}>
-                    <span>
-                      ⇡ {p.name}:<b>{p.type}</b>
-                    </span>
-                    <span
-                      className="port-data out"
-                      data-port={portKey(node.id, p.id, 'out')}
-                      title="drag to feed a ⇣ of the same type"
-                      onPointerDown={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        onDataPortDown(e, node.id, p.id)
-                      }}
-                    />
-                  </div>
-                ))}
-                {sim && node.func && (
-                  <div className="mc-click info">
-                    ƒ {((funcs || []).find((x) => x.id === node.func)?.name || '(gone)').trim() || '(unnamed)'} runs as the
-                    chain passes
-                  </div>
-                )}
-                {!sim && !node.func && <div className="mc-click warn">pick a ƒ function</div>}
-                {!sim && node.func && !picked && <div className="mc-click warn">⚠ the function it picks was deleted</div>}
-              </>
-            )
-          })()}
-        {/* APPEND · JOIN · REMOVE · REMOVE AT · SORT · CLONE — pure-data array tools;
-            wiring an array teaches the item type, every port follows */}
-        {['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&
-          (() => {
-            const dp = dataPorts(node, assets)
-            const fields = node.kind === 'sort' ? fieldsOf(types, node.itemType) : null
-            return (
-              <>
-                {node.kind === 'sort' && (
-                  <div className="nd-row" title="order by one field of struct items, or by the values themselves">
-                    <span className="nd-sub">by</span>
-                    <select
-                      className="inp"
-                      style={{ flex: 1 }}
-                      value={node.field || ''}
-                      onChange={(e) => onPatch({ field: e.target.value })}
-                    >
-                      <option value="">value</option>
-                      {(fields || []).map((f) => (
-                        <option key={f.id} value={f.name}>
-                          {f.name}:{f.typeId}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {dp.in.map((p) => (
-                  <div className="dvar" key={p.id} title={`needs ${p.type} wired in`}>
-                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
-                    <span>
-                      ⇣ {p.name}:<b>{p.type}</b>
-                    </span>
-                  </div>
-                ))}
-                {dp.out.map((p) => {
-                  const d = sim ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, p.id) : null
-                  return (
-                    <div className="dvar out" key={p.id} title="the computed array — any consumer can read it">
-                      <span>
-                        ⇡ {p.name}:<b>{p.type}</b>
-                      </span>
-                      {d && d.val !== null && <span className="dval">{fmt(d.val)}</span>}
-                      <span
-                        className="port-data out"
-                        data-port={portKey(node.id, p.id, 'out')}
-                        title="drag to feed a ⇣ of the same type"
-                        onPointerDown={(e) => {
-                          e.stopPropagation()
-                          e.preventDefault()
-                          onDataPortDown(e, node.id, p.id)
-                        }}
-                      />
-                    </div>
-                  )
-                })}
-              </>
-            )
-          })()}
-        {node.kind === 'enter' && (
-          <>
-            <div className="nd-sub" title="entries are explicit — chains start here, always">
-              ▶ always a chain start
+              {sim && node.lRef && (
+                <span className="dval">
+                  {(() => {
+                    const sys = systems.find((s) => s.id === node.lRef)
+                    if (!sys) return ''
+                    const v = (sys.ledger || []).find((lv) => lv.id === node.lVarId)
+                    if (!v) return ''
+                    return String(v.value ?? '')
+                  })()}
+                </span>
+              )}
             </div>
+          </>
+        ),
+
+      // EVENT · SYS CALL — system calls, and what they need
+      calls: () =>
+        ['event', 'syscall'].includes(node.kind) && (
+          <>
+            {node.kind === 'event' && (
+              <>
+                <CallsEditor
+                  node={node}
+                  assets={assets}
+                  multiple
+                  onDataOut={onDataPortDown}
+                  onPatch={onPatch}
+                  onGrow={(label, fn) => grow('call', label, fn)}
+                />
+                <GenerateAsset node={node} onPatch={onPatch} onGrow={(label, fn) => grow('generate', label, fn)} />
+              </>
+            )}
+            {node.kind === 'syscall' && (
+              <CallsEditor
+                node={node}
+                assets={assets}
+                types={types}
+                multiple={false}
+                onDataOut={onDataPortDown}
+                onPatch={onPatch}
+                simCall={sim ? ((sim.mem || {}).call || {})[node.id] || EMPTY_CALL : undefined}
+                onSimOut={onSimCall}
+              />
+            )}
+            {node.kind === 'syscall' && sim && (
+              <div className={`mc-click${tokWait ? '' : ' info'}`}>
+                {tokWait ? '⏳ click to return' : node.block ? 'blocks the chain — opens here' : 'calls fn as chain passes'}
+              </div>
+            )}
+            {node.kind === 'syscall' && !sim && !resolveCall((node.calls || [])[0], assets) && (
+              <div className="mc-click warn">pick a system + fn</div>
+            )}
+            {node.kind === 'syscall' && !sim && (
+              <label className="nd-sub" style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                <input type="checkbox" checked={!!node.block} onChange={(e) => onPatch({ block: e.target.checked })} />
+                ⏳ can block — chain waits until clicked to return
+              </label>
+            )}
+          </>
+        ),
+
+      // FUNC — pick a ƒ defined on the data tab
+      pick: () =>
+        node.kind === 'func' &&
+        (() => {
+          // a body may call every function except the one you are inside —
+          // the enclosing definition never appears among its own picks
+          const here = (graph || {}).id
+          const picks = (funcs || []).filter((f) => !f.graph || f.graph.id !== here)
+          const picked = (funcs || []).find((x) => x.id === node.func)
+          const dp = dataPorts(node, assets, funcs)
+          return (
+            <>
+              <div className="nd-row">
+                <span className="nd-sub">function</span>
+                <select
+                  className="inp"
+                  style={{ flex: 1 }}
+                  value={node.func || ''}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    const f = (funcs || []).find((x) => x.id === e.target.value)
+                    onPatch(f ? { func: f.id, fName: f.name } : { func: null, fName: '' })
+                  }}
+                >
+                  <option value="">— pick a ƒ function —</option>
+                  {picks.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name || '(unnamed)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {picked && picked.graph && (
+                <div className="nd-row">
+                  <span className="nd-sub">
+                    {(picked.graph.nodes || []).length} parts · {(picked.graph.links || []).length} flows
+                  </span>
+                </div>
+              )}
+              {/* one ⇣ per ENTER variable of the definition, one ⇡ per EXIT —
+                  the body lives once on the doc so every call site mirrors it */}
+              {dp.in.map((p) => (
+                <div className="dvar" key={p.id} title={`feeds ⇡ ${p.name} at the ENTER inside — wire any ${p.type} in`}>
+                  <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                  <span>
+                    ⇣ {p.name}:<b>{p.type}</b>
+                  </span>
+                </div>
+              ))}
+              {dp.out.map((p) => (
+                <div className="dvar out" key={p.id} title={`reads ⇣ ${p.name} at the EXIT inside — drag to feed a ⇣ of the same type`}>
+                  <span>
+                    ⇡ {p.name}:<b>{p.type}</b>
+                  </span>
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, p.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onDataPortDown(e, node.id, p.id)
+                    }}
+                  />
+                </div>
+              ))}
+              {sim && node.func && (
+                <div className="mc-click info">
+                  ƒ {((funcs || []).find((x) => x.id === node.func)?.name || '(gone)').trim() || '(unnamed)'} runs as the
+                  chain passes
+                </div>
+              )}
+              {!sim && !node.func && <div className="mc-click warn">pick a ƒ function</div>}
+              {!sim && node.func && !picked && <div className="mc-click warn">⚠ the function it picks was deleted</div>}
+              {grow('enter', '▶ enter', () => onOpenGraph(node.id), onOpenGraph && picked && picked.graph)}
+            </>
+          )
+        })(),
+
+      // ACTION — the chain pauses here
+      status: () =>
+        node.kind === 'action' && sim && (
+          <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>
+        ),
+
+      // TEXT — an annotation you size with the corner grip
+      text: () =>
+        node.kind === 'text' ? (
+          <textarea
+            className="inp"
+            value={node.text || ''}
+            onChange={(e) => onPatch({ text: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+            onDoubleClick={() => onCardClick && onCardClick(node.id)}
+          />
+        ) : null,
+
+      // TODO — task lines you tick off
+      tasks: () =>
+        node.kind === 'todo' && (
+          <>
+            {(node.todos || []).map((t, i) => (
+              <div className="nd-row todo-row" key={t.id}>
+                <input
+                  type="checkbox"
+                  className="todo-check"
+                  checked={!!t.done}
+                  title={t.done ? 'done — click to reopen' : 'tick when this task is done'}
+                  onChange={(e) =>
+                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, done: e.target.checked } : x)) })
+                  }
+                />
+                <TaskLine
+                  value={t.text}
+                  done={!!t.done}
+                  onChange={(text) =>
+                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, text } : x)) })
+                  }
+                  onEnter={(el) => {
+                    onPatch({ todos: [...node.todos, { id: uid('td'), text: '', done: false }] })
+                    // move the caret into the fresh line as soon as it renders
+                    setTimeout(() => {
+                      const lines = el.closest('.nd')?.querySelectorAll('.todo-line')
+                      if (lines?.length) lines[lines.length - 1].focus()
+                    }, 0)
+                  }}
+                />
+                <button
+                  className="icon-btn"
+                  title="remove task"
+                  onClick={() => onPatch({ todos: node.todos.filter((_, j) => j !== i) })}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {grow('task', '+ task', () => onPatch({ todos: [...(node.todos || []), { id: uid('td'), text: '', done: false }] }))}
+          </>
+        ),
+
+      // ENTER — the doors of a nested machine: its variables and assets
+      vars: () =>
+        node.kind === 'enter' && (
+          <>
+            <div className="nd-sub" title="entries are explicit — chains start here, always">▶ always a chain start</div>
             {(node.vars || []).map((v, i) => (
               <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <div className="nd-row">
@@ -1241,13 +1267,7 @@ export default function NodeCard({
                 </div>
               </div>
             ))}
-            <button
-              className="tb-btn"
-              style={{ width: '100%' }}
-              onClick={() => onPatch({ vars: [...(node.vars || []), { id: uid('ev'), name: '', type: 'int', value: '' }] })}
-            >
-              + variable
-            </button>
+            {grow('variable', '+ variable', () => onPatch({ vars: [...(node.vars || []), { id: uid('ev'), name: '', type: 'int', value: '' }] }))}
             {/* 📦 door assets — same deal as variables, but the value IS one
                 of the doc's assets: pick it, ⇡ carries the handle inside,
                 and the MACHINE node above grows a matching ⇣ asset input */}
@@ -1308,16 +1328,13 @@ export default function NodeCard({
                 </div>
               </div>
             ))}
-            <button
-              className="tb-btn"
-              style={{ width: '100%' }}
-              onClick={() => onPatch({ assets: [...(node.assets || []), { id: uid('ev'), asset: null, name: '' }] })}
-            >
-              + asset
-            </button>
+            {grow('asset', '+ asset', () => onPatch({ assets: [...(node.assets || []), { id: uid('ev'), asset: null, name: '' }] }))}
           </>
-        )}
-        {node.kind === 'exit' && (
+        ),
+
+      // EXIT — the mirror door: producers inside wire in, values leave above
+      door: () =>
+        node.kind === 'exit' && (
           <>
             {!sim && (
               <input
@@ -1334,9 +1351,7 @@ export default function NodeCard({
                 inside the machine wires INTO ⇣ here, and the value leaves
                 through a matching ⇡ port on the MACHINE node above */}
             {(node.vars || []).map((v, i) => {
-              const live = sim
-                ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, v.id)
-                : null
+              const live = sim ? dataValue(graph.nodes, graph.links, sim.mem || {}, node.id, v.id) : null
               return (
                 <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <div className="nd-row">
@@ -1397,101 +1412,158 @@ export default function NodeCard({
                 </div>
               )
             })}
-            <button
-              className="tb-btn"
-              style={{ width: '100%' }}
-              onClick={() =>
-                onPatch({
-                  vars: [...(node.vars || []), { id: uid('xv'), name: '', type: 'int', value: '' }],
-                })
-              }
-            >
-              + variable
-            </button>
+            {grow('variable', '+ variable', () => onPatch({ vars: [...(node.vars || []), { id: uid('xv'), name: '', type: 'int', value: '' }] }))}
+            {sim && <div className="mc-click info">⏏ ends the machine here</div>}
           </>
-        )}
-        {sim && node.kind === 'exit' && <div className="mc-click info">⏏ ends the machine here</div>}
-        {node.kind === 'todo' && (
-          <>
-            {(node.todos || []).map((t, i) => (
-              <div className="nd-row todo-row" key={t.id}>
-                <input
-                  type="checkbox"
-                  className="todo-check"
-                  checked={!!t.done}
-                  title={t.done ? 'done — click to reopen' : 'tick when this task is done'}
-                  onChange={(e) =>
-                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, done: e.target.checked } : x)) })
-                  }
-                />
-                <TaskLine
-                  value={t.text}
-                  done={!!t.done}
-                  onChange={(text) =>
-                    onPatch({ todos: node.todos.map((x, j) => (j === i ? { ...x, text } : x)) })
-                  }
-                  onEnter={(el) => {
-                    onPatch({ todos: [...node.todos, { id: uid('td'), text: '', done: false }] })
-                    // move the caret into the fresh line as soon as it renders
-                    setTimeout(() => {
-                      const lines = el.closest('.nd')?.querySelectorAll('.todo-line')
-                      if (lines?.length) lines[lines.length - 1].focus()
-                    }, 0)
-                  }}
-                />
-                <button
-                  className="icon-btn"
-                  title="remove task"
-                  onClick={() => onPatch({ todos: node.todos.filter((_, j) => j !== i) })}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button
-              className="tb-btn"
-              style={{ width: '100%' }}
-              onClick={() => onPatch({ todos: [...(node.todos || []), { id: uid('td'), text: '', done: false }] })}
-            >
-              + task
-            </button>
-          </>
-        )}
+        ),
+    }[shape.rows] || (() => null)
 
-        {/* flow exit ports — pinned right edge in both canvases: stacked
-            top-right on machine parts, spread along the edge on flow cards */}
-        {flowOuts.map((p, i) => (
+  // the typed ⇣/⇡ rows FOR, FOREACH and INSPECT share
+  const dataRows = (pid) => {
+    const dp = dataPorts(node, assets)
+    const cur = sim?.mem?.cur?.[node.id]
+    const live = (p) =>
+      !cur ? null : p.id === '__i__' ? cur.i : p.id === '__item__' ? String(cur.item ?? '') : p.id === '__idx__' ? cur.index : null
+    return (
+      <>
+        {dp.in.map((p) => (
+          <div className="dvar" key={p.id} title={`needs ${p.type} data wired in`}>
+            <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+            <span>
+              ⇣ {p.name}:<b>{p.type}</b>
+            </span>
+          </div>
+        ))}
+        {dp.out.map((p) => (
+          <div className="dvar out" key={p.id} title="current loop value — wires read this live">
+            <span>
+              ⇡ {p.name}:<b>{p.type}</b>
+            </span>
+            {sim && live(p) !== null && <span className="dval">{live(p)}</span>}
+            <span
+              className="port-data out"
+              data-port={portKey(node.id, p.id, 'out')}
+              title="drag to feed a ⇣ of the same type"
+              onPointerDown={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                onDataPortDown(e, node.id, p.id)
+              }}
+            />
+          </div>
+        ))}
+      </>
+    )
+  }
+
+  return (
+    <div
+      className={`nd ${meta.cls} ${
+        shape.container ? 'nd-container' : ''
+      } ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''} ${
+        sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''
+      }`}
+      data-node-id={node.id}
+      style={{ left: node.x, top: node.y, width: W, height: H }}
+      onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
+      onClick={() => onCardClick && onCardClick(node.id)}
+      onDoubleClick={(e) => {
+        // dbl-click a GRAPH/MACHINE/FUNC card walks into it — the open → /
+        // ▶ enter buttons stay for one-clickers; typing or clicking a control never enters
+        if (!shape.container || !onOpenGraph) return
+        if (e.target.closest('input, textarea, select, button, [contenteditable]')) return
+        onOpenGraph(node.id)
+      }}
+    >
+      {/* the flow gutter on the left of the title bar: one chain enters here */}
+      {hasIn && <span className="port port-in" data-port={portKey(node.id, 'in', 'in')} title="flow in" />}
+
+      {/* the title bar — always there, on every kind */}
+      <div className="nd-head" onPointerDown={(e) => onHeaderDown(e, node.id)}>
+        <span className="nd-kind">{meta.label}</span>
+        {/* the header chip is the shape marker: ▸ walks into a nest, · is a leaf */}
+        <span className="nd-chip">{shape.container ? T.ndGlyphContainer : T.ndGlyphLeaf}</span>
+        {showName && (
+          <input
+            className="nd-name"
+            placeholder={meta.label.toLowerCase() + ' name…'}
+            value={node.name}
+            onChange={(e) => onPatch({ name: e.target.value })}
+            onKeyDown={(e) => e.stopPropagation()}
+          />
+        )}
+        {sim && tokHere > 0 && (
           <span
-            key={p.id}
-            className={`port port-flow-out ${mode === 'machine' ? 'port-out-mc' : 'port-out-flow'}${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
-            style={mode === 'machine' ? (i ? { top: 8 + i * 13 } : undefined) : { top: `calc(${((i + 1) * 100) / (flowOuts.length + 1)}% - 6px)` }}
-            data-port={portKey(node.id, p.id, 'out')}
-            title={
-              p.label
-                ? `${p.label} — drag to connect`
-                : p.id === 'end'
-                  ? 'loop completion pulse — drag to connect'
-                  : 'drag to connect'
-            }
-            onPointerDown={(e) => {
+            className={`mc-amount ${tokWait ? 'wait' : 'full'}`}
+            title={tokWait ? 'chain waiting here — click to continue' : `chain token${tokHere > 1 ? 's' : ''} here`}
+          >
+            {tokWait ? '⏳' : `●${tokHere > 1 ? tokHere : ''}`}
+          </span>
+        )}
+        {node.kind === 'todo' && (node.todos || []).length > 0 && (
+          <span
+            className={`mc-amount ${node.todos.every((t) => t.done) ? 'full' : ''}`}
+            title={`${node.todos.filter((t) => t.done).length} of ${node.todos.length} tasks done`}
+          >
+            ✓{node.todos.filter((t) => t.done).length}/{node.todos.length}
+          </span>
+        )}
+        {isEntry && <span className="entry-flag">▶ START</span>}
+        {mode === 'flow' && (
+          <button
+            className="icon-btn"
+            title={isEntry ? 'unset entry' : 'entry point of this graph'}
+            style={{ color: isEntry ? 'var(--lime)' : undefined }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
               e.stopPropagation()
-              e.preventDefault()
-              onPortDown(e, node.id, p.id)
+              onToggleEntry(node.id)
             }}
           >
-            {p.label && <span className="port-tag">{p.label}</span>}
-          </span>
-        ))}
+            ▶
+          </button>
+        )}
       </div>
-      {(isText || node.kind === 'todo' || node.kind === 'var') && !sim && onResizeDown && (
+
+      <div className="nd-body" onPointerDown={(e) => e.stopPropagation()}>{rows()}</div>
+
+      {/* the dock at the foot: every grow button of this card, in the order its
+          shape lists them. it renders as a component so it is built after the
+          body — the row editors register their + button as the body renders. */}
+      <Dock actions={shape.actions || []} dock={dock} />
+
+      {/* flow out-ports — one rhythm down the right gutter, both canvases */}
+      {flowOuts.map((p, i) => (
+        <span
+          key={p.id}
+          className={`port port-out${p.id === 'true' ? ' pt-true' : p.id === 'false' ? ' pt-false' : ''}`}
+          style={{ top: T.nodePortTop + i * T.nodePortStep }}
+          data-port={portKey(node.id, p.id, 'out')}
+          title={
+            p.label
+              ? `${p.label} — drag to connect`
+              : p.id === 'end'
+                ? 'loop completion pulse — drag to connect'
+                : 'drag to connect'
+          }
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            onPortDown(e, node.id, p.id)
+          }}
+        >
+          {p.label && <span className="port-tag">{p.label}</span>}
+        </span>
+      ))}
+
+      {/* the corner grip — only the kinds that size themselves wear it */}
+      {shape.grip && !sim && onResizeDown && (
         <span
           className="nd-resize"
           title={
-            isText
+            shape.grip === 'size'
               ? 'drag to size the note — cover as many cells as it describes'
-              : node.kind === 'todo'
-                ? 'drag to widen the checklist — long tasks wrap onto further lines'
-                : 'drag to widen the fill-in — long values and nested fields get room'
+              : 'drag to widen the fill-in — long values and nested fields get room'
           }
           onPointerDown={(e) => {
             e.stopPropagation()

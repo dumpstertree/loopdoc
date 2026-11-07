@@ -283,21 +283,23 @@ const arrOut = (n) => ({
 export const KINDS = {
   // ---- flow graph nodes -----------------------------------------------------
   step: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'STEP',
     cls: 'nd-step',
     hint: 'plain step in the loop — flow passes through',
     ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
+    shape: { title: true, in: true, outs: true, rows: 'note' },
   },
   event: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'EVENT',
     cls: 'nd-event',
     hint: 'an event that fires when flow reaches it — calls system fns, may generate an asset',
     ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
+    shape: { title: true, in: true, outs: true, rows: 'calls', actions: ['call', 'generate'] },
   },
   condition: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'IF',
     cls: 'nd-cond',
     hint: 'test a condition — flow leaves through TRUE or FALSE',
@@ -305,37 +307,42 @@ export const KINDS = {
       { id: 'true', dir: 'out', label: 'true' },
       { id: 'false', dir: 'out', label: 'false' },
     ],
+    shape: { title: true, in: true, outs: true, rows: 'test' },
   },
   choice: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'CHOICE',
     cls: 'nd-choice',
     hint: 'player/loop decision — one exit port per option',
     ports: (n) => (n.exits || []).map((e) => ({ id: e.id, dir: 'out', label: e.label || '?' })),
+    shape: { title: true, in: true, outs: true, rows: 'options', actions: ['option'] },
   },
   load: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'LOAD',
     cls: 'nd-load',
     hint: 'load a 📦 asset into memory',
     ports: () => [{ id: 'out', dir: 'out', label: 'loaded' }],
+    shape: { title: true, in: true, outs: true, rows: 'asset' },
   },
   unload: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'UNLOAD',
     cls: 'nd-unload',
     hint: 'remove a 📦 asset from memory',
     ports: () => [{ id: 'out', dir: 'out', label: 'unloaded' }],
+    shape: { title: true, in: true, outs: true, rows: 'asset' },
   },
   input: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'INPUT',
     cls: 'nd-input',
     hint: 'apply a 🎮 input asset',
     ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
+    shape: { title: true, in: true, outs: true, rows: 'asset' },
   },
   var: {
-    mode: 'flow',
+    canvas: ['flow'],
     // pure data like INSPECT — no flow ports at all (dataOnly keeps the
     // implicit flow in-port off it and the canvas off wiring flow into it)
     dataOnly: true,
@@ -349,16 +356,18 @@ export const KINDS = {
         ? [{ id: '__val__', type: n.variable.type, name: n.variable.name || 'value' }]
         : [],
     }),
+    shape: { title: true, rows: 'fields', actions: ['row'], data: true, grip: 'form' },
   },
   graph: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'GRAPH',
     cls: 'nd-graph',
     hint: 'nested flow graph — flow enters it; RETURN links lead back out',
     ports: () => [{ id: 'return', dir: 'out', label: 'return' }],
+    shape: { title: true, in: true, outs: true, rows: 'nested', actions: ['open'], container: true },
   },
   machine: {
-    mode: 'flow',
+    canvas: ['flow'],
     label: 'MACHINE',
     cls: 'nd-machine',
     hint:
@@ -373,10 +382,11 @@ export const KINDS = {
     // ⇣ list on this card however many enter doors the machine has; its ⇡
     // mirror is every EXIT var, tagged with the door it leaves through
     data: (n) => ({ in: enterVarsOf(n.graph), out: exitVarsOf(n.graph) }),
+    shape: { title: true, in: true, outs: true, rows: 'nested', actions: ['open'], data: true, container: true },
   },
   // ---- machine nodes ----------------------------------------------------------
   enter: {
-    mode: 'machine',
+    canvas: ['machine'],
     label: 'ENTER',
     cls: 'mc-enter',
     hint: 'the machine’s door — always starts chains · its typed variables and 📦 assets publish ⇡ inside and appear as ⇣ inputs on the MACHINE node in the parent graph',
@@ -388,17 +398,19 @@ export const KINDS = {
         ...(n.assets || []).map((a) => ({ id: a.id, type: 'asset', name: a.name || 'asset' })),
       ],
     }),
+    shape: { title: true, outs: true, rows: 'vars', actions: ['variable', 'asset'], data: true },
   },
   getg: {
-    mode: 'flow',
+    canvas: ['flow', 'machine', 'func'],
     label: 'GET GLOBAL',
     cls: 'mc-getg',
     hint: 'reads a document-wide global — pick it here · ⇡ publishes its value (live during sim, the default while editing)',
     ports: () => [],
     data: (n) => ({ in: [], out: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }] }),
+    shape: { title: true, rows: 'global', data: true },
   },
   setg: {
-    mode: 'flow',
+    canvas: ['flow', 'machine', 'func'],
     label: 'SET GLOBAL',
     cls: 'mc-setg',
     hint: 'flow passes through as it writes its ⇣ value into a global — every GET GLOBAL reader (any machine, any round) sees it · unwired ⇣ leaves the global untouched',
@@ -407,17 +419,19 @@ export const KINDS = {
       { id: 'out', dir: 'out', label: '' },
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.gType || 'string', name: n.gName || 'value' }], out: [] }),
+    shape: { title: true, rows: 'global', data: true },
   },
   getledger: {
-    mode: 'flow',
+    canvas: ['flow', 'machine', 'func'],
     label: 'GET LEDGER',
     cls: 'mc-getledger',
     hint: 'reads a system ledger variable — pick the system and variable · ⇡ publishes its value',
     ports: () => [],
     data: (n) => ({ in: [], out: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }] }),
+    shape: { title: true, rows: 'ledger', data: true },
   },
   setledger: {
-    mode: 'flow',
+    canvas: ['flow', 'machine', 'func'],
     label: 'SET LEDGER',
     cls: 'mc-setledger',
     hint: 'flow passes through as it writes its ⇣ value into a system ledger variable · every GET LEDGER reader sees it',
@@ -426,20 +440,22 @@ export const KINDS = {
       { id: 'out', dir: 'out', label: '' },
     ],
     data: (n) => ({ in: [{ id: '__val__', type: n.lType || 'string', name: n.lName || 'value' }], out: [] }),
+    shape: { title: true, rows: 'ledger', data: true },
   },
   func: {
+    canvas: ['flow', 'machine', 'func'],
     // graph *and* machine canvases may call a function — the call site lives
     // wherever it is dropped, the body always lives on the doc
-    mode: 'both',
     label: 'FUNC',
     cls: 'mc-func',
     hint:
       'calls one isolated function — pick it from the ƒ FUNCTIONS list on the data tab · double-click or ▶ enter walks into its body · its ⇣/⇡ mirror the function’s ENTER/EXIT variables',
     ports: flowIO(),
     data: (n, funcs) => funcPorts(n, funcs),
+    shape: { title: true, in: true, outs: true, rows: 'pick', actions: ['enter'], data: true, container: true },
   },
   ifb: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'IF',
     cls: 'mc-ifb',
     hint: 'compares ⇣ a ⟨sign⟩ ⇣ b — int or bool, unwired sides take a custom value — chain leaves via true or false · ⇡ result:bool carries the verdict',
@@ -455,9 +471,10 @@ export const KINDS = {
       ],
       out: [{ id: '__bool__', type: 'bool', name: 'result' }],
     }),
+    shape: { title: true, in: true, outs: true, rows: 'cmp', data: true },
   },
   for: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'FOR',
     cls: 'mc-for',
     hint: 'counted loop — a chain arriving loads ⇣ to:int, iter out runs one iteration per step publishing ⇡ i:int · end out continues the chain when done',
@@ -470,9 +487,10 @@ export const KINDS = {
       in: [{ id: '__to__', type: 'int', name: 'to' }],
       out: [{ id: '__i__', type: 'int', name: 'i' }],
     }),
+    shape: { title: true, in: true, outs: true, rows: 'count', data: true, actions: ['row'] },
   },
   foreach: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'FOREACH',
     cls: 'mc-foreach',
     hint: 'array loop — a chain arriving loads ⇣ arr, iter out runs one iteration per step publishing ⇡ item + ⇡ index · end out continues the chain when done',
@@ -488,9 +506,10 @@ export const KINDS = {
         { id: '__idx__', type: 'int', name: 'index' },
       ],
     }),
+    shape: { title: true, in: true, outs: true, rows: 'count', data: true, actions: ['row'] },
   },
   inspect: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'INSPECT',
     cls: 'mc-inspect',
     hint: 'pure data — no flow needed · ⇣ obj any value; one ⇡ per field of its declared type',
@@ -499,33 +518,37 @@ export const KINDS = {
       in: [{ id: '__obj__', type: n.objType || 'any', name: 'obj' }],
       out: (n.fields || []).map((f) => ({ id: f.id, type: f.typeId, name: f.name || 'field' })),
     }),
+    shape: { title: true, rows: 'args', actions: ['arg'], data: true },
   },
   append: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'APPEND',
     cls: 'mc-append',
     hint: 'pure data — ⇡ a copy of ⇣ arr with ⇣ val added at the end',
     ports: () => [],
     data: (n) => ({ in: [arrIn(n), valIn(n)], out: [arrOut(n)] }),
+    shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   join: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'JOIN',
     cls: 'mc-join',
     hint: 'pure data — ⇡ ⇣ a followed by ⇣ b, one array',
     ports: () => [],
     data: (n) => ({ in: [arrIn(n, '__a__', 'a'), arrIn(n, '__b__', 'b')], out: [arrOut(n)] }),
+    shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   remove: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'REMOVE',
     cls: 'mc-remove',
     hint: 'pure data — ⇡ ⇣ arr without any element equal to ⇣ val',
     ports: () => [],
     data: (n) => ({ in: [arrIn(n), valIn(n)], out: [arrOut(n)] }),
+    shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   removeat: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'REMOVE AT',
     cls: 'mc-removeat',
     hint: 'pure data — ⇡ ⇣ arr with the element at ⇣ at:int dropped',
@@ -534,17 +557,19 @@ export const KINDS = {
       in: [arrIn(n), { id: '__index__', type: 'int', name: 'at' }],
       out: [arrOut(n)],
     }),
+    shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   sort: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'SORT',
     cls: 'mc-sort',
     hint: 'pure data — ⇡ ⇣ arr ordered ascending — by ⇡ field of the item type, or by value itself',
     ports: () => [],
     data: (n) => ({ in: [arrIn(n)], out: [arrOut(n)] }),
+    shape: { title: true, rows: 'list', data: true },
   },
   clone: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'CLONE',
     cls: 'mc-clone',
     hint: 'pure data — ⇡ a deep copy of ⇣ val: mutations of the copy never touch the base value',
@@ -553,37 +578,42 @@ export const KINDS = {
       in: [{ id: '__val__', type: 'any', name: 'val' }],
       out: [{ id: '__val__', type: n.vType || '?', name: 'copy' }],
     }),
+    shape: { title: true, rows: 'list', data: true },
   },
   action: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'ACTION',
     cls: 'mc-action',
     hint: 'chain waits here — click to fire',
     ports: flowIO(),
+    shape: { title: true, in: true, outs: true, rows: 'status' },
   },
   syscall: {
-    mode: 'machine',
+    canvas: ['machine', 'func'],
     label: 'SYS CALL',
     cls: 'mc-syscall',
     hint: 'calls its system fn as the chain passes · ⏳ can block — stays opened until clicked to return',
     ports: flowIO(),
+    shape: { title: true, in: true, outs: true, rows: 'calls', actions: ['call'] },
   },
   text: {
-    mode: 'both',
+    canvas: ['flow', 'machine', 'func'],
     label: 'TEXT',
     cls: 'mc-text',
     hint: 'annotation + group frame — drop other parts inside it and they move with the frame · drag its corner grip to size it over everything it labels',
     ports: () => [],
+    shape: { title: true, in: true, outs: true, rows: 'text', grip: 'size' },
   },
   todo: {
-    mode: 'both',
+    canvas: ['flow', 'machine', 'func'],
     label: 'TODO',
     cls: 'mc-todo',
     hint: 'checklist — add task lines and tick them off; a silent note that never joins the chain sim',
     ports: () => [],
+    shape: { title: true, in: true, outs: true, rows: 'tasks', actions: ['task'] },
   },
   exit: {
-    mode: 'machine',
+    canvas: ['machine'],
     label: 'EXIT',
     cls: 'mc-exit',
     hint: 'the machine ends here — named exits become output ports on the MACHINE node in the parent graph · its typed variables publish ⇡ values out of the machine',
@@ -594,6 +624,7 @@ export const KINDS = {
       in: [...(n.vars || [])].map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'var' })),
       out: [],
     }),
+    shape: { title: true, in: true, rows: 'door', actions: ['variable'], data: true },
   },
 }
 function flowIO() {
@@ -603,13 +634,13 @@ function flowIO() {
   ]
 }
 
-export const kindsFor = (mode) =>
-  Object.keys(KINDS).filter((k) => KINDS[k].mode === mode || KINDS[k].mode === 'both')
+export const kindsFor = (canvas) =>
+  Object.keys(KINDS).filter((k) => KINDS[k].canvas.includes(canvas))
 
 // A func canvas offers everything a machine canvas does — minus the doors.
 // ENTER and EXIT are born with every func graph, so the palette must never
 // offer a second pair.
-export const funcKinds = kindsFor('machine').filter((k) => !['enter', 'exit'].includes(k))
+export const funcKinds = kindsFor('func')
 
 // ---- text-frame grouping ---------------------------------------------------------
 // A TEXT node is a group frame: parts dropped so their anchor lands inside it are
@@ -617,7 +648,7 @@ export const funcKinds = kindsFor('machine').filter((k) => !['enter', 'exit'].in
 // their children — along. Adoption is sticky: a part keeps its current frame as
 // long as it stays inside it, so overlapping frames never steal members.
 export function textFrame(n) {
-  return { x: n.x, y: n.y, w: n.w || 184, h: n.h || 88 }
+  return { x: n.x, y: n.y, w: n.w || 216, h: n.h || 88 }
 }
 const inFrame = (f, n) => n.x >= f.x && n.x <= f.x + f.w && n.y >= f.y && n.y <= f.y + f.h
 

@@ -4,10 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/styles.mjs --watch & vite",
+    "styles": "node scripts/styles.mjs --gen",
+    "harvest": "node scripts/styles.mjs",
+    "build": "node scripts/styles.mjs --gen && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "cards": "esbuild --bundle --format=esm --outfile=dist/render-check.mjs scripts/render-check.jsx && node dist/render-check.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

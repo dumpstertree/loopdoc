@@ -11,13 +11,10 @@ export function isEntryPart(n) {
   return n.kind === 'enter'
 }
 
-// may a flow wire touch this node at all? Pure-data parts (VAR) say no —
-// flow-mode parts otherwise take flow at their implicit in port, and
-// machine parts at their declared one.
+// may a flow wire land on this node at all? the shape says: a part with no
+// in-slot is pure data or a chain starter, and flow never enters it.
 export function takesFlow(n) {
-  if (kindMeta(n).dataOnly) return false
-  const ports = (kindMeta(n).ports || (() => []))(n) || []
-  return ports.some((p) => p.dir === 'in') || kindMeta(n).mode === 'flow'
+  return kindMeta(n).shape?.in === true
 }
 
 // may data port A feed data port B? returns { ok } or { ok: false, why }
