@@ -81,7 +81,8 @@ test('llm export — the brief introduces concepts in reading order', () => {
   const at = (s) => t.indexOf(s)
   assert.ok(at('## Part reference') < at('## Systems') && at('## Systems') < at('## Data types'), 'vocabulary, then the materials')
   assert.ok(at('## Data types') < at('## Shared state') && at('## Shared state') < at('## Graphs'), 'shared state before the programs that use it')
-  assert.ok(at('## ⚠ Open in this design') > at('## Graphs') && at('## ⚠ Open in this design') < at('## Curio mapping'), 'open points, then the engine mapping, close the brief')
+  assert.ok(at('## Graphs') < at('## Curio mapping'), 'the programs then the engine mapping close the brief')
+  assert.ok(t.includes('```'), 'programs ride in fenced code blocks — their # lines survive markdown intact')
 })
 
 test('llm export — content the design never reaches is culled, not flagged', () => {
@@ -95,24 +96,21 @@ test('llm export — flow graph: entry, typed VAR with real values, nesting', ()
   const t = exportForLLM(doc)
   assert.ok(t.indexOf('STEP "start"') > t.indexOf('### Flow Graph "Main Loop"') && t.indexOf('STEP "start"') < t.indexOf('MACHINE "combat"'), 'chain written in run order, entry first')
   assert.ok(t.includes('var_hero — VAR "hero": makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'definition keeps both handles: slug + display label')
-  assert.ok(t.includes('# ⇣ lives ← var_hero.hero :Foe'), 'data wire shown as a # line under its consumer, sourced by slug')
+  assert.ok(t.includes('mach_combat(lives ← var_hero.hero :Foe'), 'a machine call folds its data wires into call arguments')
   assert.ok(t.includes('NOTE') || t.includes('annotation frame'), 'text frame carried')
 })
 
-test('llm export — machine section: door vars, loops, wires, actions', () => {
+test('llm export — machine section reads as a function: signature, loops, returns', () => {
   const t = exportForLLM(doc)
   assert.ok(t.includes('Machine "combat"') && t.includes('inside MACHINE "combat"'), 'nested machine sectioned under its parent')
-  assert.ok(t.includes('lives:int = 3'), 'enter var carried')
-  assert.ok(t.includes('round:int') && t.includes('rank:int'), 'the door vars the wires feed are carried')
+  assert.ok(t.includes('machine "combat"(lives:int = 3, round:int, rank:int):'), 'a single-door machine reads as a function signature: its door vars are parameters')
+  assert.ok(t.includes('# enter_door — ENTER "door" starts it'), 'the door names itself on the signature, not as a line in the body')
   assert.ok(!t.includes('📦'), 'assets the door carries are legacy — culled from the brief')
   assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the section')
-  assert.ok(t.includes('action_spend — ACTION "spend": chain waits here for a click'), 'action part in the chain shown under its slug')
-  assert.ok(t.includes('enter_door — ENTER "door":'), 'door definition carries its slug')
   assert.ok(t.includes('for item:Foe (+index) in'), 'foreach lowered to a loop header')
-  assert.ok(t.includes('  action_spend — ACTION "spend": chain waits here for a click'), 'loop body is an indented block')
-  assert.ok(t.includes('# (end unwired — after the loop the chain stops here)'), 'unwired loop end stated, not hidden')
+  assert.ok(t.includes('    action_spend — ACTION "spend": chain waits here for a click'), 'loop body is an indented block under the signature')
+  assert.ok(t.includes('return "victory"  # exit_victory — EXIT "victory"'), 'an EXIT prints as a return')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
-  assert.ok(t.includes('EXIT "victory"'), 'named exit listed')
 })
 
 test('llm export — ledger and global reads name what they touch', () => {
@@ -120,15 +118,15 @@ test('llm export — ledger and global reads name what they touch', () => {
   assert.ok(t.includes('## Shared state — named values every graph & machine reads or writes'), 'shared state gets its own section before the programs')
   assert.ok(t.includes('system ledger roster.rank :int — read by getledger'), 'the ledger variable is declared with the part that reads it')
   assert.ok(t.includes('reads system ledger roster.rank (int)'), 'the get part names the ledger variable it reads')
-  assert.ok(t.includes('# ⇣ rank ← getledger.rank :int'), 'the wire line carries the ledger value by name')
+  assert.ok(t.includes('rank ← getledger.rank :int'), 'the ledger value reaches the call by name, as a call argument')
   assert.ok(t.includes('reads ⚙ depth (int)'), 'the global read names the global')
 })
 
-test('llm export — the open points are collected once, at the foot', () => {
+test('llm export — unwired paths are not flagged: the code shape carries them', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('## ⚠ Open in this design — every point left undecided, grouped'), 'one section carries every gap')
-  assert.ok(t.includes('**Unwired branches — a chain stops where the test or option leads nowhere**'), 'grouped by cause')
-  assert.ok(t.includes('- Machine "combat": for: nothing continues after the loop'), 'the gap names its part and the graph it sits in')
+  assert.ok(!t.includes('## ⚠ Open in this design'), 'no open-points section collected at the foot of the brief')
+  assert.ok(!t.includes('(true unwired') && !t.includes('(false unwired') && !t.includes('(end unwired'), 'an unwired arm prints nothing at all')
+  assert.ok(!t.includes('has no flow'), 'no per-part note left behind claiming a branch is undecided')
 })
 
 test('llm export — Curio cheatsheet closes the brief', () => {
