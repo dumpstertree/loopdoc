@@ -156,7 +156,7 @@ function detail(n, g, doc) {
 // never join a chain (pure values, notes, frames) ride as a side list; and
 // anything the lowering cannot place — unwired branches, parallel chains,
 // cycles, wires into deleted parts — is flagged ⚠ so nothing is lost quietly
-function graphSection(g, doc, heading, parentNote) {
+function graphSection(g, doc, heading, parentNote, slugs) {
   const L = []
   const labels = makeLabels(g)
   const nodes = g.nodes || []
@@ -174,13 +174,20 @@ function graphSection(g, doc, heading, parentNote) {
     const s = byId[l.from]
     if (!s) return `⚠ deleted part (id ${l.from})`
     const out = dataPorts(s, doc.assets, doc.funcs || [], g).out.find((x) => x.id === l.fromPort)
-    return `${labels[l.from]}.${out?.name || l.fromPort}${out?.type ? ` :${out.type}` : ''}`
+    return `${slugs[l.from] || labels[l.from]}.${out?.name || l.fromPort}${out?.type ? ` :${out.type}` : ''}`
   }
   const outFlow = (id, port) => flows.filter((l) => l.from === id && (port == null || l.fromPort === port))
   const feed = (id) => datas.filter((l) => l.to === id)
+  // a named part shows both handles (slug — KIND "name") so the line stays
+  // scannable; an unnamed one shows its slug alone, whose kind prefix carries
+  // what the bare KIND label would have said
+  const disp = (id) => {
+    const s = slugs[id] || labels[id]
+    return labels[id].includes('"') ? `${s} — ${labels[id]}` : s
+  }
   const headLine = (n, ind) => {
     const d = detail(n, g, doc)
-    return `${pad(ind)}${labels[n.id]}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`
+    return `${pad(ind)}${disp(n.id)}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`
   }
   const wires = (n, ind) => feed(n.id).map((l) => `${pad(ind + 1)}# ⇣ ${portName(n, l.toPort, 'in')} ← ${wire(l)}`)
 
@@ -194,11 +201,11 @@ function graphSection(g, doc, heading, parentNote) {
     while (cur) {
       const n = byId[cur]
       if (!n) { L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${cur})`); break }
-      if (visited.has(cur)) { L2.push(`${pad(ind)}goto ${labels[cur]} — ⚠ this chain returns to a part already written above`); break }
+      if (visited.has(cur)) { L2.push(`${pad(ind)}goto ${slugs[cur] || labels[cur]} — ⚠ this chain returns to a part already written above`); break }
       visited.add(cur)
       const take = (port) => {
         const ls = port == null ? outFlow(cur) : outFlow(cur, port)
-        for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra flow out of ${labels[cur]}` })
+        for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra flow out of ${slugs[cur] || labels[cur]}` })
         return ls[0]
       }
       const step = (l) => {
@@ -215,7 +222,7 @@ function graphSection(g, doc, heading, parentNote) {
               const l = feed(cur).find((x) => x.toPort === `__${s}__`)
               return l ? wire(l) : `⇣${s}`
             }).join(` ${n.op || '=='} `)
-        L2.push(`${pad(ind)}if (${test}):  # ${labels[cur]}`)
+        L2.push(`${pad(ind)}if (${test}):  # ${disp(cur)}`)
         const tb = take('true')
         if (tb && byId[tb.to]) L2.push(...chain(tb.to, ind + 1))
         else if (tb) L2.push(`${pad(ind + 1)}⚠ deleted part (id ${tb.to})`)
@@ -227,7 +234,7 @@ function graphSection(g, doc, heading, parentNote) {
         else L2.push(`${pad(ind)}# (false unwired — the chain stops when the test fails)`)
         cur = null
       } else if (k === 'choice') {
-        L2.push(`${pad(ind)}wait for player choice:  # ${labels[cur]}`)
+        L2.push(`${pad(ind)}wait for player choice:  # ${disp(cur)}`)
         for (const e of n.exits || []) {
           const ls = outFlow(cur, e.id)
           for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra option ${q(e.label || '?')}` })
@@ -243,8 +250,8 @@ function graphSection(g, doc, heading, parentNote) {
         L2.push(
           pad(ind) +
           (k === 'for'
-            ? `for i:int up to ${src ? wire(src) : '?'}:  # ${labels[cur]}`
-            : `for item:${n.itemType || '?'} (+index) in ${src ? wire(src) : '?'}:  # ${labels[cur]}`),
+            ? `for i:int up to ${src ? wire(src) : '?'}:  # ${disp(cur)}`
+            : `for item:${n.itemType || '?'} (+index) in ${src ? wire(src) : '?'}:  # ${disp(cur)}`),
         )
         const body = take('out') // the loop's iter port
         if (body) {
@@ -281,7 +288,7 @@ function graphSection(g, doc, heading, parentNote) {
   while (extra.length) {
     const x = extra.shift()
     if (visited.has(x.id)) continue
-    L.push(`# ⚠ parallel chain — ${x.why}: starts at ${labels[x.id]}`)
+    L.push(`# ⚠ parallel chain — ${x.why}: starts at ${slugs[x.id] || labels[x.id]}`)
     L.push(...chain(x.id, 0))
   }
 
@@ -314,6 +321,41 @@ export function exportForLLM(doc) {
   }
   collect(doc.design)
   for (const f of doc.funcs || []) collect(f.graph || { nodes: [] })
+
+  // document-wide code-style handles: one slug per part, derived from kind +
+  // name, made unique against the WHOLE document (container prefix only when
+  // the plain form clashes with a part another graph already claimed) — so
+  // every cross-reference (wire source, goto, parallel chain) is unambiguous
+  const slugs = {}
+  {
+    const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    const prefixOf = (k) => ({ machine: 'mach', graph: 'sub', condition: 'if', ifb: 'if', choice: 'pick', enter: 'enter', exit: 'exit', exitinst: 'exitref', func: 'fn', foreach: 'for', for: 'for' }[k] || slugify(k))
+    const taken = new Set()
+    const assign = (n, prefix) => {
+      const base = prefixOf(n.kind)
+      const nm = slugify(n.name || '')
+      let s = nm ? `${base}_${nm}` : base
+      if (taken.has(s) && prefix) {
+        const cont = `${prefix}_${s}`
+        if (!taken.has(cont)) s = cont
+      }
+      if (taken.has(s)) {
+        let i = 2
+        while (taken.has(`${s}_${i}`)) i++
+        s = `${s}_${i}`
+      }
+      slugs[n.id] = s
+      taken.add(s)
+    }
+    const slugWalk = (g, prefix) => {
+      for (const n of g.nodes || []) {
+        assign(n, prefix)
+        if (n.graph) slugWalk(n.graph, slugs[n.id])
+      }
+    }
+    slugWalk(doc.design, '')
+    for (const f of doc.funcs || []) slugWalk(f.graph || { nodes: [] }, `fn_${slugify(f.name || '') || 'fn'}`)
+  }
 
   out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
   out.push(
@@ -355,7 +397,7 @@ export function exportForLLM(doc) {
     out.push('## Defined functions — ƒ isolated bodies a FUNC part calls by name')
     for (const f of doc.funcs) {
       out.push(`- ${f.name || '(unnamed)'} · ${(f.graph?.nodes || []).length} parts${f.note ? ` — ${f.note}` : ''}`)
-      out.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', ''))
+      out.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', '', slugs))
       out.push('')
     }
     out.push('')
@@ -377,7 +419,7 @@ export function exportForLLM(doc) {
 
   out.push('## Graphs')
   const walkGraph = (g, depth, note) => {
-    out.push(...graphSection(g, doc, `${'#'.repeat(3 + depth)} ${g.mode === 'machine' ? 'Machine' : 'Flow Graph'}`, note))
+    out.push(...graphSection(g, doc, `${'#'.repeat(3 + depth)} ${g.mode === 'machine' ? 'Machine' : 'Flow Graph'}`, note, slugs))
     out.push('')
     for (const n of g.nodes || [])
       if (n.graph)

@@ -62,8 +62,8 @@ test('llm export — header, notes, types, globals, assets all land', () => {
 test('llm export — flow graph: entry, typed VAR with real values, nesting', () => {
   const t = exportForLLM(doc)
   assert.ok(t.indexOf('STEP "start"') > t.indexOf('### Flow Graph "Main Loop"') && t.indexOf('STEP "start"') < t.indexOf('MACHINE "combat"'), 'chain written in run order, entry first')
-  assert.ok(t.includes('VAR "hero": makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'fill-in coerced and expanded')
-  assert.ok(t.includes('# ⇣ lives ← VAR "hero".hero :Foe'), 'data wire shown as a # line under its consumer')
+  assert.ok(t.includes('var_hero — VAR "hero": makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'definition keeps both handles: slug + display label')
+  assert.ok(t.includes('# ⇣ lives ← var_hero.hero :Foe'), 'data wire shown as a # line under its consumer, sourced by slug')
   assert.ok(t.includes('NOTE') || t.includes('annotation frame'), 'text frame carried')
 })
 
@@ -72,9 +72,10 @@ test('llm export — machine section: door vars/assets, loops, wires, actions', 
   assert.ok(t.includes('Machine "combat"') && t.includes('inside MACHINE "combat"'), 'nested machine sectioned under its parent')
   assert.ok(t.includes('lives:int = 3'), 'enter var carried')
   assert.ok(t.includes('📦 sprites'), 'enter asset carried')
-  assert.ok(t.includes('ACTION "gold": chain waits here for a click'), 'action part and its waiting shown')
+  assert.ok(t.includes('action_gold — ACTION "gold": chain waits here for a click'), 'action part and its waiting shown under its slug')
+  assert.ok(t.includes('enter_door — ENTER "door":'), 'door definition carries its slug')
   assert.ok(t.includes('for item:Foe (+index) in'), 'foreach lowered to a loop header')
-  assert.ok(t.includes('  ACTION "spend": chain waits here for a click'), 'loop body is an indented block')
+  assert.ok(t.includes('  action_spend — ACTION "spend": chain waits here for a click'), 'loop body is an indented block')
   assert.ok(t.includes('# (end unwired — after the loop the chain stops here)'), 'unwired loop end stated, not hidden')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
   assert.ok(t.includes('EXIT "victory"'), 'named exit listed')
