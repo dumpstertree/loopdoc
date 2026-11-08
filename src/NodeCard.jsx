@@ -5,9 +5,9 @@
 // handles, ⇣ in-ports are drop targets.
 import React from 'react'
 import { T } from './styles.gen.js' // every styling value, generated from styles.json
-import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, exitNameTaken, resolveExitRef, exitInstVars, fieldsOf, emptyValue, typedValue, MATH } from './model.js'
+import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, exitNameTaken, resolveExitRef, exitInstVars, fieldsOf, emptyValue, typedValue, MATH, BOOL } from './model.js'
 import { takesFlow } from './wireRules.js'
-import { dataValue, fmt, mathVal } from './engine.js'
+import { dataValue, fmt, mathVal, boolVal } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
 
 // one width for every kind — the card is one shape, so both canvases agree
@@ -814,69 +814,130 @@ export default function NodeCard({
 
       // VAR — a typed value, filled in field by field
       fields: () =>
-        node.kind === 'var' ? (
-          <>
-            <div className="nd-row">
-              <input
-                className="inp"
-                style={{ flex: 1, minWidth: 0 }}
-                placeholder="var…"
-                value={node.variable?.name || ''}
-                onChange={(e) => onPatch({ variable: { ...(node.variable || {}), name: e.target.value } })}
-                onKeyDown={(e) => e.stopPropagation()}
-              />
-              <span className="nd-sub">=</span>
-              <TypeSelect
-                types={types}
-                value={node.variable?.type || ''}
-                title="make it any type — structs and their [] forms fill in every field below, nested types included"
-                onChange={(type) =>
-                  onPatch({ variable: { ...(node.variable || {}), type, value: emptyValue(type, types) } })
-                }
-              />
-            </div>
-            {node.variable?.type ? (
-              <ValueEditor
-                types={types}
-                assets={assets}
-                typeId={node.variable.type}
-                value={node.variable.value}
-                onValue={(value) => onPatch({ variable: { ...node.variable, value } })}
-              />
-            ) : (
-              <input
-                className="inp"
-                style={{ width: '100%' }}
-                placeholder="value…"
-                value={node.variable?.value ?? ''}
-                onChange={(e) => onPatch({ variable: { ...(node.variable || {}), value: e.target.value } })}
-                onKeyDown={(e) => e.stopPropagation()}
-              />
-            )}
-            {/* the value this VAR makes ⇡ — a data port like any other, no flow */}
-            {node.variable?.type && (
-              <div className="dvar out" title="what ⇣ wires read — drag to feed any ⇣ of the same type">
-                <span>
-                  ⇡ {node.variable.name || 'value'}:<b>{node.variable.type}</b>
-                </span>
-                {(() => {
-                  const s = fmt(typedValue(node.variable.type, node.variable.value, types))
-                  return s === '' || s === null || s === undefined ? null : <span className="dval">{s}</span>
-                })()}
-                <span
-                  className="port-data out"
-                  data-port={portKey(node.id, '__val__', 'out')}
-                  title="drag to feed a ⇣ of the same type"
-                  onPointerDown={(e) => {
-                    e.stopPropagation()
-                    e.preventDefault()
-                    onDataPortDown(e, node.id, '__val__')
-                  }}
+        node.kind === 'var' ? (() => {
+          const v = node.variable || {}
+          const t = String(v.type || '').trim()
+          const isArr = t.endsWith('[]')
+          // one ⇣ per type that makes the value up: struct fields keep their
+          // ledger port ids (snapshot picked with the type, else ledger shape);
+          // everything else takes a single whole-value ⇣ — and while a port is
+          // unwired its fill-in cell stays open on the card
+          const fields = !isArr && (v.fields && v.fields.length) ? v.fields : (!isArr ? fieldsOf(types, t) : null)
+          const hasFields = !!fields && fields.length > 0
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const wiredIn = hasFields ? fields.some((f) => wired(f.id)) : wired('__in__')
+          const obj = v.value && typeof v.value === 'object' && !Array.isArray(v.value) ? v.value : {}
+          return (
+            <>
+              <div className="nd-row">
+                <input
+                  className="inp"
+                  style={{ flex: 1, minWidth: 0 }}
+                  placeholder="var…"
+                  value={v.name || ''}
+                  onChange={(e) => onPatch({ variable: { ...v, name: e.target.value } })}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+                <span className="nd-sub">=</span>
+                <TypeSelect
+                  types={types}
+                  value={v.type || ''}
+                  title="make it any type — structs and their [] forms fill in every field below, nested types included"
+                  onChange={(type) =>
+                    onPatch({
+                      variable: {
+                        ...v,
+                        type,
+                        value: emptyValue(type, types),
+                        fields: fieldsOf(types, type) && !type.endsWith('[]') ? fieldsOf(types, type) : undefined,
+                      },
+                    })
+                  }
                 />
               </div>
-            )}
-          </>
-        ) : null,
+              {hasFields
+                ? fields.map((f) => (
+                    <div
+                      className="dvar"
+                      key={f.id}
+                      title={`wire any ${f.typeId} into ⇣ ${f.name || 'field'} — the cell types it while unwired`}
+                    >
+                      <span className="port-data in" data-port={portKey(node.id, f.id, 'in')} />
+                      <span>
+                        ⇣ {f.name || 'field'}:<b>{f.typeId}</b>
+                      </span>
+                      {wired(f.id) ? (
+                        <span className="nd-sub">wire lands here ⇣</span>
+                      ) : (
+                        <ValueEditor
+                          types={types}
+                          assets={assets}
+                          typeId={f.typeId}
+                          value={obj[f.name || 'field']}
+                          onValue={(x) => onPatch({ variable: { ...v, value: { ...obj, [f.name || 'field']: x } } })}
+                        />
+                      )}
+                    </div>
+                  ))
+                : t
+                  ? (
+                      <div className="dvar" title="feed the whole value through ⇣ — the cell types it while unwired">
+                        <span className="port-data in" data-port={portKey(node.id, '__in__', 'in')} />
+                        <span>
+                          ⇣ {v.name || 'value'}:<b>{t}</b>
+                        </span>
+                        {wired('__in__') ? (
+                          <span className="nd-sub">wire lands here ⇣</span>
+                        ) : (
+                          <ValueEditor
+                            types={types}
+                            assets={assets}
+                            typeId={t}
+                            value={v.value}
+                            onValue={(value) => onPatch({ variable: { ...v, value } })}
+                          />
+                        )}
+                      </div>
+                    )
+                  : (
+                      <input
+                        className="inp"
+                        style={{ width: '100%' }}
+                        placeholder="value…"
+                        value={v.value ?? ''}
+                        onChange={(e) => onPatch({ variable: { ...v, value: e.target.value } })}
+                        onKeyDown={(e) => e.stopPropagation()}
+                      />
+                    )}
+              {/* the value this VAR makes ⇡ — a data port like any other, no flow */}
+              {t && (
+                <div className="dvar out" title="what ⇣ wires read — drag to feed any ⇣ of the same type">
+                  <span>
+                    ⇡ {v.name || 'value'}:<b>{t}</b>
+                  </span>
+                  {(() => {
+                    // the shown value is the typed fill-in — once any ⇣ feeds
+                    // this VAR, the real value comes from the wires, and only
+                    // the engine walkthrough knows it
+                    if (wiredIn) return null
+                    const s = fmt(typedValue(t, v.value, types))
+                    return s === '' || s === null || s === undefined ? null : <span className="dval">{s}</span>
+                  })()}
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, '__val__', 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, '__val__')
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          )
+        })() : null,
 
       // GRAPH · MACHINE — how big the nest is, and the doors gathered up
       nested: () =>
@@ -1060,6 +1121,79 @@ export default function NodeCard({
               })}
               {dp.out.map((p) => (
                 <div className="dvar out" key={p.id} title="the computed number — any consumer of this type can read it">
+                  <span>
+                    ⇡ {p.name}:<b>{p.type}</b>
+                  </span>
+                  {live !== null && <span className="dval">{live}</span>}
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, p.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, p.id)
+                    }}
+                  />
+                </div>
+              ))}
+            </>
+          )
+        })(),
+
+      // AND · OR — combine bool inputs into one bool verdict
+      bool: () =>
+        BOOL[node.kind] !== undefined &&
+        (() => {
+          const dp = dataPorts(node, assets, funcs, graph)
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const live = sim ? boolVal(graph.nodes, graph.links, sim.mem || {}, node) : null
+          return (
+            <>
+              {grow('slot', '+ ⇣ bool', () => onPatch({ slots: Math.max(2, Number(node.slots || 2)) + 1 }))}
+              {!sim && (
+                <div className="nd-row" title="how the fed ⇣ slots make one ⇡ verdict">
+                  <span className="nd-sub">
+                    {node.kind === 'and' ? 'all ⇣ → ⇡' : 'any ⇣ → ⇡'}
+                  </span>
+                </div>
+              )}
+              {dp.in.map((p) => {
+                const cur = (node.cVals || {})[p.id] ?? ''
+                return (
+                  <div
+                    className="dvar"
+                    key={p.id}
+                    title={
+                      wired(p.id)
+                        ? 'reads bool from the wire'
+                        : 'no wire — pick true or false here, or leave it blank and this slot is ignored'
+                    }
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {!wired(p.id) && !sim && (
+                      <select
+                        className="inp"
+                        style={{ flex: 1, minWidth: 0 }}
+                        title="value used while unwired"
+                        value={cur}
+                        onChange={(e) => onPatch({ cVals: { ...(node.cVals || {}), [p.id]: e.target.value } })}
+                      >
+                        <option value="">pick…</option>
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    )}
+                    {!wired(p.id) && sim && String(cur) !== '' && <span className="dval">{String(cur)}</span>}
+                    {wired(p.id) && <span className="nd-sub">wire lands here ⇣</span>}
+                  </div>
+                )
+              })}
+              {dp.out.map((p) => (
+                <div className="dvar out" key={p.id} title="the verdict — any consumer of bool can read it">
                   <span>
                     ⇡ {p.name}:<b>{p.type}</b>
                   </span>
@@ -1837,7 +1971,7 @@ export default function NodeCard({
         shape.container ? 'nd-container' : ''
       } ${selected ? 'nd-selected' : ''} ${isEntry ? 'nd-entry' : ''} ${
         isExit ? 'nd-exit' : ''
-      } ${sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''}`}
+      } ${node.flip ? 'nd-flip' : ''} ${sim && tokWait ? 'nd-wait' : sim && tokHere ? 'nd-tok' : ''}`}
       data-node-id={node.id}
       style={{ left: node.x, top: node.y, width: W, height: H }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}

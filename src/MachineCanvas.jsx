@@ -37,13 +37,22 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   onChangeRef.current = onChange
   const simRef = useRef(sim)
   simRef.current = sim
+  // window-keyboard/pointer listeners keep their closures alive across path
+  // changes (open a nested canvas, the component instance is reused), so any
+  // long-lived handler must read the LIVE props through refs — a captured
+  // onChange still holds the save path from when the canvas was mounted, and
+  // replacing graphRef-style with it writes one graph into another
+  const funcsRef = useRef(funcs)
+  funcsRef.current = funcs
+  const assetsRef = useRef(assets)
+  assetsRef.current = assets
 
   const warn = (m) => {
     setMsg(m)
     setTimeout(() => setMsg((x) => (x === m ? null : x)), 3200)
   }
 
-  const mutate = (fn) => onChange(fn(graphRef.current))
+  const mutate = (fn) => onChangeRef.current(fn(graphRef.current))
 
   // selection + clipboard come from the shared canvas editor
   const { selection, setSelection, selectionRef, clipboardRef, copySel, paste } = useCanvasEditor({
@@ -168,7 +177,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
       return { ...n, objType: td.name, fields: f }
     })
     let g2 = { ...g, nodes }
-    for (const n of g.nodes) if (n.kind === 'inspect') g2 = pruneLinks(g2, assets, n.id, funcs)
+    for (const n of g.nodes) if (n.kind === 'inspect') g2 = pruneLinks(g2, assetsRef.current, n.id, funcsRef.current)
     if (nodesChanged || g2.links.length !== g.links.length) onChangeRef.current(g2)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [types])
@@ -223,7 +232,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
           ...g,
           links: g.links.map((l) =>
             l.id === drag.link && Array.isArray(l.anchors)
-              ? { ...l, anchors: l.anchors.map((a, i) => (i === drag.idx ? { x: Math.round(p.x), y: Math.round(p.y) } : a)) }
+              ? { ...l, anchors: l.anchors.map((a, i) => (i === drag.idx ? { x: snap(p.x), y: snap(p.y) } : a)) }
               : l,
           ),
         }))
@@ -334,6 +343,12 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
           const sc = scrollRef.current
           setPalette({ x: pt.x - (sc?.scrollLeft || 0), y: pt.y - (sc?.scrollTop || 0), sx: pt.x, sy: pt.y })
         }
+      } else if ((e.key === 'f' || e.key === 'F') && !(e.ctrlKey || e.metaKey || e.altKey) && selectionRef.current.length) {
+        // F flips the selected parts: ⇣ gutters on the right, ⇡ on the left —
+        // loops often wire backwards. flip is a card field; ports keep their
+        // ids, so live wires ride along and re-measure onto the other side
+        const ids = selectionRef.current
+        mutate((g) => ({ ...g, nodes: g.nodes.map((n) => (ids.includes(n.id) ? { ...n, flip: !n.flip } : n)) }))
       } else if (e.key === 'Escape') {
         setSel(null)
         setSelAnchor(null)
@@ -376,12 +391,12 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
             const ifn = g.nodes.find((n) => n.id === dead.to && n.kind === 'ifb')
             if (ifn) {
               const rest = links.find((l) => l.to === ifn.id && (l.toPort === '__a__' || l.toPort === '__b__'))
-              const ot = rest && dataPortType({ nodes, links }, assets, rest.from, rest.fromPort, 'out', funcs)
+              const ot = rest && dataPortType({ nodes, links }, assetsRef.current, rest.from, rest.fromPort, 'out', funcsRef.current)
               nodes = nodes.map((n) => (n.id === ifn.id ? { ...n, cmpType: ot && ot !== 'any' ? ot : null } : n))
             }
           }
           // math parts re-derive their ⇡ result type from whatever operands remain
-          onChangeRef.current(syncMath({ ...g, nodes, links }, assets, funcs))
+          onChangeRef.current(syncMath({ ...g, nodes, links }, assetsRef.current, funcsRef.current))
         } else {
           // selected parts go through the model's removeNode so a deleted TEXT
           // frame frees the parts it was grouping instead of orphaning them —
@@ -400,7 +415,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
           setSelection(ids.filter((id) => prot(id)))
           let g = g0
           for (const id of kill) g = removeNode(g, id)
-          if (kill.some((id) => (g0.nodes || []).find((x) => x.id === id)?.kind === 'exit')) g = pruneAllExitInstLinks(g, assets, funcs)
+          if (kill.some((id) => (g0.nodes || []).find((x) => x.id === id)?.kind === 'exit')) g = pruneAllExitInstLinks(g, assetsRef.current, funcsRef.current)
           if (kill.length) onChangeRef.current(g)
         }
       }
@@ -574,7 +589,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   const a = startOf(l)
                   const b = endOf(l)
                   if (!a || !b) return null
-                  const { d } = routePath(a, b, l.anchors)
+                  const { d } = routePath(a, b, l.anchors, byId[l.from]?.flip ? -1 : 1, byId[l.to]?.flip ? -1 : 1)
                   const isSel = sel === l.id
                   return (
                     <g
@@ -591,7 +606,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                         mutate((g) => ({
                           ...g,
                           links: g.links.map((x) =>
-                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x), y: Math.round(p.y) }] } : x,
+                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: snap(p.x), y: snap(p.y) }] } : x,
                           ),
                         }))
                       }}
@@ -607,7 +622,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   const a = portXY[`${l.from}:${l.fromPort}:out`]
                   const b = portXY[`${l.to}:${l.toPort}:in`]
                   if (!a || !b) return null
-                  const { d } = routePath(a, b, l.anchors)
+                  const { d } = routePath(a, b, l.anchors, byId[l.from]?.flip ? -1 : 1, byId[l.to]?.flip ? -1 : 1)
                   return (
                     <g
                       key={l.id}
@@ -623,7 +638,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                         mutate((g) => ({
                           ...g,
                           links: g.links.map((x) =>
-                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x), y: Math.round(p.y) }] } : x,
+                            x.id === l.id ? { ...x, anchors: [...(x.anchors || []), { x: snap(p.x), y: snap(p.y) }] } : x,
                           ),
                         }))
                       }}
@@ -674,7 +689,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                 )}
                 {drag && (drag.kind === 'flow' || drag.kind === 'data') && portXY[`${drag.from}:${drag.port}:out`] && (
                   <path
-                    d={orth(portXY[`${drag.from}:${drag.port}:out`].x, portXY[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y).d}
+                    d={orth(portXY[`${drag.from}:${drag.port}:out`].x, portXY[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y, byId[drag.from]?.flip ? -1 : 1, 0).d}
                     className="edge-temp"
                     stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                   />

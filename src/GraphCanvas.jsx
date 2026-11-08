@@ -48,6 +48,15 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
   const lastPointerRef = useRef(null)
   const graphRef = useRef(graph)
   graphRef.current = graph
+  // long-lived window handlers must read the live props via refs: the App's
+  // onChange closure carries the open-graph path, and a copy captured when
+  // this canvas was mounted would save a nested graph at the old depth
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const funcsRef = useRef(funcs)
+  funcsRef.current = funcs
+  const assetsRef = useRef(assets)
+  assetsRef.current = assets
 
   const warn = (m) => {
     setMsg(m)
@@ -55,7 +64,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
   }
 
   // ---- commit helpers ---------------------------------------------------------
-  const mutate = (fn) => onChange(fn(graphRef.current))
+  const mutate = (fn) => onChangeRef.current(fn(graphRef.current))
 
   // selection + clipboard come from the shared canvas editor; the flow canvas
   // pans, so the paste pointer is mapped from viewport to surface coords
@@ -237,8 +246,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
       } else if (drag.kind === 'flow' || drag.kind === 'data' || drag.kind === 'branch') {
         setDrag((d) => ({ ...d, x: p.x, y: p.y }))
       } else if (drag.kind === 'anchor') {
-        const x = Math.round(p.x - originRef.current.x)
-        const y = Math.round(p.y - originRef.current.y)
+        const x = snap(p.x - originRef.current.x)
+        const y = snap(p.y - originRef.current.y)
         mutate((g) => ({
           ...g,
           links: g.links.map((l) =>
@@ -357,6 +366,12 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
           const sc = scrollRef.current
           setPalette({ x: pt.x - (sc?.scrollLeft || 0), y: pt.y - (sc?.scrollTop || 0), sx: pt.x, sy: pt.y })
         }
+      } else if ((e.key === 'f' || e.key === 'F') && !mod && !e.altKey && selectionRef.current.length) {
+        // F flips the selected parts: ⇣ gutters on the right, ⇡ on the left —
+        // loops often wire backwards. flip is a card field; ports keep their
+        // ids, so live wires ride along and re-measure onto the other side
+        const ids = selectionRef.current
+        mutate((g) => ({ ...g, nodes: g.nodes.map((n) => (ids.includes(n.id) ? { ...n, flip: !n.flip } : n)) }))
       } else if (e.key === 'Escape') setSel(null)
       else if (e.key === 'Delete' || e.key === 'Backspace') {
         const s = selRef.current
@@ -370,7 +385,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
         } else if (s) {
           e.preventDefault()
           // math parts left without an operand re-derive their ⇡ result type
-          mutate((g) => syncMath({ ...g, links: g.links.filter((l) => l.id !== s.link) }, assets, funcs))
+          mutate((g) => syncMath({ ...g, links: g.links.filter((l) => l.id !== s.link) }, assetsRef.current, funcsRef.current))
           setSel(null)
         } else if (selectionRef.current.length) {
           e.preventDefault()
@@ -412,6 +427,9 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
   // node so building toward the right/bottom edge just makes room, never clips
   const surfW = Math.max(size.w, graph.nodes.reduce((m, n) => Math.max(m, (n.x || 0) + origin.x + 600), 0))
   const surfH = Math.max(size.h, graph.nodes.reduce((m, n) => Math.max(m, (n.y || 0) + origin.y + 600), 0))
+  // flipped parts (F): their ports sit on the opposite edges, so their end
+  // hops must leave/enter leftward — 0 keeps the classic routing untouched
+  const flips = new Set(graph.nodes.filter((n) => n.flip).map((n) => n.id))
   const selSet = new Set(selection)
   // compatible drop targets while dragging a wire — same shared rules as the
   // machine canvas, so every ⇣ port that WOULD accept the wire glows first.
@@ -495,7 +513,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 const t = flowEnd(l)
                 if (!s || !t) return null
                 const anchors = l.anchors || []
-                const d = routePath(s, t, anchors.map((p) => ({ x: p.x + origin.x, y: p.y + origin.y }))).d
+                const d = routePath(s, t, anchors.map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), flips.has(l.from) ? -1 : 1, flips.has(l.to) ? -1 : 1).d
                 const isReturn = kindMeta(a).ports(a).find((p) => p.id === l.fromPort)?.label === 'return'
                 return (
                   <g
@@ -513,7 +531,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                         ...g,
                         links: g.links.map((x) =>
                           x.id === l.id
-                            ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x - originRef.current.x), y: Math.round(p.y - originRef.current.y) }] }
+                            ? { ...x, anchors: [...(x.anchors || []), { x: snap(p.x - originRef.current.x), y: snap(p.y - originRef.current.y) }] }
                             : x,
                         ),
                       }))
@@ -532,7 +550,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 const s = portPos[`${l.from}:${l.fromPort}:out`]
                 const t = portPos[`${l.to}:${l.toPort}:in`]
                 if (!s || !t) return null
-                const d = routePath(s, t, (l.anchors || []).map((p) => ({ x: p.x + origin.x, y: p.y + origin.y }))).d
+                const d = routePath(s, t, (l.anchors || []).map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), flips.has(l.from) ? -1 : 1, flips.has(l.to) ? -1 : 1).d
                 return (
                   <g
                     key={l.id}
@@ -549,7 +567,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                         ...g,
                         links: g.links.map((x) =>
                           x.id === l.id
-                            ? { ...x, anchors: [...(x.anchors || []), { x: Math.round(p.x - originRef.current.x), y: Math.round(p.y - originRef.current.y) }] }
+                            ? { ...x, anchors: [...(x.anchors || []), { x: snap(p.x - originRef.current.x), y: snap(p.y - originRef.current.y) }] }
                             : x,
                         ),
                       }))
@@ -600,7 +618,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
               )}
               {drag && (drag.kind === 'flow' || drag.kind === 'data') && portPos[`${drag.from}:${drag.port}:out`] && (
                 <path
-                  d={orth(portPos[`${drag.from}:${drag.port}:out`].x, portPos[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y).d}
+                  d={orth(portPos[`${drag.from}:${drag.port}:out`].x, portPos[`${drag.from}:${drag.port}:out`].y, drag.x, drag.y, flips.has(drag.from) ? -1 : 1, 0).d}
                   className="edge-temp"
                   stroke={drag.kind === 'data' ? 'var(--mint)' : undefined}
                 />

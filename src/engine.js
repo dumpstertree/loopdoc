@@ -9,7 +9,7 @@
 // carry the chain along; the typed ⇣/⇡ data wires carry the values that parts
 // read (incl. the ⚙ global session store passed as mem.g, shared across
 // machines).
-import { resolveCall, fnSig, varValue, assetIcon, typedValue, MATH } from './model.js'
+import { resolveCall, fnSig, varValue, assetIcon, typedValue, fieldsOf, MATH, BOOL } from './model.js'
 import { isEntryPart } from './wireRules.js'
 
 const fmt = (v) =>
@@ -54,6 +54,25 @@ export function mathVal(nodes, links, mem, n, depth = 0) {
   return y === 0 ? null : x % y // mod
 }
 
+// and/or parts — every fed bool slot counts (wired wire first, else the
+// true/false typed on the card); slots neither wired nor typed are simply
+// ignored, and no slot at all leaves the verdict empty
+export function boolVal(nodes, links, mem, n, depth = 0) {
+  const slots = Math.max(2, Number(n.slots ?? 2))
+  const got = []
+  for (let i = 0; i < slots; i++) {
+    const pid = `__s${i}__`
+    const d = dataValue(nodes, links, mem, n.id, pid, depth + 1)
+    if (d && d.val !== null && d.val !== undefined) got.push(Boolean(d.val))
+    else {
+      const c = String((n.cVals || {})[pid] ?? '').trim()
+      if (c !== '') got.push(c === 'true')
+    }
+  }
+  if (!got.length) return null
+  return n.kind === 'and' ? got.every(Boolean) : got.some(Boolean)
+}
+
 function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
   if (depth > 12) return null
   const w = links.find((l) => l.kind === 'data' && l.to === nodeId && l.toPort === varId)
@@ -76,12 +95,38 @@ function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
   if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
   if (MATH[src.kind])
     return { val: mathVal(nodes, links, mem, src, depth + 1), from: src.name || src.kind }
+  if (BOOL[src.kind])
+    return { val: boolVal(nodes, links, mem, src, depth + 1), from: src.name || src.kind }
   if (src.kind === 'getg') return { val: (mem.g || {})[src.gRef] ?? null, from: `⚙ ${src.gName || 'global'}` }
   if (src.kind === 'var') {
-    // a made value — coerced through its declared type (nested structs too);
-    // mem.types lets the engine know the doc's shapes, optional without it
+    // a made value — coerced through its declared type (nested structs too).
+    // Its ⇣ ports feed in: a struct VAR takes one port per ledger field
+    // (the snapshot the card stored, else the ledger's shape) and a wired
+    // field wins over the typed one; anything else has a single whole-value
+    // ⇣ whose wire replaces the fill-in. mem.types lets the engine know
+    // the doc's shapes, optional without it
     const v = src.variable || {}
-    return { val: v.type ? typedValue(v.type, v.value, mem.types) : null, from: `📝 ${v.name || 'var'}` }
+    const t = String(v.type || '').trim()
+    if (!t) return { val: null, from: `📝 ${v.name || 'var'}` }
+    const isArr = t.endsWith('[]')
+    const flds = !isArr && (v.fields && v.fields.length) ? v.fields : (!isArr ? fieldsOf(mem.types, t) : null)
+    if (flds && flds.length) {
+      const merged = typedValue(t, v.value, mem.types)
+      const val = merged && typeof merged === 'object' && !Array.isArray(merged) ? { ...merged } : {}
+      let wiredAny = false
+      for (const f of flds) {
+        const d = dataValue(nodes, links, mem, src.id, f.id, depth + 1)
+        if (d) {
+          val[f.name || 'field'] = d.val
+          wiredAny = true
+        }
+      }
+      if (wiredAny) return { val, from: `📝 ${v.name || 'var'}` }
+    } else {
+      const d = dataValue(nodes, links, mem, src.id, '__in__', depth + 1)
+      if (d) return { val: d.val, from: `📝 ${v.name || 'var'}` }
+    }
+    return { val: typedValue(t, v.value, mem.types), from: `📝 ${v.name || 'var'}` }
   }
   if (src.kind === 'enter') {
     // one of the machine's door variables — set on the ENTER card (or fed
@@ -354,6 +399,30 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
         r === null
           ? `∘ ${n.name || n.kind} — ⇡ result stays empty: a side has no number (or the divisor is 0)`
           : `∘ ${n.name || n.kind}: ${fmt(va)} ${MATH[n.kind]} ${fmt(vb)} = ${fmt(r)}`,
+      )
+      advance(t, n)
+      continue
+    }
+
+    if (BOOL[n.kind]) {
+      // the chain passes through as the part folds its ⇣ bool slots
+      const slots = Math.max(2, Number(n.slots ?? 2))
+      const sides = Array.from({ length: slots }, (_, i) => dataValue(nodes, links, mem, n.id, `__s${i}__`))
+      const wait = sides.find((d) => d && (d.val === null || d.val === undefined))
+      if (wait) {
+        if (!t.armed)
+          log.push(`⏳ ${n.name || n.kind} holding — slot from "${wait.from}" has no bool yet`)
+        t.armed = true
+        put(t)
+        continue
+      }
+      const r = boolVal(nodes, links, mem, n)
+      const fed = sides.filter((d) => d && d.val !== null && d.val !== undefined).length +
+        Array.from({ length: slots }, (_, i) => String((n.cVals || {})[`__s${i}__`] ?? '').trim() !== '').filter(Boolean).length
+      log.push(
+        r === null
+          ? `∘ ${n.name || n.kind} — ⇡ result stays empty: no ⇣ slot is wired or typed`
+          : `∘ ${n.name || n.kind}: ${fed} fed ⇣ slot${fed === 1 ? '' : 's'} folded ${BOOL[n.kind] === 'all' ? 'all' : 'any'} = ${fmt(r)}`,
       )
       advance(t, n)
       continue

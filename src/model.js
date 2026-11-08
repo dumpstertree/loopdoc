@@ -119,10 +119,47 @@ export function makeGlobalsStore() {
 
 // ---- shared wire routing -----------------------------------------------------
 // straight lines with 90° turns: horizontal → vertical → horizontal,
-// plus the midpoint of the (vertical) leg where edge extras hang
-export function orth(sx, sy, tx, ty) {
-  const mx = sx + Math.max(30, (tx - sx) / 2)
-  return { d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}`, mid: { x: mx, y: (sy + ty) / 2 } }
+// plus the midpoint of the (vertical) leg where edge extras hang.
+// ds/dt pin which way each end's first/last leg must run (+1 right, −1
+// left, 0 free — only a wire's in-progress cursor end is free): a port
+// always faces its own card edge, so ⇡ exits rightward and ⇣ is entered
+// from the left — a flipped part reverses that facing.
+const WIRE_STUB = 14
+// the elbow's vertical lane for one hop: start at the preferred lane and
+// slide it into the half-plane each fixed end demands (a flipped ⇡ keeps its
+// lane on the port's left, a flipped ⇣ entered from the port's right). Sliding
+// is what makes anchor hops behave — an anchor on the "wrong" side of a
+// flipped port still exits the port facing outward and bends AT the anchor
+// instead of stub-folding back through it. Only when the two ends' demands
+// contradict (both fixed, facing away from each other) is there no legal
+// single lane, and the hop stubs out of both port sides and crosses between.
+const laneFor = (p, q, ds, dt, want) => {
+  let lo = -Infinity
+  let hi = Infinity
+  if (ds > 0) lo = Math.max(lo, p.x + WIRE_STUB)
+  if (ds < 0) hi = Math.min(hi, p.x - WIRE_STUB)
+  if (dt > 0) hi = Math.min(hi, q.x - WIRE_STUB)
+  if (dt < 0) lo = Math.max(lo, q.x + WIRE_STUB)
+  if (lo > hi) return null
+  return want < lo ? lo : want > hi ? hi : want
+}
+const hopPts = (p, q, ds, dt, want) => {
+  const mx = laneFor(p, q, ds, dt, want)
+  if (mx !== null)
+    return { pts: [{ x: mx, y: p.y }, { x: mx, y: q.y }, q], mid: { x: mx, y: (p.y + q.y) / 2 } }
+  const ex = p.x + (ds || 1) * WIRE_STUB
+  const en = q.x - (dt || 1) * WIRE_STUB
+  const my = (p.y + q.y) / 2
+  return {
+    pts: [{ x: ex, y: p.y }, { x: ex, y: my }, { x: en, y: my }, { x: en, y: q.y }, q],
+    mid: { x: (ex + en) / 2, y: my },
+  }
+}
+export function orth(sx, sy, tx, ty, ds = 0, dt = 0) {
+  const p = { x: sx, y: sy }
+  const q = { x: tx, y: ty }
+  const h = hopPts(p, q, ds, dt, p.x + Math.max(30, (q.x - p.x) / 2))
+  return { d: `M ${p.x} ${p.y} ` + h.pts.map((r) => `L ${r.x} ${r.y}`).join(' '), mid: h.mid }
 }
 
 // a wire's path: 90° breaks all the way through. Dropped anchors steer the
@@ -130,19 +167,24 @@ export function orth(sx, sy, tx, ty) {
 // horizontal elbow the plain wire uses, so placing a point on a line BENDS it
 // instead of pulling it into a diagonal. Legs that land where they started
 // collapse to nothing, so a hop sharing an x or a y is simply a straight run.
-// mid lands on the middle hop's vertical leg, where edge extras hang.
-export function routePath(a, b, anchors) {
-  if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y)
+// mid lands on the middle hop's leg, where edge extras hang. Only the end
+// hops honour flip dirs — anchors are free steering points, but a hop that
+// touches a flipped end slides its elbow into that end's half-plane, so the
+// wire never folds back at an anchor sitting on the flipped side.
+export function routePath(a, b, anchors, ds = 0, dt = 0) {
+  if (!anchors || !anchors.length) return orth(a.x, a.y, b.x, b.y, ds, dt)
   const pts = [a, ...anchors, b]
   let d = `M ${pts[0].x} ${pts[0].y}`
+  const mids = []
   for (let i = 1; i < pts.length; i++) {
     const p = pts[i - 1]
     const q = pts[i]
-    const mx = (p.x + q.x) / 2
-    d += ` L ${mx} ${p.y} L ${mx} ${q.y} L ${q.x} ${q.y}`
+    const h = hopPts(p, q, i === 1 ? ds : 0, i === pts.length - 1 ? dt : 0, (p.x + q.x) / 2)
+    d += ' ' + h.pts.map((r) => `L ${r.x} ${r.y}`).join(' ')
+    mids.push(h.mid)
   }
-  const h = Math.min(pts.length - 1, Math.max(1, Math.floor(pts.length / 2)))
-  return { d, mid: { x: (pts[h - 1].x + pts[h].x) / 2, y: (pts[h - 1].y + pts[h].y) / 2 } }
+  const h2 = Math.min(pts.length - 1, Math.max(1, Math.floor(pts.length / 2)))
+  return { d, mid: mids[h2 - 1] }
 }
 
 // every pickable type name, base first then arrays
@@ -184,7 +226,10 @@ export function renameTypeInDoc(doc, oldName, newName) {
   const walk = (g) => {
     for (const n of g.nodes) {
       if (n.kind === 'foreach') n.itemType = fix(n.itemType || '')
-      if (n.kind === 'var' && n.variable) n.variable.type = fix(n.variable.type || '')
+      if (n.kind === 'var' && n.variable) {
+        n.variable.type = fix(n.variable.type || '')
+        for (const f of n.variable.fields || []) f.typeId = fix(f.typeId || '') // field-port snapshot rides along
+      }
       for (const key of ['vars', 'inVars', 'outVars']) // ENTER/EXIT doors + STEP's ⇣/⇡ variables
         for (const v of n[key] || []) v.type = fix(v.type || '')
       if (n.kind === 'getg' || n.kind === 'setg') {
@@ -304,6 +349,18 @@ const mathData = (n) => ({
   out: [{ id: '__val__', type: n.rType || 'int', name: 'result' }],
 })
 
+export const BOOL = { and: 'all', or: 'any' }
+// and/or parts — bool ⇣ slots combined into one bool ⇡; the slot count lives
+// on the node (n.slots, default 2) and the + ⇣ button at the card foot grows
+// it; slot ids are positional so wiring never needs bookkeeping
+const boolData = (n) => {
+  const slots = Math.max(2, Number(n.slots ?? 2))
+  return {
+    in: Array.from({ length: slots }, (_, i) => ({ id: `__s${i}__`, type: 'bool', name: `slot ${i + 1}` })),
+    out: [{ id: '__bool__', type: 'bool', name: 'result' }],
+  }
+}
+
 // ---- node kinds --------------------------------------------------------------
 // One registry for both graph modes. Each kind declares:
 //   mode     'flow' | 'machine'
@@ -376,7 +433,7 @@ export const KINDS = {
     shape: { title: true, in: true, outs: true, rows: 'asset' },
   },
   var: {
-    canvas: ['flow'],
+    canvas: ['flow', 'func'],
     // pure data like INSPECT — no flow ports at all (dataOnly keeps the
     // implicit flow in-port off it and the canvas off wiring flow into it)
     dataOnly: true,
@@ -384,12 +441,20 @@ export const KINDS = {
     cls: 'nd-var',
     hint: 'makes a typed value — pick the type and fill in every field (child structs nest inside, arrays grow row by row) · ⇡ publishes it for any ⇣ of that type · drag its corner grip to widen the form',
     ports: () => [],
-    data: (n) => ({
-      in: [],
-      out: n.variable?.type
-        ? [{ id: '__val__', type: n.variable.type, name: n.variable.name || 'value' }]
-        : [],
-    }),
+    data: (n) => {
+      const v = n.variable || {}
+      const t = String(v.type || '').trim()
+      if (!t) return { in: [], out: [] }
+      // the parts that make the value up get their own ⇣: a ledger struct
+      // decomposes into per-field ports (ids mirror the ledger fields —
+      // snapshot in variable.fields, stored when the type is picked, since
+      // data() can't see the ledger); leaves and arrays take one whole-value ⇣.
+      // Unwired ports fall back to the fill-in fields typed on the card.
+      const ins = (v.fields || []).length && !t.endsWith('[]')
+        ? v.fields.map((f) => ({ id: f.id, type: f.typeId, name: f.name || 'field' }))
+        : [{ id: '__in__', type: t, name: v.name || 'value' }]
+      return { in: ins, out: [{ id: '__val__', type: t, name: v.name || 'value' }] }
+    },
     shape: { title: true, rows: 'fields', actions: ['row'], data: true, grip: 'form' },
   },
   graph: {
@@ -512,6 +577,24 @@ export const KINDS = {
       out: [{ id: '__bool__', type: 'bool', name: 'result' }],
     }),
     shape: { title: true, in: true, outs: true, rows: 'cmp', data: true },
+  },
+  and: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'AND',
+    cls: 'mc-ifb',
+    hint: 'chain passes through · ⇡ result:true only when every fed ⇣ slot is true · an unwired ⇣ takes the true/false typed on the card · + ⇣ bool grows another input slot',
+    ports: flowIO(),
+    data: boolData,
+    shape: { title: true, in: true, outs: true, rows: 'bool', actions: ['slot'], data: true },
+  },
+  or: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'OR',
+    cls: 'mc-ifb',
+    hint: 'chain passes through · ⇡ result:true when any fed ⇣ slot is true · an unwired ⇣ takes the true/false typed on the card · + ⇣ bool grows another input slot',
+    ports: flowIO(),
+    data: boolData,
+    shape: { title: true, in: true, outs: true, rows: 'bool', actions: ['slot'], data: true },
   },
   for: {
     canvas: ['machine', 'func'],
@@ -886,6 +969,7 @@ export function newNode(kind, x, y) {
     n.bVal = ''
     n.rType = 'int' // learns 'float' while any operand side is a float
   }
+  if (BOOL[kind]) n.slots = 2 // + ⇣ at the card foot grows more bool inputs
   if (kind === 'inspect') n.objType = 'any'
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}

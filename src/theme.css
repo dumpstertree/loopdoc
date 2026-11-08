@@ -787,6 +787,32 @@ svg.edges .edge {
   background: var(--cyan);
   box-shadow: var(--port-out-hover-box-shadow);
 }
+/* flipped parts (F on a selected node): ⇣ gutters and rows ride the right
+   edge, ⇡ the left — the part's own coords never change, only its face;
+   the canvases measure ports from the DOM so wires follow the swap */
+.nd-flip .port-in {
+  left: auto;
+  right: calc(-1 * var(--node-port-half));
+}
+.nd-flip .port-out {
+  right: auto;
+  left: calc(-1 * var(--node-port-half));
+}
+.nd-flip .port-tag {
+  right: auto;
+  left: var(--port-tag-right);
+}
+.nd-flip .dvar {
+  flex-direction: row-reverse;
+}
+.nd-flip .dvar .port-data.in {
+  margin-left: 0;
+  margin-right: calc(-1 * (var(--node-gutter) + var(--port-data-half)));
+}
+.nd-flip .dvar .port-data.out {
+  margin-right: 0;
+  margin-left: calc(-1 * (var(--node-gutter) + var(--port-data-half)));
+}
 .port-tag {
   position: absolute;
   right: var(--port-tag-right);

@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isEntryPart, dataCanConnect, compatTargets, takesFlow, branchLink } from '../src/wireRules.js'
 import { runDRC } from '../src/drc.js'
-import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf, syncMath, patchNode, pruneLinks } from '../src/model.js'
+import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf, syncMath, patchNode, pruneLinks, dataPorts, dataPortType, kindMeta } from '../src/model.js'
 
 const n = (kind, extra = {}) => ({ id: 'n' + kind + (extra.tag || Math.random().toString(36).slice(2, 6)), kind, x: 0, y: 0, ...extra })
 const flow = (a, b) => ({ id: 'f' + Math.random().toString(36).slice(2, 8), kind: 'flow', from: a.id, fromPort: 'out', to: b.id, toPort: 'in' })
@@ -388,4 +388,51 @@ test('editing a node keeps its live ports — STEP flow-in and FUNC ⇣ survive 
   const g2 = { nodes: [gv, fc], links: [d1, d2] }
   const edited = pruneLinks(patchNode(g2, fc.id, { cVals: { e1: { x: 3, y: 4 } } }), [], fc.id, [fn])
   assert.equal(edited.links.length, 2, 'a vector2 card-value edit keeps every FUNC input wire')
+})
+
+// ---- and/or parts — growable bool slots on every canvas ----
+test('and/or offer bool ⇣ slots and one bool ⇡ on all three canvases', () => {
+  const an = newNode('and', 0, 0)
+  const or = newNode('or', 0, 0)
+  assert.ok(an.slots === 2 && or.slots === 2, 'new and/or spawn with two slots')
+  for (const k of ['and', 'or'])
+    assert.deepEqual(kindMeta({ kind: k }).canvas, ['flow', 'machine', 'func'], `${k} sits on flow, machine and func`)
+  const dp = dataPorts(an, [], [], null)
+  assert.deepEqual(dp.in.map((p) => p.id), ['__s0__', '__s1__'], 'two positional slot ports')
+  assert.ok(dp.in.every((p) => p.type === 'bool'), 'every slot takes bool')
+  assert.deepEqual(dp.out.map((p) => [p.id, p.type]), [['__bool__', 'bool']], 'one bool verdict out')
+})
+
+test('the + ⇣ button grows another slot — ports, ids and types follow', () => {
+  const an = newNode('and', 0, 0)
+  const grown = { ...an, slots: 3 }
+  const dp = dataPorts(grown, [], [], null)
+  assert.deepEqual(dp.in.map((p) => [p.id, p.name]), [['__s0__', 'slot 1'], ['__s1__', 'slot 2'], ['__s2__', 'slot 3']], 'slot 3 appears')
+  assert.equal(dataPortType({ nodes: [grown], links: [] }, [], grown.id, '__s2__', 'in'), 'bool', 'the new slot is typed bool')
+})
+
+test('editing an and/or keeps its slot wires — renaming and card values never prune', () => {
+  const t = n('var')
+  const an = n('and')
+  const d1 = data(t, '__val__', an, '__s0__')
+  const d2 = data(t, '__val__', an, '__s1__')
+  const g = { nodes: [t, an], links: [d1, d2] }
+  const renamed = pruneLinks(patchNode(g, an.id, { name: 'gate' }), [], an.id, [])
+  assert.equal(renamed.links.length, 2, 'renaming keeps both slot wires')
+  const grown = pruneLinks(patchNode(renamed, an.id, { slots: 4 }), [], an.id, [])
+  assert.equal(grown.links.length, 2, 'growing to four slots keeps the two existing wires')
+})
+
+test('DRC: an unfed and/or warns, a typed or wired slot silences it', () => {
+  const bare = n('and')
+  const fed = n('and', { cVals: { __s0__: 'true' } })
+  const wired = n('or')
+  const src = n('var')
+  const g = (nodes, links) => runDRC({ design: { mode: 'machine', nodes, links }, assets: [], types: [], vars: [] })
+  const warns = (r) => r.filter((f) => f.text.includes('verdict stays empty'))
+  assert.ok(warns(g([bare], [])).length === 1, 'no slot fed, no card value — warns')
+  assert.ok(!warns(g([fed], [])).length, 'a card-typed slot silences it')
+  assert.ok(!warns(g([wired, src], [data(src, '__val__', wired, '__s1__')])).length, 'a wired slot silences it')
+  const partial = g([{ ...bare, slots: 3 }], [data(src, '__val__', bare, '__s0__')])
+  assert.ok(partial.some((f) => f.text.includes('unwired, untyped ⇣ slot is simply ignored')), 'a blank slot among fed ones is an info, not a warn')
 })

@@ -467,3 +467,68 @@ test('card values can be structured — a struct and a struct list log by field'
   assert.ok(log.some((l) => l.includes('path:vector2[] = [{ x: 0, y: 0 }, { x: 1, y: 2 }]')), 'struct lists log item by item')
   assert.ok(!log.some((l) => l.includes('no data wire')), 'both structured values silence the blind warning')
 })
+
+// ---- bool combinator parts — and/or fold every fed slot into one bool verdict ----
+test('AND and OR read wired bool slots through their ⇡ verdict', () => {
+  const t = n('var', { variable: { name: 'yes', type: 'bool', value: 'true' } })
+  const f = n('var', { variable: { name: 'no', type: 'bool', value: 'false' } })
+  const sink = n('step', { name: 'sink' })
+  for (const kind of ['and', 'or']) {
+    const p = n(kind)
+    const links = [data(t, '__val__', p, '__s0__'), data(f, '__val__', p, '__s1__'), data(p, '__bool__', sink, '__in__')]
+    const got = dataValue([t, f, p, sink], links, {}, sink.id, '__in__')
+    assert.ok(got && got.val === (kind === 'or'), `${kind} folds true∧false into ${kind === 'or' ? 'true' : 'false'}`)
+  }
+  const an = n('and')
+  const both = dataValue([t, f, an, sink], [data(t, '__val__', an, '__s0__'), data(t, '__val__', an, '__s1__'), data(an, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(both && both.val === true, 'and(true, true) = true')
+  const or = n('or')
+  const none = dataValue([t, f, or, sink], [data(f, '__val__', or, '__s0__'), data(f, '__val__', or, '__s1__'), data(or, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(none && none.val === false, 'or(false, false) = false')
+})
+
+test('unwired ⇣ slots take the true/false typed on the card', () => {
+  const an = n('and', { cVals: { __s0__: 'true', __s1__: 'false' } })
+  const or = n('or', { cVals: { __s0__: 'false', __s1__: 'true' } })
+  const sink = n('step', { name: 'sink' })
+  const andVal = dataValue([an, sink], [data(an, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(andVal && andVal.val === false, 'the card-typed and folds false')
+  const orVal = dataValue([or, sink], [data(or, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(orVal && orVal.val === true, 'the card-typed or folds true')
+})
+
+test('blank unwired slots are ignored; no slot at all leaves the verdict empty', () => {
+  const t = n('var', { variable: { name: 'yes', type: 'bool', value: 'true' } })
+  const an = n('and', { slots: 4, cVals: { __s0__: 'true', __s2__: '' } })
+  const or = n('or')
+  const sink = n('step', { name: 'sink' })
+  const partial = dataValue([t, an, sink], [data(t, '__val__', an, '__s1__'), data(an, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(partial && partial.val === true, 'the wired and card-typed trues ignore the blanks and agree')
+  const bare = dataValue([or, sink], [data(or, '__bool__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(bare && bare.val === null, 'an unfed or stays empty')
+})
+
+test('a grown slot is a real port — the engine reads slot three', () => {
+  const t = n('var', { variable: { name: 'yes', type: 'bool', value: 'true' } })
+  const f = n('var', { variable: { name: 'no', type: 'bool', value: 'false' } })
+  const an = n('and', { slots: 3 })
+  const sink = n('step', { name: 'sink' })
+  const links = [data(t, '__val__', an, '__s0__'), data(t, '__val__', an, '__s1__'), data(f, '__val__', an, '__s2__'), data(an, '__bool__', sink, '__in__')]
+  const got = dataValue([t, f, an, sink], links, {}, sink.id, '__in__')
+  assert.ok(got && got.val === false, 'wiring false into the grown slot folds the and to false')
+})
+
+test('the chain flows through and/or — they fold and log as the token passes', () => {
+  const en = n('enter')
+  const t = n('var', { variable: { name: 'yes', type: 'bool', value: 'true' } })
+  const f = n('var', { variable: { name: 'no', type: 'bool', value: 'false' } })
+  const an = n('and', { name: 'gate' })
+  const or = n('or', { name: 'anyone' })
+  const sink = n('step', { name: 'sink' })
+  const nodes = [en, t, f, an, or, sink]
+  const links = [flow(en, an), flow(an, or), flow(or, sink), data(t, '__val__', an, '__s0__'), data(f, '__val__', an, '__s1__'), data(t, '__val__', or, '__s0__'), data(f, '__val__', or, '__s1__')]
+  const { log } = run(nodes, links, 8)
+  assert.ok(log.some((l) => l.includes('gate') && l.includes('all') && l.includes('= false')), 'the chain logs the and fold')
+  assert.ok(log.some((l) => l.includes('anyone') && l.includes('any') && l.includes('= true')), 'the chain logs the or fold')
+  assert.ok(log.some((l) => l.includes('chain end')), 'the token keeps flowing to the end')
+})
