@@ -231,8 +231,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               ? {
                   ...n,
                   w: Math.max(150, snap(drag.sw + p.x - drag.sx)),
-                  // TODO sizes its own height from the task lines — width only
-                  ...(n.kind === 'todo' ? {} : { h: Math.max(48, snap(drag.sh + p.y - drag.sy)) }),
+                  // TODO/VAR/CODE size their own height from content — width only
+                  ...(n.kind === 'todo' || n.kind === 'var' || n.kind === 'code' ? {} : { h: Math.max(48, snap(drag.sh + p.y - drag.sy)) }),
                 }
               : n,
           ),

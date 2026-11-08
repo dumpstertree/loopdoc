@@ -86,6 +86,9 @@ function applyEnter(node, st, graph) {
     case 'machine':
       L.push(`⚙ machine "${node.name || '?'}" — ${node.graph?.nodes.length || 0} parts (open it to simulate)`)
       break
+    case 'code':
+      L.push(`⌨ ${node.name || 'code'} — ${node.lang || 'python'} script${(node.code || '').trim() ? '' : ' (empty)'}`)
+      break
     case 'func':
       L.push(`ƒ ${node.fName || 'function'} — isolated function called, chain continues`)
       break

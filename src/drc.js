@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf, resolveExitRef, MATH, BOOL } from './model.js'
 import { isEntryPart, valueWireRisks } from './wireRules.js'
+import { validateCode } from './codeLang.js'
 
 const label = (n) =>
   n ? `${kindMeta(n).label || n.kind}${n.name ? ` "${n.name}"` : ''}` : '?'
@@ -100,6 +101,13 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
       const vt = String(v.type || '').replace('[]', '').trim()
       if (vt && vt !== 'any' && !BASIC_TYPES.includes(vt) && !isDeclared(vt))
         add('warn', label(n), `makes a ${vt} — no longer a declared type`)
+    }
+    if (n.kind === 'code') {
+      const check = validateCode(n.code, n.lang || 'python', { inputs: n.inVars || [], outputs: n.outVars || [] })
+      if (!check.ok)
+        add('warn', label(n), `code: ${check.errors[0].message}${check.errors[0].line > 1 ? ` (line ${check.errors[0].line})` : ''}`)
+      else if ((check.warnings || []).length)
+        add('info', label(n), `code: ${check.warnings[0].message} (line ${check.warnings[0].line})`)
     }
   }
 

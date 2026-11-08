@@ -349,6 +349,12 @@ const mathData = (n) => ({
   out: [{ id: '__val__', type: n.rType || 'int', name: 'result' }],
 })
 
+// step/code — typed ⇣ inputs and ⇡ outputs, edited on the card like STEP
+const ioData = (n) => ({
+  in: (n.inVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
+  out: (n.outVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
+})
+
 export const BOOL = { and: 'all', or: 'any' }
 // and/or parts — bool ⇣ slots combined into one bool ⇡; the slot count lives
 // on the node (n.slots, default 2) and the + ⇣ button at the card foot grows
@@ -375,11 +381,17 @@ export const KINDS = {
     cls: 'nd-step',
     hint: 'plain step in the loop — flow passes through · its ⇣/⇡ variables are typed data ports any producer or consumer can wire',
     ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
-    data: (n) => ({
-      in: (n.inVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
-      out: (n.outVars || []).map((v) => ({ id: v.id, type: v.type || 'int', name: v.name || 'value' })),
-    }),
+    data: ioData,
     shape: { title: true, in: true, outs: true, rows: 'step', actions: ['invar', 'outvar'] },
+  },
+  code: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'CODE',
+    cls: 'mc-code',
+    hint: 'runs a Python script as the chain passes — ⇣ inputs and ⇡ outputs are derived from `def` parameters and `return` values (types stay editable) · syntax and output vars are validated',
+    ports: flowIO(),
+    data: ioData,
+    shape: { title: true, in: true, outs: true, rows: 'code', actions: [], data: true, grip: 'form' },
   },
   event: {
     canvas: ['flow'],
@@ -433,7 +445,7 @@ export const KINDS = {
     shape: { title: true, in: true, outs: true, rows: 'asset' },
   },
   var: {
-    canvas: ['flow', 'func'],
+    canvas: ['flow', 'machine', 'func'],
     // pure data like INSPECT — no flow ports at all (dataOnly keeps the
     // implicit flow in-port off it and the canvas off wiring flow into it)
     dataOnly: true,
@@ -957,6 +969,7 @@ export function newNode(kind, x, y) {
   if (kind === 'event') n.calls = []
   if (kind === 'load' || kind === 'unload' || kind === 'input') n.asset = null
   if (kind === 'var') n.variable = { name: '', type: 'string', value: '' }
+  if (kind === 'code') { n.inVars = []; n.outVars = []; n.code = ''; n.lang = 'python' }
   if (kind === 'graph') n.graph = newGraph('flow', n.name || 'sub graph')
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'func') n.func = null
@@ -1166,6 +1179,20 @@ export function reidNode(node, map) {
     map.set(`${node.id}:${old}`, e.id)
   })
   ;(nn.todos || []).forEach((t) => (t.id = uid('td'))) // checklist rows are private — fresh ids, no port maps
+  // STEP/CODE ⇣/⇡ variables are data ports — re-id and register both forms so
+  // data wires survive copy/paste (same contract as ENTER/EXIT vars)
+  ;(nn.inVars || []).forEach((v) => {
+    const old = v.id
+    v.id = uid('iv')
+    map.set(old, v.id)
+    map.set(`${node.id}:${old}`, v.id)
+  })
+  ;(nn.outVars || []).forEach((v) => {
+    const old = v.id
+    v.id = uid('ov')
+    map.set(old, v.id)
+    map.set(`${node.id}:${old}`, v.id)
+  })
   // ENTER and EXIT variables ARE ports (inside the machine and on the parent
   // MACHINE node) — re-id and register both key forms so data wires follow
   ;(nn.vars || []).forEach((v) => {

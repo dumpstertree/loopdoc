@@ -247,8 +247,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
               ? {
                   ...n,
                   w: Math.max(150, snap(drag.sw + ps.x - drag.sx)),
-                  // TODO and VAR size their own height from their content — width only
-                  ...(n.kind === 'todo' || n.kind === 'var' ? {} : { h: Math.max(48, snap(drag.sh + ps.y - drag.sy)) }),
+                  // TODO/VAR/CODE size their own height from content — width only
+                  ...(n.kind === 'todo' || n.kind === 'var' || n.kind === 'code' ? {} : { h: Math.max(48, snap(drag.sh + ps.y - drag.sy)) }),
                 }
               : n,
           ),

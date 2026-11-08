@@ -332,6 +332,17 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
       continue
     }
 
+    if (n.kind === 'code') {
+      // design-time script: validated on the card; no runtime executes it here.
+      // The chain passes through so a code part never breaks a machine.
+      const fed = (n.inVars || []).filter((v) => dataValue(nodes, links, mem, n.id, v.id))
+      log.push(
+        `⌨ ${n.name || 'code'} — ${n.lang || 'python'} script${fed.length ? ` (reads ${fed.map((v) => v.name || '?').join(', ')})` : ''}; chain continues`,
+      )
+      advance(t, n)
+      continue
+    }
+
     if (n.kind === 'ifb') {
       const side = (port, custom) => {
         const d = dataValue(nodes, links, mem, n.id, port)

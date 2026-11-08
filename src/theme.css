@@ -996,6 +996,7 @@ svg.edges .edge {
 .mc-func { --kc: var(--mc-func-kc); }
 .mc-ifb { --kc: var(--amber); }
 .mc-math { --kc: var(--cyan); }
+.mc-code { --kc: var(--cyan); }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
 .mc-inspect { --kc: var(--mc-inspect-kc); }
@@ -1004,6 +1005,13 @@ svg.edges .edge {
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); background: var(--mc-text-background); }
 .mc-todo { --kc: var(--amber); background: var(--mc-todo-background); }
+
+/* CODE node script editor — overlay highlight; .code-ref marks ⇣/⇡ var names */
+.code-box { font-family: var(--mono); }
+.code-box:focus-within { border-color: var(--magenta); }
+.code-hilite, .code-input { tab-size: 2; -moz-tab-size: 2; box-sizing: border-box; }
+.code-hilite .code-ref { color: var(--amber); background: color-mix(in srgb, var(--amber) 18%, transparent); border-radius: 2px; }
+.code-input::selection { background: rgba(242, 159, 245, 0.35); color: transparent; }
 
 /* ---- machine view ----------------------------------------------------------- */
 .machine-view {

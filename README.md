@@ -43,7 +43,9 @@ to a ⇣ input **of the same type** (types compare case-insensitively).
 
 ## Node kinds
 
-canvas: `STEP` · `EVENT` (calls 0..n system fns, may ✨generate a
+canvas: `STEP` · `CODE` (edits a script — Python syntax validated on the card —
+with `+ ⇣ input` / `+ ⇡ output` buttons for typed data ports, like STEP;
+available on flow, machine and func canvases, chain passes through) · `EVENT` (calls 0..n system fns, may ✨generate a
 graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
 `LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (**pure data, no flow ports** — make a typed
 value: pick any type and fill in every field, recursively; child structs nest

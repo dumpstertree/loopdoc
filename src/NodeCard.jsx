@@ -9,6 +9,7 @@ import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVar
 import { takesFlow } from './wireRules.js'
 import { dataValue, fmt, mathVal, boolVal } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
+import { validateCode, inferCodeIO } from './codeLang.js'
 
 // one width for every kind — the card is one shape, so both canvases agree
 export const NODE_W = T.nodeW
@@ -17,6 +18,78 @@ const EMPTY_CALL = {} // stable empty while a call hasn't fired yet this sim
 export const PORT_Y = T.nodePortTop + T.nodePortHalf
 
 const portKey = (nodeId, portId, dir) => `${nodeId}:${portId}:${dir}`
+
+const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const escRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function highlightCode(code, names) {
+  const src = String(code || '')
+  const words = [...new Set((names || []).map((n) => String(n || '').trim()).filter(Boolean))].sort((a, b) => b.length - a.length)
+  if (!words.length) return escHtml(src)
+  // \b needs a word char on the name edge; fall back to plain escaped match
+  const parts = words.map((w) => (/^\w/.test(w) ? `\\b${escRe(w)}\\b` : escRe(w)))
+  const re = new RegExp(`(${parts.join('|')})`, 'g')
+  let out = ''
+  let last = 0
+  let m
+  while ((m = re.exec(src))) {
+    out += escHtml(src.slice(last, m.index))
+    out += `<span class="code-ref">${escHtml(m[0])}</span>`
+    last = m.index + m[0].length
+  }
+  out += escHtml(src.slice(last))
+  return out + (src.endsWith('\n') ? '\n' : '') // keep trailing newline height in pre
+}
+
+// script editor: Tab inserts spaces (no focus jump) + highlights referenced ⇣/⇡ names
+function CodeBox({ value, onChange, names, placeholder, title }) {
+  const ref = React.useRef(null)
+  const back = React.useRef(null)
+  const onKeyDown = (e) => {
+    e.stopPropagation()
+    if (e.key !== 'Tab') return
+    e.preventDefault()
+    const el = e.currentTarget
+    const start = el.selectionStart ?? 0
+    const end = el.selectionEnd ?? 0
+    const ins = '  ' // 2 spaces — friendlier for compact cards
+    const next = String(value || '').slice(0, start) + ins + String(value || '').slice(end)
+    onChange(next)
+    // restore caret after React commits the value
+    requestAnimationFrame(() => {
+      if (ref.current) { ref.current.selectionStart = ref.current.selectionEnd = start + ins.length }
+    })
+  }
+  const onScroll = (e) => {
+    if (back.current) {
+      back.current.scrollTop = e.currentTarget.scrollTop
+      back.current.scrollLeft = e.currentTarget.scrollLeft
+    }
+  }
+  const font = { fontFamily: 'var(--mono)', fontSize: 11, lineHeight: 1.35, whiteSpace: 'pre-wrap', wordWrap: 'break-word', overflowWrap: 'break-word' }
+  return (
+    <div className="inp code-box" style={{ position: 'relative', padding: 0, overflow: 'hidden' }} title={title}>
+      <pre
+        aria-hidden
+        ref={back}
+        className="code-hilite"
+        style={{ position: 'absolute', inset: 0, margin: 0, padding: '2px 6px', border: '1px solid transparent', overflow: 'hidden', pointerEvents: 'none', color: 'var(--text)', ...font }}
+        dangerouslySetInnerHTML={{ __html: highlightCode(value, names) }}
+      />
+      <textarea
+        ref={ref}
+        className="code-input"
+        style={{ position: 'relative', zIndex: 1, display: 'block', width: '100%', minHeight: 72, margin: 0, padding: '2px 6px', border: 'none', outline: 'none', resize: 'vertical', background: 'transparent', color: 'transparent', caretColor: 'var(--text)', ...font }}
+        placeholder={placeholder}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        onScroll={onScroll}
+        spellCheck={false}
+      />
+    </div>
+  )
+}
 
 // the foot of a card: the + grow buttons it offers, in the order its shape lists
 // them. a component, so it renders after the body has registered its buttons.
@@ -625,9 +698,9 @@ export default function NodeCard({
   // phantom ⇣ never decorates a part that refuses flow (VAR, GET …)
   const hasIn = mode === 'flow' ? takesFlow(node) : ports.some((p) => p.dir === 'in')
   const isText = node.kind === 'text'
-  // TEXT and TODO carry their own width (corner grip); TODO grows its height
-  // from the task lines and VAR from its typed fill-in, so those store w only
-  const sized = isText || node.kind === 'todo' || node.kind === 'var'
+  // TEXT and TODO carry their own width (corner grip); TODO/VAR/CODE grow their
+  // height from content, so those store w only
+  const sized = isText || node.kind === 'todo' || node.kind === 'var' || node.kind === 'code'
   const H = isText ? node.h || undefined : undefined
 
   // the dock at the foot: the grow buttons this card registers, keyed by
@@ -770,6 +843,99 @@ export default function NodeCard({
             {grow('outvar', '+ ⇡ output', () => onPatch({ outVars: [...(node.outVars || []), { id: uid('ov'), name: '', type: 'int' }] }))}
           </>
         ),
+
+      // CODE — a script with typed ⇣ inputs / ⇡ outputs; validated as Python
+      code: () =>
+        node.kind === 'code' &&
+        (() => {
+          const check = validateCode(node.code, node.lang || 'python', { inputs: node.inVars || [], outputs: node.outVars || [] })
+          return (
+            <>
+              <div className="nd-row">
+                <span className="nd-sub">{(node.lang || 'python').toUpperCase()}</span>
+                {!check.empty && (
+                  <span
+                    className={check.ok ? 'mc-amount full' : 'mc-amount wait'}
+                    title={
+                      check.ok
+                        ? 'syntax looks valid'
+                        : check.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')
+                    }
+                  >
+                    {check.ok ? '✓ valid' : `✗ ${check.errors.length} error${check.errors.length === 1 ? '' : 's'}`}
+                  </span>
+                )}
+              </div>
+              <CodeBox
+                value={node.code || ''}
+                onChange={(code) => onPatch({ code, ...inferCodeIO(code, node) })}
+                names={[...(node.inVars || []), ...(node.outVars || [])].map((v) => v.name)}
+                placeholder={"def run(a, b):\n    # ⇣ inputs = def params, ⇡ outputs = return values\n    return a"}
+                title="script body (Python syntax is validated) · Tab indents · ⇣/⇡ names follow def/return"
+              />
+              <div className="nd-row"><span className="nd-sub">⇣ / ⇡ follow <code>def</code> params and <code>return</code></span></div>
+              {!check.ok &&
+                check.errors.slice(0, 2).map((e, i) => (
+                  <div key={i} className="mc-click warn" title={e.message}>
+                    line {e.line}: {e.message}
+                  </div>
+                ))}
+              {check.ok &&
+                (check.warnings || []).slice(0, 1).map((w, i) => (
+                  <div key={i} className="mc-click info" title={w.message}>
+                    line {w.line}: {w.message}
+                  </div>
+                ))}
+              {(node.inVars || []).map((v, i) => (
+                <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div className="nd-row">
+                    <span className="nd-sub" style={{ flex: 1, minWidth: 0 }} title="derived from def parameter name">⇣ {v.name || '?'}</span>
+                    <TypeSelect
+                      types={types}
+                      value={v.type}
+                      title="data type for this input (name follows def)"
+                      onChange={(type) => onPatch({ inVars: node.inVars.map((x, j) => (j === i ? { ...x, type } : x)) })}
+                    />
+                  </div>
+                  <div className="dvar" title="wire the value this code reads — any producer’s ⇡ of this type lands here">
+                    <span className="port-data in" data-port={portKey(node.id, v.id, 'in')} />
+                    <span>
+                      ⇣ {v.name || '?'}:<b>{v.type}</b>
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {(node.outVars || []).map((v, i) => (
+                <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div className="nd-row">
+                    <span className="nd-sub" style={{ flex: 1, minWidth: 0 }} title="derived from return value">⇡ {v.name || '?'}</span>
+                    <TypeSelect
+                      types={types}
+                      value={v.type}
+                      title="data type for this output (name follows return)"
+                      onChange={(type) => onPatch({ outVars: node.outVars.map((x, j) => (j === i ? { ...x, type } : x)) })}
+                    />
+                  </div>
+                  <div className="dvar out" title="the value this code publishes — drag to feed any ⇣ of this type">
+                    <span>
+                      ⇡ {v.name || '?'}:<b>{v.type}</b>
+                    </span>
+                    <span
+                      className="port-data out"
+                      data-port={portKey(node.id, v.id, 'out')}
+                      title="drag to feed a ⇣ of the same type"
+                      onPointerDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        onDataPortDown(e, node.id, v.id)
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </>
+          )
+        })(),
 
       // IF — the test
       test: () =>
