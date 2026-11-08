@@ -61,10 +61,9 @@ test('llm export — header, notes, types, globals, assets all land', () => {
 
 test('llm export — flow graph: entry, typed VAR with real values, nesting', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('entry: STEP "start"'), 'entry named')
+  assert.ok(t.indexOf('STEP "start"') > t.indexOf('### Flow Graph "Main Loop"') && t.indexOf('STEP "start"') < t.indexOf('MACHINE "combat"'), 'chain written in run order, entry first')
   assert.ok(t.includes('VAR "hero": makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'fill-in coerced and expanded')
-  assert.ok(t.includes('→ MACHINE "combat"'), 'flow arrow by name')
-  assert.ok(t.includes('⇣ lives ← VAR "hero"'), 'data wire traced to its producer')
+  assert.ok(t.includes('# ⇣ lives ← VAR "hero".hero :Foe'), 'data wire shown as a # line under its consumer')
   assert.ok(t.includes('NOTE') || t.includes('annotation frame'), 'text frame carried')
 })
 
@@ -74,7 +73,9 @@ test('llm export — machine section: door vars/assets, loops, wires, actions', 
   assert.ok(t.includes('lives:int = 3'), 'enter var carried')
   assert.ok(t.includes('📦 sprites'), 'enter asset carried')
   assert.ok(t.includes('ACTION "gold": chain waits here for a click'), 'action part and its waiting shown')
-  assert.ok(t.includes('iter→ ACTION "spend"'), 'machine wire carries the chain on the iter port')
+  assert.ok(t.includes('for item:Foe (+index) in'), 'foreach lowered to a loop header')
+  assert.ok(t.includes('  ACTION "spend": chain waits here for a click'), 'loop body is an indented block')
+  assert.ok(t.includes('# (end unwired — after the loop the chain stops here)'), 'unwired loop end stated, not hidden')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
   assert.ok(t.includes('EXIT "victory"'), 'named exit listed')
 })

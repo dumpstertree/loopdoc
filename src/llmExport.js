@@ -1,7 +1,9 @@
 // LLM export — flattens the whole document into one self-contained plain-text
-// brief written FOR a language model to read and build a game from: named
-// things by name, nesting as indented sections, wiring as arrow lines, and a
-// part reference for every kind used so the vocabulary explains itself.
+// brief written FOR a language model to read and build a game from: each graph
+// is lowered into an ordered pseudo-program (chains in run order, control
+// structures as indented blocks, data wires as # lines under their consumer),
+// nested graphs/machines/functions become sections the call site points into,
+// and a part reference for every kind used explains the vocabulary itself.
 // Not re-importable — this is the communication artifact; the .json is the
 // lossless one.
 import { kindMeta, dataPorts, assetIcon, assetLabel, resolveCall, typedValue, MATH } from './model.js'
@@ -148,36 +150,155 @@ function detail(n, g, doc) {
   }
 }
 
+// lower one graph into an ordered pseudo-program: chains start at the entry /
+// ENTER doors and run in the order they actually run; if/else, loops and
+// player choices become indented blocks instead of arrow pairs; parts that
+// never join a chain (pure values, notes, frames) ride as a side list; and
+// anything the lowering cannot place — unwired branches, parallel chains,
+// cycles, wires into deleted parts — is flagged ⚠ so nothing is lost quietly
 function graphSection(g, doc, heading, parentNote) {
   const L = []
   const labels = makeLabels(g)
+  const nodes = g.nodes || []
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const datas = (g.links || []).filter((l) => l.kind === 'data')
+  const pad = (i) => '  '.repeat(i)
+  const sideKind = (n) => n.kind === 'text' || n.kind === 'todo' || kindMeta(n).dataOnly
   const portName = (node, id, dir) => {
     const dp = dataPorts(node, doc.assets, doc.funcs || [], g)
     const p = (dp[dir] || []).find((x) => x.id === id)
     return p ? p.name || id : id
   }
-  L.push(`${heading}${g.name ? ` ${q(g.name)}` : ''}${parentNote ? ` — ${parentNote}` : ''}`)
-  if (g.mode !== 'machine' && g.entry && labels[g.entry]) L.push(`  entry: ${labels[g.entry]}`)
-  for (const n of g.nodes || []) {
-    const meta = kindMeta(n)
+  const wire = (l) => {
+    const s = byId[l.from]
+    if (!s) return `⚠ deleted part (id ${l.from})`
+    const out = dataPorts(s, doc.assets, doc.funcs || [], g).out.find((x) => x.id === l.fromPort)
+    return `${labels[l.from]}.${out?.name || l.fromPort}${out?.type ? ` :${out.type}` : ''}`
+  }
+  const outFlow = (id, port) => flows.filter((l) => l.from === id && (port == null || l.fromPort === port))
+  const feed = (id) => datas.filter((l) => l.to === id)
+  const headLine = (n, ind) => {
     const d = detail(n, g, doc)
-    L.push(`  - ${labels[n.id]}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`)
-    for (const l of flows.filter((x) => x.from === n.id)) {
-      const t = (g.nodes || []).find((x) => x.id === l.to)
-      if (!t) continue
-      const port = (meta.ports && meta.ports(n)) || []
-      const p = port.find((x) => x.id === l.fromPort)
-      L.push(`      ${(p && p.label ? p.label + '→' : '→')} ${labels[l.to]}`)
+    return `${pad(ind)}${labels[n.id]}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`
+  }
+  const wires = (n, ind) => feed(n.id).map((l) => `${pad(ind + 1)}# ⇣ ${portName(n, l.toPort, 'in')} ← ${wire(l)}`)
+
+  const visited = new Set()
+  const extra = [] // parallel chains the walk forks off, lowered after the main one
+  const residue = []
+
+  const chain = (id, ind) => {
+    const L2 = []
+    let cur = id
+    while (cur) {
+      const n = byId[cur]
+      if (!n) { L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${cur})`); break }
+      if (visited.has(cur)) { L2.push(`${pad(ind)}goto ${labels[cur]} — ⚠ this chain returns to a part already written above`); break }
+      visited.add(cur)
+      const take = (port) => {
+        const ls = port == null ? outFlow(cur) : outFlow(cur, port)
+        for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra flow out of ${labels[cur]}` })
+        return ls[0]
+      }
+      const step = (l) => {
+        if (!l) return null
+        if (byId[l.to]) return l.to
+        L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${l.to})`)
+        return null
+      }
+      const k = n.kind
+      if (k === 'condition' || k === 'ifb') {
+        const test = k === 'condition'
+          ? n.cond || '(branches on its wired operands)'
+          : ['a', 'b'].map((s) => {
+              const l = feed(cur).find((x) => x.toPort === `__${s}__`)
+              return l ? wire(l) : `⇣${s}`
+            }).join(` ${n.op || '=='} `)
+        L2.push(`${pad(ind)}if (${test}):  # ${labels[cur]}`)
+        const tb = take('true')
+        if (tb && byId[tb.to]) L2.push(...chain(tb.to, ind + 1))
+        else if (tb) L2.push(`${pad(ind + 1)}⚠ deleted part (id ${tb.to})`)
+        else L2.push(`${pad(ind)}# (true unwired — the chain stops when the test passes)`)
+        L2.push(`${pad(ind)}else:`)
+        const fb = take('false')
+        if (fb && byId[fb.to]) L2.push(...chain(fb.to, ind + 1))
+        else if (fb) L2.push(`${pad(ind + 1)}⚠ deleted part (id ${fb.to})`)
+        else L2.push(`${pad(ind)}# (false unwired — the chain stops when the test fails)`)
+        cur = null
+      } else if (k === 'choice') {
+        L2.push(`${pad(ind)}wait for player choice:  # ${labels[cur]}`)
+        for (const e of n.exits || []) {
+          const ls = outFlow(cur, e.id)
+          for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra option ${q(e.label || '?')}` })
+          if (ls[0]) {
+            L2.push(`${pad(ind)}if player picks ${q(e.label || '?')}:`)
+            if (byId[ls[0].to]) L2.push(...chain(ls[0].to, ind + 1))
+            else L2.push(`${pad(ind + 1)}⚠ deleted part (id ${ls[0].to})`)
+          } else L2.push(`${pad(ind)}# (option ${q(e.label || '?')} unwired — the chain stops if chosen)`)
+        }
+        cur = null
+      } else if (k === 'for' || k === 'foreach') {
+        const src = feed(cur).find((l) => l.toPort === (k === 'for' ? '__to__' : '__arr__'))
+        L2.push(
+          pad(ind) +
+          (k === 'for'
+            ? `for i:int up to ${src ? wire(src) : '?'}:  # ${labels[cur]}`
+            : `for item:${n.itemType || '?'} (+index) in ${src ? wire(src) : '?'}:  # ${labels[cur]}`),
+        )
+        const body = take('out') // the loop's iter port
+        if (body) {
+          if (byId[body.to]) L2.push(...chain(body.to, ind + 1))
+          else L2.push(`${pad(ind + 1)}⚠ deleted part (id ${body.to})`)
+        } else L2.push(`${pad(ind)}# (body unwired — the loop runs empty)`)
+        const end = take('end')
+        if (end) cur = step(end)
+        else { L2.push(`${pad(ind)}# (end unwired — after the loop the chain stops here)`); cur = null }
+      } else {
+        L2.push(headLine(n, ind), ...wires(n, ind))
+        if (k === 'exit' || k === 'exitinst') cur = null // doors end their chain
+        else if (k === 'enter') cur = step(take('out'))
+        else if (k === 'graph') cur = step(take('return'))
+        else cur = step(take(null)) // machines exit by name; everything linear by 'out'
+      }
     }
-    for (const l of datas.filter((x) => x.to === n.id)) {
-      const s = (g.nodes || []).find((x) => x.id === l.from)
-      if (!s) continue
-      const out = dataPorts(s, doc.assets, doc.funcs || [], g).out.find((x) => x.id === l.fromPort)
-      const t = out?.type ? ` :${out.type}` : ''
-      L.push(`      ⇣ ${portName(n, l.toPort, 'in')} ← ${labels[l.from]}.${out?.name || l.fromPort}${t}`)
-    }
+    return L2
+  }
+
+  L.push(`${heading}${g.name ? ` ${q(g.name)}` : ''}${parentNote ? ` — ${parentNote}` : ''}`)
+  const doors = nodes.filter((n) => n.kind === 'enter')
+  let starts
+  if ((g.mode === 'machine' || g.mode === 'func') && doors.length) starts = doors.map((d) => d.id)
+  else if (g.entry && byId[g.entry]) starts = [g.entry]
+  else {
+    const roots = nodes.filter((n) => n.kind !== 'text' && n.kind !== 'todo' && !kindMeta(n).dataOnly && !flows.some((l) => l.to === n.id))
+    starts = (roots.length ? roots : nodes.filter((n) => n.kind !== 'text' && n.kind !== 'todo' && !kindMeta(n).dataOnly)).map((n) => n.id)
+  }
+  for (let i = 0; i < starts.length; i++) {
+    if (i) L.push(`# a second chain runs alongside the one above:`)
+    L.push(...chain(starts[i], 0))
+  }
+  while (extra.length) {
+    const x = extra.shift()
+    if (visited.has(x.id)) continue
+    L.push(`# ⚠ parallel chain — ${x.why}: starts at ${labels[x.id]}`)
+    L.push(...chain(x.id, 0))
+  }
+
+  const side = nodes.filter((n) => sideKind(n) && !visited.has(n.id))
+  if (side.length) {
+    L.push('')
+    L.push('# values, notes & frames — not in any chain; their ⇡ values reach parts through the ⇣ # lines above')
+    for (const n of side) L.push(headLine(n, 0), ...wires(n, 0))
+  }
+
+  const missed = nodes.filter((n) => !visited.has(n.id) && !sideKind(n))
+  const dang = datas.filter((l) => !byId[l.to])
+  if (missed.length || dang.length) {
+    L.push('')
+    L.push('# ⚠ could not be placed in a chain')
+    for (const n of missed) L.push(`⚠ ${headLine(n, 0)} — not reached by any chain start`)
+    for (const l of dang) L.push(`⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
   }
   return L
 }
@@ -201,8 +322,12 @@ export function exportForLLM(doc) {
     'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
     'data wires ⇣/⇡ carry typed values between parts). A token moves',
     'one hop per step; ENTER doors start machine chains; flow graphs run from their entry.',
-    'Reading a list: each part is a line; its indented lines are where its flow goes',
-    '(→) and where its typed inputs get their value (⇣ ← source).',
+    'Each graph is written as a program: parts appear in the order their chain runs,',
+    'and if/else, counted & array loops, and player choices are indented blocks —',
+    'structure by containment, not by tracing arrows. A part’s indented # lines',
+    'name the typed values its ⇣ inputs receive (# ⇣ port ← SOURCE.part :type).',
+    '⚠ lines mark flow the document leaves open or wires into deleted parts —',
+    'never assume past one; parts never reached by a chain are listed under ⚠.',
     '',
   )
 
