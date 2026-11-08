@@ -4,6 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
+import WireFlow from './WireFlow.jsx'
 import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath, syncMath } from './model.js'
 import { dataCanConnect, compatTargets, takesFlow, branchLink, valueWireRisks } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
@@ -31,6 +32,15 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
   dragRef.current = drag
+  const [hoverNode, setHoverNode] = useState(null) // raw node under the cursor
+  const [hoverFocus, setHoverFocus] = useState(null) // delayed hover — drives animated wire markers/focus
+  useEffect(() => {
+    if (!hoverNode) { setHoverFocus(null); return }
+    // reset focus while moving between nodes so the delay applies to the new target
+    setHoverFocus(null)
+    const t = setTimeout(() => setHoverFocus(hoverNode), 90)
+    return () => clearTimeout(t)
+  }, [hoverNode])
   const [origin, setOrigin] = useState(() => homeOrigin(graph))
   const originRef = useRef(origin)
   originRef.current = origin
@@ -528,10 +538,12 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 const anchors = l.anchors || []
                 const d = routePath(s, t, anchors.map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), flips.has(l.from) ? -1 : 1, flips.has(l.to) ? -1 : 1).d
                 const isReturn = kindMeta(a).ports(a).find((p) => p.id === l.fromPort)?.label === 'return'
+                const hot = hoverFocus && (l.from === hoverFocus || l.to === hoverFocus)
+                const dim = hoverFocus && !hot
                 return (
                   <g
                     key={l.id}
-                    className={`edge ${isReturn ? 'edge-return' : ''} ${sel && sel.link === l.id ? 'edge-sel' : ''}`}
+                    className={`edge ${isReturn ? 'edge-return' : ''} ${sel && sel.link === l.id ? 'edge-sel' : ''} ${dim ? 'edge-dim' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation()
                       setSelection([])
@@ -555,6 +567,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                     </title>
                     <path d={d} className="edge-hit" />
                     <path d={d} className="edge-line" markerEnd={sel && sel.link === l.id ? 'url(#arw-sel)' : 'url(#arw)'} />
+                    <WireFlow d={d} kind="flow" active={!!hot} />
                   </g>
                 )
               })}
@@ -565,10 +578,16 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 if (!s || !t) return null
                 const d = routePath(s, t, (l.anchors || []).map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), flips.has(l.from) ? -1 : 1, flips.has(l.to) ? -1 : 1).d
                 const race = races.get(l.id)
+                const hotHover = hoverFocus && (l.from === hoverFocus || l.to === hoverFocus)
+                // variable/data wires stay faded the whole time UNLESS one of their
+                // own parts is picked up — by selection or (after a short hover delay)
+                // the cursor resting on it — so focusing a node reveals its ⇣/⇡ wires
+                const hotSel = selSet.has(l.from) || selSet.has(l.to) || sel?.link === l.id
+                const dim = !(hotHover || hotSel)
                 return (
                   <g
                     key={l.id}
-                    className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel && sel.link === l.id ? 'edge-sel' : ''}`}
+                    className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel && sel.link === l.id ? 'edge-sel' : ''} ${dim ? 'edge-dim' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation()
                       setSelection([])
@@ -592,6 +611,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                     </title>
                     <path d={d} className="edge-hit" />
                     <path d={d} className="edge-line" markerEnd={race ? 'url(#arw-stale)' : 'url(#arw-data)'} />
+                    <WireFlow d={d} kind="data" stale={!!race} active={!!hotHover} />
                   </g>
                 )
               })}
@@ -684,6 +704,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                   onDataPortDown={onDataPortDown}
                   onHeaderDown={onHeaderDown}
                   onResizeDown={onResizeDown}
+                  onNodeEnter={(id) => setHoverNode(id)}
+                  onNodeLeave={(id) => setHoverNode((cur) => (cur === id ? null : cur))}
                 />
               ))}
             </div>

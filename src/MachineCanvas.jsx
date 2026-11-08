@@ -4,6 +4,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
+import WireFlow from './WireFlow.jsx'
 import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, pruneExitInstLinks, pruneAllExitInstLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath, syncMath } from './model.js'
 import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
 import { isEntryPart, dataCanConnect, compatTargets, branchLink, valueWireRisks } from './wireRules.js'
@@ -17,6 +18,15 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
   dragRef.current = drag
+  const [hoverNode, setHoverNode] = useState(null) // raw node under the cursor
+  const [hoverFocus, setHoverFocus] = useState(null) // delayed hover — drives animated wire markers/focus
+  useEffect(() => {
+    if (!hoverNode) { setHoverFocus(null); return }
+    // reset focus while moving between nodes so the delay applies to the new target
+    setHoverFocus(null)
+    const t = setTimeout(() => setHoverFocus(hoverNode), 90)
+    return () => clearTimeout(t)
+  }, [hoverNode])
   const [sel, setSel] = useState(null) // selected link id
   const selRef = useRef(sel)
   selRef.current = sel
@@ -604,10 +614,12 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   if (!a || !b) return null
                   const { d } = routePath(a, b, l.anchors, byId[l.from]?.flip ? -1 : 1, byId[l.to]?.flip ? -1 : 1)
                   const isSel = sel === l.id
+                  const hot = hoverFocus && (l.from === hoverFocus || l.to === hoverFocus)
+                  const dim = hoverFocus && !hot
                   return (
                     <g
                       key={l.id}
-                      className={`edge ${isSel ? 'edge-sel' : ''}`}
+                      className={`edge ${isSel ? 'edge-sel' : ''} ${dim ? 'edge-dim' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation()
                         setSel(l.id)
@@ -627,6 +639,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                       <title>flow — click selects · dbl-click drops an anchor to steer the line · Del removes</title>
                       <path d={d} className="edge-hit" />
                       <path d={d} className="edge-line" markerEnd={isSel ? 'url(#marw-sel)' : 'url(#marw)'} />
+                      <WireFlow d={d} kind="flow" active={!!hot} />
                     </g>
                   )
                 })}
@@ -637,10 +650,16 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   if (!a || !b) return null
                   const { d } = routePath(a, b, l.anchors, byId[l.from]?.flip ? -1 : 1, byId[l.to]?.flip ? -1 : 1)
                   const race = races.get(l.id)
+                  const hotHover = hoverFocus && (l.from === hoverFocus || l.to === hoverFocus)
+                  // variable/data wires stay faded the whole time UNLESS one of their
+                  // own parts is picked up — by selection or by the cursor hovering it —
+                  // so hovering a node reveals the ⇣/⇡ wires it holds, at full ink
+                  const hotSel = selection.includes(l.from) || selection.includes(l.to) || sel === l.id
+                  const dim = !(hotHover || hotSel)
                   return (
                     <g
                       key={l.id}
-                      className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel === l.id ? 'edge-sel' : ''}`}
+                      className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel === l.id ? 'edge-sel' : ''} ${dim ? 'edge-dim' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation()
                         setSel(l.id)
@@ -660,6 +679,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                       <title>{`data wire — click selects · dbl-click drops an anchor · Del removes${race ? ` · ${raceTitle(l)}` : ''}`}</title>
                       <path d={d} className="edge-hit" />
                       <path d={d} className="edge-line" markerEnd={race ? 'url(#marw-stale)' : sel === l.id ? 'url(#marw-sel)' : 'url(#marw-data)'} />
+                      <WireFlow d={d} kind="data" stale={!!race} active={!!hotHover} />
                     </g>
                   )
                 })}
@@ -758,6 +778,8 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   onHeaderDown={onHeaderDown}
                   onResizeDown={onResizeDown}
                   onSimCall={(vid, val) => setSimCallValue(n.id, vid, val)}
+                  onNodeEnter={(id) => setHoverNode(id)}
+                  onNodeLeave={(id) => setHoverNode((cur) => (cur === id ? null : cur))}
                 />
               ))}
               {drag && drag.kind === 'box' && (
