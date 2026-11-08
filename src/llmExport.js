@@ -112,6 +112,15 @@ function detail(n, g, doc) {
       return `⇡ = ⇣ a ${MATH[n.kind]} ⇣ b — int/float operands, unwired sides take the card's custom value`
     case 'action':
       return 'chain waits here for a click'
+    case 'code': {
+      const io = (arr) => (arr || []).map((v) => `${v.name || 'value'}:${v.type || 'int'}`)
+      if (!String(n.code || '').trim()) return 'no script written yet — its ports stay'
+      const ins = io(n.inVars)
+      const outs = io(n.outVars)
+      return `${n.lang || 'python'} script:${
+        ins.length ? ` ⇣ ${ins.join(', ')} in` : ' no ⇣ inputs'
+      }${outs.length ? ` · ⇡ ${outs.join(', ')} out` : ' · no ⇡ outputs'}`
+    }
     case 'exit': {
       const parts = (n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}`)
       if (g?.mode === 'func')
@@ -209,6 +218,16 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     return `${pad(ind)}${disp(n.id)}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`
   }
   const wires = (n, ind) => feed(n.id).map((l) => `${pad(ind + 1)}# ⇣ ${portName(n, l.toPort, 'in')} ← ${wire(l)}`)
+  // a CODE part carries a script the design wrote itself: print it verbatim, pushed
+  // in one level under the part's own line so its indentation stays relative and
+  // the brief never restates what the code already says; blank lines stay blank so
+  // nothing outside a fence swallows them
+  const codeLines = (n, ind) => {
+    const raw = String(n.code || '').replace(/\r\n?/g, '\n').split('\n')
+    while (raw.length && !raw[0].trim()) raw.shift()
+    while (raw.length && !raw[raw.length - 1].trim()) raw.pop()
+    return raw.map((l) => (l.trim() ? pad(ind) + l.replace(/\t/g, '  ').replace(/\s+$/, '') : ''))
+  }
 
   const visited = new Set()
   const extra = [] // parallel chains the walk forks off, lowered after the main one
@@ -303,7 +322,10 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
           const s = slugs[n.id] || labels[n.id]
           L2.push(`${pad(ind)}${s}(${args})${labels[n.id].includes('"') ? ` — ${labels[n.id]}` : ''}${d ? `: ${d}` : ''}${note}`)
         } else if (sigDoors.has(n.id)) { /* the door is the section's signature, printed above */ }
-        else L2.push(headLine(n, ind), ...wires(n, ind))
+        else if (k === 'code') {
+          // the script rides under its own line: its params are fed by the ⇣ wires above it
+          L2.push(headLine(n, ind), ...wires(n, ind), ...codeLines(n, ind + 1))
+        } else L2.push(headLine(n, ind), ...wires(n, ind))
         if (k === 'exit' || k === 'exitinst') cur = null // doors end their chain
         else if (k === 'enter') cur = step(take('out'))
         else if (k === 'graph') cur = step(take('return'))
@@ -424,6 +446,10 @@ const CURIO = [
   '  fn: the signature’s parameters are the ENTER door’s vars, and a return is an EXIT part — call',
   '  sites pass their ⇣ args inline, so the machine call maps to a habit/impulse fired with its record',
   '  fields written, and ƒ maps to the fn.',
+  '- CODE part (its script is printed under the part, verbatim) → the design wrote the logic itself:',
+  '  translate it statement by statement into the habit/impulse body or a plain Rust fn — its def',
+  '  parameters are the ⇣ inputs and its return values the ⇡ outputs. Keep its arithmetic and control',
+  '  flow; replace only the reads/writes the brief already names with the ledger or facet calls it lists.',
   '- GET LEDGER / SET LEDGER (system ledger variables, listed up top under Shared',
   '  state) → the ledger record for that system: read with ledger.read::<T>() and write with',
   '  ledger.write::<T>(|rec| rec.field = …) — records are made once at Curio::create() and edited, never added.',
@@ -550,11 +576,14 @@ export function exportForLLM(doc) {
     'indented blocks — structure by containment, not by tracing arrows. Machines and ƒs',
     'read as functions: machine "name"(params): takes the ENTER door’s vars as parameters,',
     'EXIT parts return, and call sites pass their ⇣ args inline (name(port ← SOURCE.part)).',
-    'A block whose only line is pass was left unwired in the design — that branch or option',
-    'exists and does nothing; nothing else marks an unwired path. Read it in this order: the',
-    'vocabulary of the parts this brief uses, then what the design is made of (systems, data',
-    'types, shared state), then the programs, then how Curio carries each part. Content the',
-    'design never reaches is left out of the brief — if it is not here, it is not in the design.',
+    'A CODE part prints its own script verbatim under its line, in the language the part names',
+    '— the def’s parameters are its ⇣ inputs and its return values its ⇡ outputs, so the code',
+    'under it is the logic and nothing else restates it. A block whose only line is pass was left',
+    'unwired in the design — that branch or option exists and does nothing; nothing else marks an',
+    'unwired path. Read it in this order: the vocabulary of the parts this brief uses, then what',
+    'the design is made of (systems, data types, shared state), then the programs, then how Curio',
+    'carries each part. Content the design never reaches is left out of the brief — if it is',
+    'not here, it is not in the design.',
     '',
   )
 

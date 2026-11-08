@@ -65,6 +65,43 @@ const doc = {
   },
 }
 
+test('llm export — a CODE part carries its own script verbatim', () => {
+  const cdoc = {
+    app: 'loopdoc-composer',
+    name: 'Code node',
+    types: [],
+    vars: [],
+    assets: [],
+    funcs: [],
+    design: {
+      mode: 'flow',
+      name: 'Loop',
+      entry: 'c1',
+      nodes: [
+        { id: 'c1', kind: 'step', name: 'read' },
+        { id: 'c2', kind: 'code', name: 'clamp', lang: 'python', code: 'def clamp(a, b):\n    return a if a < b else b', inVars: [{ id: 'iv1', name: 'a', type: 'int' }, { id: 'iv2', name: 'b', type: 'int' }], outVars: [{ id: 'ov1', name: 'result', type: 'int' }] },
+        { id: 'c3', kind: 'code', name: 'tabbed', lang: 'python', code: 'def bump(v):\n\treturn v + 1', inVars: [{ id: 'iv3', name: 'v', type: 'int' }], outVars: [{ id: 'ov2', name: 'result', type: 'int' }] },
+        { id: 'c4', kind: 'code', name: 'blank', lang: 'python', code: '', inVars: [], outVars: [] },
+        { id: 'v1', kind: 'var', name: 'hp', variable: { name: 'hp', type: 'int', value: '3' } },
+      ],
+      links: [
+        { id: 'k1', kind: 'flow', from: 'c1', fromPort: 'out', to: 'c2', toPort: 'in' },
+        { id: 'k2', kind: 'flow', from: 'c2', fromPort: 'out', to: 'c3', toPort: 'in' },
+        { id: 'k3', kind: 'flow', from: 'c3', fromPort: 'out', to: 'c4', toPort: 'in' },
+        { id: 'k4', kind: 'data', from: 'v1', fromPort: '__val__', to: 'c2', toPort: 'iv1' },
+      ],
+    },
+  }
+  const t = exportForLLM(cdoc)
+  assert.ok(t.includes('code_clamp — CODE "clamp": python script: ⇣ a:int, b:int in · ⇡ result:int out'), 'the part names the script and its typed ports')
+  assert.ok(t.includes('  def clamp(a, b):') && t.includes('      return a if a < b else b'), 'script printed verbatim, pushed in one level so its own indentation stays relative')
+  assert.ok(t.includes('    return v + 1'), 'tab-indented python becomes spaces — the brief stays readable')
+  assert.ok(t.includes('code_blank — CODE "blank": no script written yet — its ports stay'), 'an empty CODE part says so instead of looking truncated')
+  assert.ok(t.includes('# ⇣ a ← var_hp.hp :int'), 'the value feeding the script’s param names its producer by slug')
+  const ref = t.slice(t.indexOf('## Part reference'), t.indexOf('## Graphs'))
+  assert.ok(ref.includes('CODE —'), 'the script kind is explained in the vocabulary')
+})
+
 test('llm export — header, notes, types, shared state, systems all land', () => {
   const t = exportForLLM(doc)
   assert.ok(t.includes('# Game design brief — Goblin Depths'))
