@@ -3,7 +3,9 @@
 //
 // Pure static analysis over one graph or the whole doc, running the same
 // reviews a human would: dropped-chain wiring, empty loop bodies, item reads
-// bound to the last iteration, unreachable exits, dangling data wires and type drift. Every finding carries a severity:
+// bound to the last iteration, unreachable exits, dangling data wires, value
+// wires that read before their producer can have run (the racing wires both
+// canvases draw red) and type drift. Every finding carries a severity:
 //   error — a chain drops / nothing runs / a port is gone
 //   warn  — almost certainly not what you meant
 //   info  — works, but is a decision worth making on purpose
@@ -11,7 +13,7 @@
 // the owning graph, so the panel can jump there.
 // ---------------------------------------------------------------------------
 import { kindMeta, resolveCall, dataPortType, BASIC_TYPES, walkGraphs, exitVarsOf, resolveExitRef, MATH, BOOL } from './model.js'
-import { isEntryPart } from './wireRules.js'
+import { isEntryPart, valueWireRisks } from './wireRules.js'
 
 const label = (n) =>
   n ? `${kindMeta(n).label || n.kind}${n.name ? ` "${n.name}"` : ''}` : '?'
@@ -56,6 +58,21 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
       add('error', label(byId[l.to]), `data wire ⇣ ${l.toPort} is dangling — ${label(byId[l.from])} no longer outputs that port`)
     if (byId[l.to] && !dataPortType(g, assets, l.to, l.toPort, 'in', funcs))
       add('error', label(byId[l.from]), `data wire from ⇡ ${l.fromPort} is dangling — ${label(byId[l.to])} no longer has that input`)
+  }
+  // racing value wires — the exact verdict both canvases draw red (wireRules'
+  // ordering pass): the ⇡ behind this ⇣ may not have run when the reader does
+  for (const r of valueWireRisks(g)) {
+    const l = (g.links || []).find((x) => x.id === r.link)
+    if (!l || !byId[l.to]) continue
+    if (r.kind === 'cycle') {
+      add('warn', label(byId[l.to]), `⇣ ${l.toPort} reads a value that chains back to itself — the ⇡ can never hold anything (wire drawn red)`)
+      continue
+    }
+    add(
+      'warn',
+      label(byId[l.to]),
+      `⇣ ${l.toPort} may read ${label(byId[r.origin])} before it runs — every chain path from an entry to this reader must pass through it first (wire drawn red)`,
+    )
   }
   for (const n of nodes) {
     if (n.kind === 'getg' || n.kind === 'setg') {

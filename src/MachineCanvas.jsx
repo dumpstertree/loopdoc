@@ -6,7 +6,7 @@ import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, funcKinds, uid, newNode, patchNode, pruneLinks, pruneExitInstLinks, pruneAllExitInstLinks, removeNode, resolveCall, dataPortType, fnSig, fieldsOf, kindMeta, groupKin, adoptInto, snap, globalValue, orth, routePath, syncMath } from './model.js'
 import { fmt, dataValue, callSystem, stepOnce } from './engine.js'
-import { isEntryPart, dataCanConnect, compatTargets, branchLink } from './wireRules.js'
+import { isEntryPart, dataCanConnect, compatTargets, branchLink, valueWireRisks } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 // ---- editor ------------------------------------------------------------------
@@ -539,6 +539,16 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
   const startOf = (l) => portXY[`${l.from}:${l.fromPort}:out`] || (byId[l.from] ? { x: byId[l.from].x + NODE_W, y: byId[l.from].y + PORT_Y } : null)
   const endOf = (l) => portXY[`${l.to}:${l.toPort}:in`] || (byId[l.to] ? { x: byId[l.to].x, y: byId[l.to].y + 16 } : null)
 
+  // racing data wires — same wireRules verdict as the flow canvas and the DRC:
+  // a ⇡ whose producer is not guaranteed to have run first draws red
+  const races = new Map(valueWireRisks(graph).map((r) => [r.link, r]))
+  const raceTitle = (l) => {
+    const r = races.get(l.id)
+    if (!r) return ''
+    const src = byId[r.origin]
+    return `⚠ "${src ? kindMeta(src).label || src.kind : '?'}${src?.name ? ` "${src.name}"` : ''}" may not have run when this reads it`
+  }
+
   return (
     <>
       <div className="graph-toolbar">
@@ -583,6 +593,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   <marker id="marw-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-data" />
                   </marker>
+                  <marker id="marw-stale" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-stale" />
+                  </marker>
                 </defs>
                 {graph.links.map((l) => {
                   if (l.kind === 'data') return null
@@ -623,10 +636,11 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                   const b = portXY[`${l.to}:${l.toPort}:in`]
                   if (!a || !b) return null
                   const { d } = routePath(a, b, l.anchors, byId[l.from]?.flip ? -1 : 1, byId[l.to]?.flip ? -1 : 1)
+                  const race = races.get(l.id)
                   return (
                     <g
                       key={l.id}
-                      className={`edge edge-data ${sel === l.id ? 'edge-sel' : ''}`}
+                      className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel === l.id ? 'edge-sel' : ''}`}
                       onClick={(e) => {
                         e.stopPropagation()
                         setSel(l.id)
@@ -643,9 +657,9 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                         }))
                       }}
                     >
-                      <title>data wire — click selects · dbl-click drops an anchor · Del removes</title>
+                      <title>{`data wire — click selects · dbl-click drops an anchor · Del removes${race ? ` · ${raceTitle(l)}` : ''}`}</title>
                       <path d={d} className="edge-hit" />
-                      <path d={d} className="edge-line" markerEnd={sel === l.id ? 'url(#marw-sel)' : 'url(#marw-data)'} />
+                      <path d={d} className="edge-line" markerEnd={race ? 'url(#marw-stale)' : sel === l.id ? 'url(#marw-sel)' : 'url(#marw-data)'} />
                     </g>
                   )
                 })}

@@ -201,6 +201,7 @@ export const T = {
   edgeLineStrokeWidth: "1.5",
   edgeHoverEdgeLineFilter: "drop-shadow(0 0 3px var(--cyan))",
   edgeDataHoverEdgeLineFilter: "drop-shadow(0 0 3px var(--mint))",
+  edgeStaleEdgeLineFilter: "drop-shadow(0 0 3px var(--urgent))",
   portCompatStrokeWidth: "1.5",
   keyframesPcpulseOpacity: "0.95",
   keyframesPcpulseOpacityPulsingRingOnEveryPortCompatibleWi: "0.3",

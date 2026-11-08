@@ -616,6 +616,14 @@ svg.edges .edge {
   stroke-width: var(--edge-data-edge-line-stroke-width);
   stroke-dasharray: 5 4;
 }
+/* racing value wire — wireRules says its ⇡ may not have run when this reads it */
+.edge-stale .edge-line {
+  stroke: var(--urgent);
+}
+.edge-stale:hover .edge-line {
+  stroke: var(--urgent);
+  filter: var(--edge-stale-edge-line-filter);
+}
 .edge-return .edge-line {
   stroke: var(--magenta);
   stroke-dasharray: 2 3;
@@ -635,7 +643,13 @@ svg.edges .edge {
 .arrow-head-data {
   fill: var(--mint);
 }
+.arrow-head-stale {
+  fill: var(--urgent);
+}
 .edge-data.edge-sel .edge-line {
+  stroke: var(--magenta);
+}
+.edge-stale.edge-sel .edge-line {
   stroke: var(--magenta);
 }
 .edge-anchor {

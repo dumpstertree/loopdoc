@@ -5,7 +5,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import NodeCard, { NODE_W, PORT_Y } from './NodeCard.jsx'
 import { NodePalette } from './NodePalette.jsx'
 import { KINDS, kindsFor, kindMeta, uid, newNode, patchNode, removeNode, pruneLinks, groupKin, adoptInto, snap, orth, routePath, syncMath } from './model.js'
-import { dataCanConnect, compatTargets, takesFlow, branchLink } from './wireRules.js'
+import { dataCanConnect, compatTargets, takesFlow, branchLink, valueWireRisks } from './wireRules.js'
 import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 
 const GROW_STEP = 600
@@ -454,6 +454,16 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
     return a ? { x: a.x + origin.x + NODE_W, y: a.y + origin.y + PORT_Y } : null
   }
 
+  // racing data wires — wireRules decides which ⇡ may not have run when its
+  // reader does; those wires draw red here and the DRC reports the same verdict
+  const races = new Map(valueWireRisks(graph).map((r) => [r.link, r]))
+  const raceTitle = (l) => {
+    const r = races.get(l.id)
+    if (!r) return null
+    const src = byId[r.origin]
+    return `⚠ "${src ? kindMeta(src).label || src.kind : '?'}${src?.name ? ` "${src.name}"` : ''}" may not have run when this reads it`
+  }
+
   return (
     <>
       <div className="graph-toolbar">
@@ -503,6 +513,9 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 <marker id="arw-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-data" />
                 </marker>
+                <marker id="arw-stale" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" className="arrow-head-stale" />
+                </marker>
               </defs>
               {graph.links.map((l) => {
                 if (l.kind === 'data') return null
@@ -551,10 +564,11 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 const t = portPos[`${l.to}:${l.toPort}:in`]
                 if (!s || !t) return null
                 const d = routePath(s, t, (l.anchors || []).map((p) => ({ x: p.x + origin.x, y: p.y + origin.y })), flips.has(l.from) ? -1 : 1, flips.has(l.to) ? -1 : 1).d
+                const race = races.get(l.id)
                 return (
                   <g
                     key={l.id}
-                    className={`edge edge-data ${sel && sel.link === l.id ? 'edge-sel' : ''}`}
+                    className={`edge edge-data ${race ? 'edge-stale' : ''} ${sel && sel.link === l.id ? 'edge-sel' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation()
                       setSelection([])
@@ -573,9 +587,11 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                       }))
                     }}
                   >
-                    <title>data wire — click selects · dbl-click adds anchor · Del removes</title>
+                    <title>
+                      {`data wire — click selects · dbl-click adds anchor · Del removes${race ? ` · ${raceTitle(l)}` : ''}`}
+                    </title>
                     <path d={d} className="edge-hit" />
-                    <path d={d} className="edge-line" markerEnd="url(#arw-data)" />
+                    <path d={d} className="edge-line" markerEnd={race ? 'url(#arw-stale)' : 'url(#arw-data)'} />
                   </g>
                 )
               })}

@@ -181,6 +181,7 @@
   --edge-line-stroke-width: 1.5;
   --edge-hover-edge-line-filter: drop-shadow(0 0 3px var(--cyan));
   --edge-data-hover-edge-line-filter: drop-shadow(0 0 3px var(--mint));
+  --edge-stale-edge-line-filter: drop-shadow(0 0 3px var(--urgent));
   --port-compat-stroke-width: 1.5;
   --keyframes-pcpulse-opacity: 0.95;
   --keyframes-pcpulse-opacity-pulsing-ring-on-every-port-compatible-wi: 0.3;

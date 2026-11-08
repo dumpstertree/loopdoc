@@ -1,7 +1,7 @@
 // wire rules tests — the grammar both canvases, the engine, and the DRC share
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isEntryPart, dataCanConnect, compatTargets, takesFlow, branchLink } from '../src/wireRules.js'
+import { isEntryPart, dataCanConnect, compatTargets, takesFlow, branchLink, valueWireRisks } from '../src/wireRules.js'
 import { runDRC } from '../src/drc.js'
 import { emptyValue, renameTypeInDoc, newNode, typedValue, exitVarsOf, syncMath, patchNode, pruneLinks, dataPorts, dataPortType, kindMeta } from '../src/model.js'
 
@@ -435,4 +435,81 @@ test('DRC: an unfed and/or warns, a typed or wired slot silences it', () => {
   assert.ok(!warns(g([wired, src], [data(src, '__val__', wired, '__s1__')])).length, 'a wired slot silences it')
   const partial = g([{ ...bare, slots: 3 }], [data(src, '__val__', bare, '__s0__')])
   assert.ok(partial.some((f) => f.text.includes('unwired, untyped ⇣ slot is simply ignored')), 'a blank slot among fed ones is an info, not a warn')
+})
+
+// ---- value-wire ordering: the rule that decides which data wires draw red ----
+const mg = (nodes, links, entry = null) => ({ mode: 'machine', nodes, links, ...(entry ? { entry } : {}) })
+
+test('ordering: a ⇡ fed ahead of its reader is guaranteed, the same wire reversed races', () => {
+  const en = n('enter')
+  const a = n('step', { tag: 'a', outVars: [{ id: 'v', type: 'int' }] })
+  const b = n('step', { tag: 'b', inVars: [{ id: 'v', type: 'int' }] })
+  const fwd = mg([en, a, b], [flow(en, a), flow(a, b), data(a, 'v', b, 'v')], en.id)
+  assert.ok(!valueWireRisks(fwd).length, 'ENTER ▸ A ▸ B: A always ran before B')
+  const rev = mg([en, a, b], [flow(en, b), flow(b, a), data(a, 'v', b, 'v')], en.id)
+  const risks = valueWireRisks(rev)
+  assert.ok(risks.length === 1 && risks[0].origin === a.id, 'B ▸ A: reading A at B is a race, blamed on A')
+})
+
+test('ordering: a part on a side branch never dominates the join', () => {
+  const en = n('enter')
+  const a = n('step', { tag: 'a', outVars: [{ id: 'v', type: 'int' }] })
+  const b = n('step', { tag: 'b' })
+  const c = n('step', { tag: 'c', inVars: [{ id: 'v', type: 'int' }] })
+  const g = mg([en, a, b, c], [flow(en, a), flow(a, c), flow(en, b), flow(b, c), data(a, 'v', c, 'v')], en.id)
+  const risks = valueWireRisks(g)
+  assert.ok(risks.length === 1 && risks[0].origin === a.id, 'A runs beside B — it may not have run when C reads it')
+})
+
+test('ordering: made values (VAR / GET GLOBAL / ENTER) are order-free', () => {
+  const en = n('enter')
+  const v = n('var', { variable: { name: 'seed', type: 'int', value: 1 } })
+  const gg = n('getg', { gRef: 'g' })
+  const st = n('step', { inVars: [{ id: 'v1', type: 'int' }, { id: 'v2', type: 'int' }, { id: 'v3', type: 'int' }] })
+  const g = mg([en, v, gg, st], [flow(en, st), data(v, '__val__', st, 'v1'), data(gg, '__val__', st, 'v2'), data(en, en.id, st, 'v3')], en.id)
+  assert.ok(!valueWireRisks(g).length, 'nothing fires: those values exist from the start of the run')
+})
+
+test('ordering: a math ⇡ inherits the guarantee of the wires feeding it', () => {
+  const sys = n('syscall', { calls: [{ asset: 'as', fn: 'fn' }] })
+  const en = n('enter')
+  const st = n('step', { inVars: [{ id: 'v', type: 'int' }] })
+  const add = n('add')
+  const links = [flow(en, sys), flow(en, st), data(sys, 'v', add, '__a__'), data(add, '__out__', st, 'v')]
+  const risks = valueWireRisks(mg([en, sys, st, add], links, en.id))
+  assert.ok(risks.length === 1 && risks[0].origin === sys.id, 'the demand chain runs back to the call, which may not have run')
+  const fed = [flow(en, sys), flow(sys, add), flow(add, st), data(sys, 'v', add, '__a__'), data(add, '__out__', st, 'v')]
+  assert.ok(!valueWireRisks(mg([en, sys, st, add], fed, en.id)).length, 'park the fold in the chain and the call dominates the read')
+})
+
+test('ordering: value wires that chain back to themselves are flagged as a cycle', () => {
+  const en = n('enter')
+  const m1 = n('add')
+  const m2 = n('mul')
+  const links = [flow(en, m1), flow(m1, m2), data(m1, '__a__', m2, '__b__'), data(m2, '__out__', m1, '__a__')]
+  const risks = valueWireRisks(mg([en, m1, m2], links, en.id))
+  assert.ok(risks.length === 2 && risks.every((r) => r.kind === 'cycle'), 'neither fold can ever be built')
+})
+
+test('ordering: a loop’s ⇡item/⇡index cover every body reader', () => {
+  const en = n('enter')
+  const fe = n('foreach', { itemType: 'unit' })
+  const st = n('step', { inVars: [{ id: 'it', type: 'unit' }] })
+  const g = mg([en, fe, st], [flow(en, fe), flow(fe, st), data(fe, '__item__', st, 'it')], en.id)
+  assert.ok(!valueWireRisks(g).length, 'the FOR part itself is what publishes its item — the chain cannot reach a body without it')
+})
+
+test('DRC reports the racing wire with the same verdict the canvas draws red', () => {
+  const en = n('enter')
+  const a = n('step', { tag: 'a', outVars: [{ id: 'v', type: 'int' }] })
+  const b = n('step', { tag: 'b', inVars: [{ id: 'v', type: 'int' }] })
+  const doc = {
+    name: 'x',
+    design: { id: 'g1', name: 'loop', mode: 'flow', nodes: [en, a, b], links: [flow(en, b), flow(b, a), data(a, 'v', b, 'v')], entry: en.id },
+  }
+  const findings = runDRC(doc)
+  assert.ok(
+    findings.some((f) => f.sev === 'warn' && f.text.includes('may read') && f.text.includes('wire drawn red')),
+    'the DRC says the ⇡ may not have run, and points at the red wire',
+  )
 })

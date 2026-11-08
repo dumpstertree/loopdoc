@@ -132,6 +132,32 @@ black box: while **simulating**, its ⇡ rows become editable so you type the
 answer the black box returns (a blocking call stays open until you click it);
 typed answers persist across rounds and show as `(your value)` in the sim log.
 
+### Has the producer run? — value wires never race
+
+A wired value only exists once the part publishing it **fired**, so a data
+wire also carries an ordering demand, checked against the graph's flow.
+`wireRules.valueWireRisks(graph)` answers it once per graph, and both canvases
+plus the DRC read the same verdict:
+
+- **computed parts** (`+ − × ÷ mod`, `all/any`, `INSPECT`, `CLONE`, array
+  tools) are recomputed the moment they are read — their ⇡ is exactly as
+  guaranteed as the wires feeding their own ⇣, so the demand chain is walked
+  back through them (`M → ⇡` is only as safe as `SYS CALL → M`)
+- **made values** (`VAR`, `GET GLOBAL`, `GET LEDGER`, ENTER-door variables)
+  exist from the start of a run — order-free
+- **everything else** (`EVENT`/`SYS CALL` results, `IF` verdicts, `FOR`/`FOREACH`
+  items and indices, nested `MACHINE`/`FUNC` outputs…) fires when a chain
+  arrives: its ⇡ is guaranteed at a reader only if it **dominates** it — every
+  flow path from an entry (`ENTER` door / the ▶ start) passes through it first
+
+A wire whose demand misses that guarantee is a race: it draws **red** (dashed
+red line + red arrowhead) instead of mint, and the ⚑ DRC warns at the reader
+naming the part that may not have run. The hover tooltip on the wire says the
+same. Nothing is refused — the wiring stays editable, so you see the hazard and
+fix it by moving the producer onto the chain. The verdict is static: parts
+reachable only through the wire itself are skipped (they never run), and
+demand cycles that can never be built are flagged as `cycle`.
+
 ## ⌁ Loopdoc files on the web
 
 The bulk of the DATA comes from the web: the ⚙ **settings** dial keeps a list
@@ -218,7 +244,7 @@ function body, and since fetched items keep their slot ids, SYS CALL parts and
   inside one yet — the engine logs the call and passes the chain through
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
-  loop body, no entry), last-iteration item reads on end chains, unreachable exits, dangling data wires, deleted-type drift;
+  loop body, no entry), last-iteration item reads on end chains, unreachable exits, dangling data wires, value wires reading before their producer can have run (the wires drawn red — "has the producer run?" per `wireRules`), deleted-type drift;
   ✕ errors · ⚠ warnings · ℹ info, click a finding to jump to its graph
 - **Ctrl+S** save / open `.json` (File System Access API; autosaves to
   localStorage meanwhile)

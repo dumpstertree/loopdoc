@@ -206,7 +206,8 @@
     },
     "edges hover glow": {
       "edge-hover-edge-line-filter": "drop-shadow(0 0 3px var(--cyan))",
-      "edge-data-hover-edge-line-filter": "drop-shadow(0 0 3px var(--mint))"
+      "edge-data-hover-edge-line-filter": "drop-shadow(0 0 3px var(--mint))",
+      "edge-stale-edge-line-filter": "drop-shadow(0 0 3px var(--urgent))"
     },
     "compat pulse": {
       "port-compat-stroke-width": "1.5",

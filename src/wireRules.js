@@ -2,7 +2,7 @@
 // The chain engine (engine.js), both canvases' drop checks and drag-time
 // port highlighting, and the DRC all consult these, so a rule can never be
 // enforced in one place and forgotten in another.
-import { kindMeta, dataPortType, uid } from './model.js'
+import { kindMeta, dataPortType, uid, MATH, BOOL } from './model.js'
 
 // Entry parts are EXPLICIT: ENTER is the machine's door — always a start,
 // impossible to suppress. Nothing else enters a chain by being unconnected
@@ -91,4 +91,114 @@ export function branchLink(g, assets, src, idx, to, toPort, funcs = []) {
     ok: true,
     link: { id: uid('lk'), kind: 'flow', from: src.from, fromPort: src.fromPort, to, toPort: 'in', anchors: stem },
   }
+}
+
+// ---------------------------------------------------------------------------
+// Value-wire ordering — "has the producer run?" — the one thing the grammar
+// above cannot say: a wired value only EXISTS at the moment the part
+// publishing it fired. Pull a ⇡ from a part that may run after (or beside)
+// its reader and the read is a race. So every data wire carries an ordering
+// requirement, resolved against the graph's flow:
+//   · computed parts (math/bool folds, INSPECT, CLONE, array tools) publish
+//     on demand — engine.js recomputes them at read time, so their ⇡ is
+//     exactly as guaranteed as the wires feeding their own ⇣: the demand
+//     chain is followed back through them
+//   · made values (VAR, GET GLOBAL/GET LEDGER) and ENTER door variables exist
+//     from the start of a run — order-free
+//   · everything else (EVENT/SYS CALL, IF verdict, loop item/index, nested
+//     MACHINE and FUNC results…) fires when a chain arrives: its ⇡ is
+//     guaranteed when the reader runs only if it DOMINATES the reader — every
+//     flow path from any entry (ENTER doors / the ▶ start) passes through it
+//     first
+// A wire whose demand chain misses that guarantee is a race: both canvases
+// draw it red and the DRC reports the very same verdict. Pure static pass —
+// one call per graph, tiny graphs, no canvas in sight.
+const VALUE_FREE = new Set(['enter', 'var', 'getg', 'getledger'])
+const VALUE_DEMAND = new Set([...Object.keys(MATH), ...Object.keys(BOOL), 'inspect', 'clone', 'append', 'join', 'remove', 'removeat', 'sort'])
+
+export function valueWireRisks(g) {
+  const nodes = g.nodes || []
+  const links = g.links || []
+  const byId = Object.fromEntries(nodes.map((x) => [x.id, x]))
+  const flows = links.filter((x) => x.kind !== 'data')
+  const data = links.filter((x) => x.kind === 'data')
+
+  // entries: ENTER doors (machine/func canvas) or the ▶ start of a flow graph
+  const rootSet = new Set(nodes.filter((x) => isEntryPart(x) || x.id === g.entry).map((x) => x.id))
+
+  // reachable set over the flow edges
+  const reach = new Set()
+  for (const q = [...rootSet]; q.length; ) {
+    const id = q.shift()
+    if (reach.has(id) || !byId[id]) continue
+    reach.add(id)
+    for (const e of flows) if (e.from === id) q.push(e.to)
+  }
+
+  // must-already-have-run sets: the classic iterative dominator dataflow
+  const all = [...reach]
+  const dom = {}
+  for (const id of all) dom[id] = rootSet.has(id) ? new Set([id]) : new Set(all)
+  for (;;) {
+    let changed = false
+    for (const id of all) {
+      if (rootSet.has(id)) continue
+      let inter = null
+      for (const e of flows) {
+        if (e.to !== id || !reach.has(e.from)) continue
+        const dp = dom[e.from]
+        if (inter === null) inter = new Set(dp)
+        else for (const d of [...inter]) if (!dp.has(d)) inter.delete(d)
+      }
+      if (!inter) continue
+      inter.add(id)
+      if (inter.size < dom[id].size) {
+        dom[id] = inter
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  // an unreachable reader never runs — nothing can race at it
+  const firedBefore = (a, b) => reach.has(a) && a !== b && dom[b]?.has(a)
+
+  // the stateful parts behind a part's ⇡: follow the demand chain back
+  const memo = {}
+  const left = { steps: 6000 }
+  const origins = (id, path) => {
+    if (!byId[id] || left.steps-- <= 0) return new Set()
+    if (path.has(id)) return 'cycle'
+    if (memo[id]) return memo[id]
+    const kind = byId[id].kind
+    if (!VALUE_FREE.has(kind) && !VALUE_DEMAND.has(kind)) {
+      const own = new Set([id]) // fires when a chain arrives — that IS the demand
+      memo[id] = own
+      return own
+    }
+    const set = new Set()
+    const deeper = new Set(path).add(id)
+    for (const l of data)
+      if (l.to === id) {
+        const back = origins(l.from, deeper)
+        if (back === 'cycle') return 'cycle'
+        for (const o of back) set.add(o)
+      }
+    memo[id] = set
+    return set
+  }
+
+  // per-wire verdict
+  const risks = []
+  for (const l of data) {
+    if (!byId[l.from] || !byId[l.to] || !reach.has(l.to)) continue
+    const back = origins(l.from, new Set([l.to]))
+    if (back === 'cycle') {
+      risks.push({ link: l.id, origin: l.from, kind: 'cycle', why: 'the value chains back to itself — it can never be built' })
+      continue
+    }
+    const missed = [...back].filter((o) => !firedBefore(o, l.to))
+    if (missed.length)
+      risks.push({ link: l.id, origin: missed.sort()[0], kind: 'order', why: 'its producer is not guaranteed to run first — every chain path from an entry to the reader must pass through it' })
+  }
+  return risks
 }
