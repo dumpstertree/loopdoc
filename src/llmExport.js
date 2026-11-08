@@ -3,7 +3,10 @@
 // is lowered into an ordered pseudo-program (chains in run order, control
 // structures as indented blocks, data wires as # lines under their consumer),
 // nested graphs/machines/functions become sections the call site points into,
-// and a part reference for every kind used explains the vocabulary itself.
+// and the part reference for the kinds actually used is read BEFORE the programs
+// are, so the vocabulary exists by the time the first chain does. Art assets are
+// a legacy feature: the brief never mentions them. Content the design never
+// reaches (unchained parts, dead values) is culled quietly rather than flagged.
 // A Curio cheatsheet closes the brief, mapping each concept onto the engine
 // feature that carries it, so the model builds the game instead of guessing.
 // Not re-importable — this is the communication artifact; the .json is the
@@ -55,18 +58,13 @@ function detail(n, g, doc) {
   const fed = (port) => (g.links || []).some((l) => l.kind === 'data' && l.to === n.id && l.toPort === port)
   switch (n.kind) {
     case 'event':
-      return [
-        ...(n.calls || []).map(callStr).map((c) => `calls ${c}`),
-        n.gen && n.gen.name ? `✨ generates a new asset "${n.gen.name}" (graph-local)` : '',
-      ]
-        .filter(Boolean)
-        .join(' · ')
+      return (n.calls || []).map(callStr).map((c) => `calls ${c}`).join(' · ')
     case 'syscall':
       return `calls ${(n.calls || []).map(callStr).join(', ')}`
     case 'load':
-      return `puts ${assetLabel(n.asset, A)} into asset memory`
+      return `puts ${assetLabel(n.asset, A)} into memory`
     case 'unload':
-      return `removes ${assetLabel(n.asset, A)} from asset memory`
+      return `removes ${assetLabel(n.asset, A)} from memory`
     case 'input':
       return `applies 🎮 ${assetLabel(n.asset, A)} (player input)`
     case 'var': {
@@ -81,9 +79,9 @@ function detail(n, g, doc) {
     case 'choice':
       return `waits for player: ${(n.exits || []).map((e) => `"${e.label || '?'}"`).join(' | ')}`
     case 'graph':
-      return `nested flow graph — ${n.graph?.nodes?.length || 0} parts (section below; RETURN leads back out)`
+      return 'nested flow graph — its section is below (RETURN leads back out)'
     case 'machine':
-      return `nested machine — ${n.graph?.nodes?.length || 0} parts (section below; its ⇣ inputs feed the machine's ENTER doors and its ⇡ outputs are the EXIT doors' variables)`
+      return `nested machine — its section is below (its ⇣ inputs feed the machine’s ENTER doors and its ⇡ outputs are the EXIT doors’ variables)`
     case 'getg':
       return `reads ⚙ ${n.gName || '?'} (${n.gType || '?'})`
     case 'setg':
@@ -129,11 +127,16 @@ function detail(n, g, doc) {
           }`
         : n.exitRef ? '⚠ routes to an EXIT that no longer exists — re-pick' : 'no EXIT picked yet'
     }
+    case 'getledger': {
+      const sys = (doc?.assets || []).find((a) => a.id === n.lRef)
+      return `reads system ledger ${sys?.name || '⚠ no system picked'}.${n.lName || '?'}${n.lType ? ` (${n.lType})` : ''}`
+    }
+    case 'setledger': {
+      const sys = (doc?.assets || []).find((a) => a.id === n.lRef)
+      return `writes ⇣ value into system ledger ${sys?.name || '⚠ no system picked'}.${n.lName || '?'}`
+    }
     case 'enter': {
-      const parts = [
-        ...(n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}${String(v.value ?? '') ? ` = ${v.value}` : ''}`),
-        ...(n.assets || []).map((a) => `📦 ${a.name || 'unpicked'}`),
-      ]
+      const parts = (n.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}${String(v.value ?? '') ? ` = ${v.value}` : ''}`)
       return `the machine’s door — always starts chains${parts.length ? ` · vars: ${parts.join(' · ')}` : ''}`
     }
     case 'text':
@@ -155,10 +158,13 @@ function detail(n, g, doc) {
 // lower one graph into an ordered pseudo-program: chains start at the entry /
 // ENTER doors and run in the order they actually run; if/else, loops and
 // player choices become indented blocks instead of arrow pairs; parts that
-// never join a chain (pure values, notes, frames) ride as a side list; and
+// never join a chain ride as a side list only if they actually feed one, and
 // anything the lowering cannot place — unwired branches, parallel chains,
-// cycles, wires into deleted parts — is flagged ⚠ so nothing is lost quietly
-function graphSection(g, doc, heading, parentNote, slugs) {
+// cycles, wires into deleted parts — is recorded in gaps so the brief can
+// collect every open point in one place at its foot. Parts reached by nothing,
+// and values that feed nothing, are simply left out: unused content is not
+// part of this design
+function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, gaps, calledFuncs) {
   const L = []
   const labels = makeLabels(g)
   const nodes = g.nodes || []
@@ -167,6 +173,8 @@ function graphSection(g, doc, heading, parentNote, slugs) {
   const datas = (g.links || []).filter((l) => l.kind === 'data')
   const pad = (i) => '  '.repeat(i)
   const sideKind = (n) => n.kind === 'text' || n.kind === 'todo' || kindMeta(n).dataOnly
+  const where = `${heading.replace(/^#+ /, '')}${g.name ? ` ${q(g.name)}` : ''}`
+  const gap = (cat, msg) => gaps.push({ where, cat, msg })
   const portName = (node, id, dir) => {
     const dp = dataPorts(node, doc.assets, doc.funcs || [], g)
     const p = (dp[dir] || []).find((x) => x.id === id)
@@ -202,9 +210,21 @@ function graphSection(g, doc, heading, parentNote, slugs) {
     let cur = id
     while (cur) {
       const n = byId[cur]
-      if (!n) { L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${cur})`); break }
-      if (visited.has(cur)) { L2.push(`${pad(ind)}goto ${slugs[cur] || labels[cur]} — ⚠ this chain returns to a part already written above`); break }
+      if (!n) {
+        L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${cur})`)
+        gap('deleted part', `flow enters a deleted part (id ${cur})`)
+        break
+      }
+      if (visited.has(cur)) {
+        L2.push(`${pad(ind)}goto ${slugs[cur] || labels[cur]} — ⚠ this chain returns to a part already written above`)
+        gap('cycle', `${disp(cur)} — the chain returns here`)
+        break
+      }
       visited.add(cur)
+      kindsUsed.add(n.kind)
+      // a FUNC part only earns its ƒ if it was actually written out, not merely
+      // present in the graph — a call site nothing reaches calls nothing
+      if (n.kind === 'func') calledFuncs.add(n.func)
       const take = (port) => {
         const ls = port == null ? outFlow(cur) : outFlow(cur, port)
         for (const l of ls.slice(1)) extra.push({ id: l.to, why: `extra flow out of ${slugs[cur] || labels[cur]}` })
@@ -214,7 +234,13 @@ function graphSection(g, doc, heading, parentNote, slugs) {
         if (!l) return null
         if (byId[l.to]) return l.to
         L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${l.to})`)
+        gap('deleted part', `flow enters a deleted part (id ${l.to})`)
         return null
+      }
+      // a link whose far end no longer exists — the id is all the document has
+      const dead = (id, ind2) => {
+        L2.push(`${pad(ind2)}⚠ deleted part (id ${id})`)
+        gap('deleted part', `a link points at a part that no longer exists (id ${id})`)
       }
       const k = n.kind
       if (k === 'condition' || k === 'ifb') {
@@ -227,13 +253,19 @@ function graphSection(g, doc, heading, parentNote, slugs) {
         L2.push(`${pad(ind)}if (${test}):  # ${disp(cur)}`)
         const tb = take('true')
         if (tb && byId[tb.to]) L2.push(...chain(tb.to, ind + 1))
-        else if (tb) L2.push(`${pad(ind + 1)}⚠ deleted part (id ${tb.to})`)
-        else L2.push(`${pad(ind)}# (true unwired — the chain stops when the test passes)`)
+        else if (tb) dead(tb.to, ind + 1)
+        else {
+          L2.push(`${pad(ind)}# (true unwired — the chain stops when the test passes)`)
+          gap('unwired branch', `${disp(cur)}: its true arm has no flow`)
+        }
         L2.push(`${pad(ind)}else:`)
         const fb = take('false')
         if (fb && byId[fb.to]) L2.push(...chain(fb.to, ind + 1))
-        else if (fb) L2.push(`${pad(ind + 1)}⚠ deleted part (id ${fb.to})`)
-        else L2.push(`${pad(ind)}# (false unwired — the chain stops when the test fails)`)
+        else if (fb) dead(fb.to, ind + 1)
+        else {
+          L2.push(`${pad(ind)}# (false unwired — the chain stops when the test fails)`)
+          gap('unwired branch', `${disp(cur)}: its false arm has no flow`)
+        }
         cur = null
       } else if (k === 'choice') {
         L2.push(`${pad(ind)}wait for player choice:  # ${disp(cur)}`)
@@ -243,8 +275,11 @@ function graphSection(g, doc, heading, parentNote, slugs) {
           if (ls[0]) {
             L2.push(`${pad(ind)}if player picks ${q(e.label || '?')}:`)
             if (byId[ls[0].to]) L2.push(...chain(ls[0].to, ind + 1))
-            else L2.push(`${pad(ind + 1)}⚠ deleted part (id ${ls[0].to})`)
-          } else L2.push(`${pad(ind)}# (option ${q(e.label || '?')} unwired — the chain stops if chosen)`)
+            else dead(ls[0].to, ind + 1)
+          } else {
+            L2.push(`${pad(ind)}# (option ${q(e.label || '?')} unwired — the chain stops if chosen)`)
+            gap('unwired branch', `${disp(cur)}: the option ${q(e.label || '?')} leads nowhere`)
+          }
         }
         cur = null
       } else if (k === 'for' || k === 'foreach') {
@@ -258,11 +293,18 @@ function graphSection(g, doc, heading, parentNote, slugs) {
         const body = take('out') // the loop's iter port
         if (body) {
           if (byId[body.to]) L2.push(...chain(body.to, ind + 1))
-          else L2.push(`${pad(ind + 1)}⚠ deleted part (id ${body.to})`)
-        } else L2.push(`${pad(ind)}# (body unwired — the loop runs empty)`)
+          else dead(body.to, ind + 1)
+        } else {
+          L2.push(`${pad(ind)}# (body unwired — the loop runs empty)`)
+          gap('unwired branch', `${disp(cur)}: the loop body has no flow`)
+        }
         const end = take('end')
         if (end) cur = step(end)
-        else { L2.push(`${pad(ind)}# (end unwired — after the loop the chain stops here)`); cur = null }
+        else {
+          L2.push(`${pad(ind)}# (end unwired — after the loop the chain stops here)`)
+          gap('unwired branch', `${disp(cur)}: nothing continues after the loop`)
+          cur = null
+        }
       } else {
         L2.push(headLine(n, ind), ...wires(n, ind))
         if (k === 'exit' || k === 'exitinst') cur = null // doors end their chain
@@ -291,23 +333,47 @@ function graphSection(g, doc, heading, parentNote, slugs) {
     const x = extra.shift()
     if (visited.has(x.id)) continue
     L.push(`# ⚠ parallel chain — ${x.why}: starts at ${slugs[x.id] || labels[x.id]}`)
+    gap('parallel chain', `${x.why}: a chain starts at ${slugs[x.id] || labels[x.id]}`)
     L.push(...chain(x.id, 0))
   }
 
-  const side = nodes.filter((n) => sideKind(n) && !visited.has(n.id))
+  // a part that joins no chain still belongs to the brief if its ⇡ value feeds
+  // something that is in the brief — so the set of kept parts grows from the
+  // chain until nothing new feeds it; anything left over (an unchained part
+  // nothing reads, a value nothing consumes) is content this design does not
+  // use, and is dropped. Annotation frames and checklists ride always: they
+  // carry intent, not logic
+  const kept = new Set(visited)
+  const feeds = (n) => datas.some((l) => l.from === n.id && kept.has(l.to))
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of nodes) {
+      if (visited.has(n.id) || kept.has(n.id) || !sideKind(n)) continue
+      if (n.kind === 'text' || n.kind === 'todo' || feeds(n)) {
+        kept.add(n.id)
+        grew = true
+      }
+    }
+  }
+  const side = nodes.filter((n) => sideKind(n) && !visited.has(n.id) && kept.has(n.id))
   if (side.length) {
     L.push('')
     L.push('# values, notes & frames — not in any chain; their ⇡ values reach parts through the ⇣ # lines above')
-    for (const n of side) L.push(headLine(n, 0), ...wires(n, 0))
+    for (const n of side) {
+      kindsUsed.add(n.kind)
+      L.push(headLine(n, 0), ...wires(n, 0))
+    }
   }
 
-  const missed = nodes.filter((n) => !visited.has(n.id) && !sideKind(n))
   const dang = datas.filter((l) => !byId[l.to])
-  if (missed.length || dang.length) {
+  if (dang.length) {
     L.push('')
-    L.push('# ⚠ could not be placed in a chain')
-    for (const n of missed) L.push(`⚠ ${headLine(n, 0)} — not reached by any chain start`)
-    for (const l of dang) L.push(`⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
+    L.push('# ⚠ wires into deleted parts')
+    for (const l of dang) {
+      L.push(`⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
+      gap('deleted part', `a data wire goes to a deleted part (id ${l.to})`)
+    }
   }
   return L
 }
@@ -353,10 +419,9 @@ const CURIO = [
   '  foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
   '- ƒ function / nested GRAPH section → a plain Rust fn (ENTER vars = parameters, EXIT vars = the return),',
   '  or a separate #[habit] whose Scope.is_enabled is the condition under which it runs every frame.',
-  '- ASSETS (🎨 art, ⚙️ system) → asset.manifest entries with a unique i16 id and type Embedded|Local|Remote;',
-  '  Assets::append_listing_group(generated_assets()) at startup, then Assets::load_asset::<ModelAsset>(&2665)',
-  '  at the use site (Arc cached), or Assets::try_lookup_key_for_name("assets/mesh/Cube.glb") by name.',
-  '  build.rs fails on a missing/empty or duplicated id/uri — asset ids in the brief must stay distinct.',
+  '- GET LEDGER / SET LEDGER (system ledger variables, listed up top under Shared',
+  '  state) → the ledger record for that system: read with ledger.read::<T>() and write with',
+  '  ledger.write::<T>(|rec| rec.field = …) — records are made once at Curio::create() and edited, never added.',
   '- system fn call (roster.foes()) → an ECS query over the context, not a lookup table; user fns are facets.',
   '- TEXT frame / TODO part → a comment and a // todo in the generated code: they carry intent, not logic.',
   '- ⚠ lines (goto, parallel chain, unwired branch, deleted part) → the design left this open: state the',
@@ -371,15 +436,6 @@ const CURIO = [
 
 export function exportForLLM(doc) {
   const out = []
-  const used = new Set()
-  const collect = (g) => {
-    for (const n of g.nodes || []) {
-      used.add(n.kind)
-      if (n.graph) collect(n.graph)
-    }
-  }
-  collect(doc.design)
-  for (const f of doc.funcs || []) collect(f.graph || { nodes: [] })
 
   // document-wide code-style handles: one slug per part, derived from kind +
   // name, made unique against the WHOLE document (container prefix only when
@@ -416,19 +472,83 @@ export function exportForLLM(doc) {
     for (const f of doc.funcs || []) slugWalk(f.graph || { nodes: [] }, `fn_${slugify(f.name || '') || 'fn'}`)
   }
 
+  // the programs are lowered first and kept aside: the vocabulary section that
+  // opens the brief can only be written once the walk has decided which kinds
+  // survive, and the open points found on the way print together at the foot
+  const body = []
+  const kindsUsed = new Set()
+  const gaps = []
+
+  // shared state the brief names: globals its GET/SET GLOBAL parts read and the
+  // system ledger variables its GET/SET LEDGER parts name — declared values no
+  // part touches are content this design does not use
+  const usedGlobals = new Set()
+  const ledgerRefs = new Map()
+  const calledFuncs = new Set()
+  const noteUse = (g) => {
+    for (const n of g.nodes || []) {
+      if (n.kind === 'getg' || n.kind === 'setg') usedGlobals.add(n.gName || '')
+      if (n.kind === 'getledger' || n.kind === 'setledger') {
+        const sys = (doc.assets || []).find((a) => a.id === n.lRef)
+        const key = `${sys?.name || '?'}.${n.lName || '?'}`
+        if (!ledgerRefs.has(key)) ledgerRefs.set(key, { type: n.lType || 'int', read: [], written: [] })
+        ;(n.kind === 'getledger' ? ledgerRefs.get(key).read : ledgerRefs.get(key).written).push(slugs[n.id])
+      }
+      if (n.graph) noteUse(n.graph)
+    }
+  }
+  noteUse(doc.design)
+  for (const f of doc.funcs || []) noteUse(f.graph || { nodes: [] })
+
+  // the graphs are lowered first and aside, because a ƒ earns its section only
+  // if a FUNC part that survived the walk calls it — and a ƒ named only by a
+  // part nothing reaches is dead code like that part
+  const graphsOut = []
+  const walkGraph = (g, depth, note) => {
+    graphsOut.push(...graphSection(g, doc, `${'#'.repeat(3 + depth)} ${g.mode === 'machine' ? 'Machine' : 'Flow Graph'}`, note, slugs, kindsUsed, gaps, calledFuncs))
+    graphsOut.push('')
+    for (const n of g.nodes || [])
+      if (n.graph) walkGraph(n.graph, depth + 1, `inside ${kindMeta(n).label} ${q(n.name || '')}`.trim())
+  }
+  walkGraph(doc.design, 0)
+
+  const funcsOut = []
+  const lowered = new Set()
+  let more = true
+  while (more) {
+    more = false
+    for (const f of doc.funcs || []) {
+      if (lowered.has(f.id) || !calledFuncs.has(f.id)) continue
+      lowered.add(f.id)
+      more = true
+      funcsOut.push(`- ${f.name || '(unnamed)'}${f.note ? ` — ${f.note}` : ''}`)
+      funcsOut.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', '', slugs, kindsUsed, gaps, calledFuncs))
+      funcsOut.push('')
+    }
+  }
+  if (lowered.size) {
+    body.push('## Defined functions — ƒ isolated bodies a FUNC part calls by name')
+    body.push(...funcsOut)
+    body.push('')
+  }
+  body.push('## Graphs')
+  body.push(...graphsOut)
+
   out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
   out.push(
     'Exported from loopdoc-composer as a plain-text reading of a node-graph design.',
     'Two canvases exist: FLOW graphs (control flow, one token walking the chain) and',
     'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
-    'data wires ⇣/⇡ carry typed values between parts). A token moves',
-    'one hop per step; ENTER doors start machine chains; flow graphs run from their entry.',
+    'data wires ⇣/⇡ carry typed values between parts). A token moves one hop per step;',
+    'ENTER doors start machine chains; flow graphs run from their entry.',
     'Each graph is written as a program: parts appear in the order their chain runs,',
     'and if/else, counted & array loops, and player choices are indented blocks —',
     'structure by containment, not by tracing arrows. A part’s indented # lines',
     'name the typed values its ⇣ inputs receive (# ⇣ port ← SOURCE.part :type).',
-    '⚠ lines mark flow the document leaves open or wires into deleted parts —',
-    'never assume past one; parts never reached by a chain are listed under ⚠.',
+    'Read it in this order: the vocabulary of the parts this brief uses, then what the',
+    'design is made of (systems, data types, shared state), then the programs,',
+    'then every point the design leaves open. Content the design never reaches is',
+    'left out of the brief — if it is not here, it is not in the design.',
     '',
   )
 
@@ -439,32 +559,24 @@ export function exportForLLM(doc) {
     out.push('')
   }
 
-  if ((doc.types || []).length) {
-    out.push('## Data types')
-    for (const t of doc.types)
-      out.push(`- ${t.name || '(unnamed)'} { ${(t.fields || []).map((f) => `${f.name || '?'}: ${f.typeId || '?'}`).join(', ')} }`)
-    out.push('')
+  out.push('## Part reference — the kinds used by the parts this brief carries')
+  // the kind hints live in model.js and still name the legacy asset layer;
+  // this brief describes a design without that feature, so the clauses naming
+  // assets are trimmed here rather than in the editor's own vocabulary
+  const hintOf = (k) => {
+    const m = kindMeta({ kind: k })
+    let hint = (m.hint || '').replace(/ and 📦 assets publish ⇡ inside and appear as/, ' appear as')
+    if (/assets?|📦/i.test(hint))
+      hint = hint.split(' · ').filter((c) => !/assets?|📦/i.test(c)).join(' · ')
+    return `${m.label || k} — ${hint}`
   }
+  for (const k of [...kindsUsed].sort()) out.push(hintOf(k))
+  out.push('')
 
-  if ((doc.vars || []).length) {
-    out.push('## Globals — ⚙ named values shared by every graph & machine (live session state)')
-    for (const v of doc.vars) out.push(`- ${v.name || '?'}:${v.type || 'int'} = ${v.value ?? ''}`)
-    out.push('')
-  }
-
-  if ((doc.funcs || []).length) {
-    out.push('## Defined functions — ƒ isolated bodies a FUNC part calls by name')
-    for (const f of doc.funcs) {
-      out.push(`- ${f.name || '(unnamed)'} · ${(f.graph?.nodes || []).length} parts${f.note ? ` — ${f.note}` : ''}`)
-      out.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', '', slugs))
-      out.push('')
-    }
-    out.push('')
-  }
-
-  if ((doc.assets || []).length) {
-    out.push('## Assets')
-    for (const a of doc.assets) {
+  const systems = (doc.assets || []).filter((a) => a.kind !== 'art')
+  if (systems.length) {
+    out.push('## Systems — what the engine hands this design, and the fns it can call')
+    for (const a of systems) {
       out.push(`- ${assetIcon(a.kind)} ${a.name || '(unnamed)'} (${a.kind})${a.note ? ` — ${a.note}` : ''}`)
       for (const f of a.api || [])
         out.push(
@@ -476,22 +588,56 @@ export function exportForLLM(doc) {
     out.push('')
   }
 
-  out.push('## Graphs')
-  const walkGraph = (g, depth, note) => {
-    out.push(...graphSection(g, doc, `${'#'.repeat(3 + depth)} ${g.mode === 'machine' ? 'Machine' : 'Flow Graph'}`, note, slugs))
+  if ((doc.types || []).length) {
+    const byNs = new Map()
+    for (const t of doc.types) {
+      const nm = t.name || '(unnamed)'
+      const ns = nm.includes(':') ? nm.split(':')[0] : '(no namespace)'
+      if (!byNs.has(ns)) byNs.set(ns, [])
+      byNs.get(ns).push(t)
+    }
+    out.push('## Data types — grouped by the namespace that owns them')
+    for (const [ns, ts] of byNs) {
+      if (byNs.size > 1) out.push(`**${ns}**`)
+      for (const t of ts)
+        out.push(`- ${t.name || '(unnamed)'} { ${(t.fields || []).map((f) => `${f.name || '?'}: ${f.typeId || '?'}`).join(', ')} }`)
+    }
     out.push('')
-    for (const n of g.nodes || [])
-      if (n.graph)
-        walkGraph(n.graph, depth + 1, `inside ${kindMeta(n).label} ${q(n.name || '')}`.trim())
   }
-  walkGraph(doc.design, 0)
 
-  out.push('## Part reference — kinds used in this document')
-  for (const k of [...used].sort()) {
-    const m = kindMeta({ kind: k })
-    out.push(`- ${m.label || k} — ${m.hint || ''}`)
+  const liveVars = (doc.vars || []).filter((v) => usedGlobals.has(v.name || ''))
+  if (liveVars.length || ledgerRefs.size) {
+    out.push('## Shared state — named values every graph & machine reads or writes')
+    for (const v of liveVars) out.push(`- ⚙ global ${v.name || '?'}:${v.type || 'int'} = ${v.value ?? ''}`)
+    for (const [key, r] of ledgerRefs) {
+      const who = [
+        ...(r.read.length ? [`read by ${r.read.join(', ')}`] : []),
+        ...(r.written.length ? [`written by ${r.written.join(', ')}`] : []),
+      ].join(' · ')
+      out.push(`- system ledger ${key} :${r.type}${who ? ` — ${who}` : ''}`)
+    }
+    out.push('')
   }
-  out.push('')
+
+  out.push(...body)
+
+  if (gaps.length) {
+    out.push('## ⚠ Open in this design — every point left undecided, grouped')
+    const gapCats = [
+      ['unwired branch', 'Unwired branches — a chain stops where the test or option leads nowhere'],
+      ['cycle', 'Cycles — the design loops back; the lowering can only write a goto'],
+      ['parallel chain', 'Parallel chains — one part carries more flow out than one order'],
+      ['deleted part', 'Deleted parts — a link or wire points at a part no longer in the document'],
+    ]
+    for (const [cat, title] of gapCats) {
+      const gs = gaps.filter((x) => x.cat === cat)
+      if (!gs.length) continue
+      out.push(`**${title}**`)
+      for (const x of gs) out.push(`- ${x.where}: ${x.msg}`)
+      out.push('')
+    }
+  }
+
   out.push(...CURIO)
   out.push('(end of brief — lossless source of this design is the .json export of the same document.)')
   return out.join('\n')
