@@ -81,6 +81,14 @@ test('llm export — machine section: door vars/assets, loops, wires, actions', 
   assert.ok(t.includes('EXIT "victory"'), 'named exit listed')
 })
 
+test('llm export — Curio cheatsheet closes the brief', () => {
+  const t = exportForLLM(doc)
+  assert.ok(t.includes('## Curio mapping — cheatsheet: graph part → engine feature'), 'mapping section present')
+  assert.ok(t.includes('named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum'), 'machine doors map onto events')
+  assert.ok(t.includes('⚙ GLOBALS → #[record] structs'), 'globals map onto records')
+  assert.ok(t.indexOf('## Curio mapping') > t.indexOf('## Part reference'), 'cheatsheet closes the brief, after the vocabulary')
+})
+
 test('llm export — part reference covers only kinds used', () => {
   const t = exportForLLM(doc)
   const ref = t.slice(t.indexOf('## Part reference'))

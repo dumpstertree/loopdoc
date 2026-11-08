@@ -4,6 +4,8 @@
 // structures as indented blocks, data wires as # lines under their consumer),
 // nested graphs/machines/functions become sections the call site points into,
 // and a part reference for every kind used explains the vocabulary itself.
+// A Curio cheatsheet closes the brief, mapping each concept onto the engine
+// feature that carries it, so the model builds the game instead of guessing.
 // Not re-importable — this is the communication artifact; the .json is the
 // lossless one.
 import { kindMeta, dataPorts, assetIcon, assetLabel, resolveCall, typedValue, MATH } from './model.js'
@@ -310,6 +312,63 @@ function graphSection(g, doc, heading, parentNote, slugs) {
   return L
 }
 
+// the target engine this brief is written for: curio-engine (Rust, ECS on hecs,
+// wgpu). The cheatsheet below maps every concept the lowering can emit onto the
+// engine construct that carries it, in the engine's own words — so the model
+// building the game never has to guess which Curio primitive a graph part means.
+const CURIO = [
+  '## Curio mapping — cheatsheet: graph part → engine feature',
+  'Handles in the brief are slugs; each one becomes the Rust name below it.',
+  '',
+  '- FLOW graph (the Main Loop) → the game loop itself: one #[habit] whose Scope.is_enabled is the',
+  '  “keep playing” test; its chain, written in order, is that habit’s tick(). Use enable()/disable()',
+  '  for the game’s start and teardown.',
+  '- MACHINE part / nested machine → a #[habit] (recurring, runs every frame while its Scope is',
+  '  enabled) for loops, or a #[impulse(MyStimulant)] (one-shot, reacts to an event) for behaviour',
+  '  that only runs when something announces it. Habits and impulses self-register by macro;',
+  '  Scope.run_on_instance() → NetworkModes::all() picks which multiplayer instances run it.',
+  '- chain hop A → B → nerve.enqueue_event(MyStimulant::B): stimulants are drained at the START of the',
+  '  next frame, and a stimulant that sends another keeps chaining before the Tick phase resumes.',
+  '- ENTER door + ⇣ vars → the habit’s/impulse’s inputs: fields of a #[record(ownership = RecordScope::Instance)]',
+  '  written with ledger.write::<T>(|rec| …) before the enqueue, a facet field, or plain fn parameters.',
+  '- named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum, plus the records that carry',
+  '  its values. “kills the token” = form.destroy() or stop the habit’s Scope.',
+  '- EXIT REF → enqueue the variant that named EXIT already owns — never mint a second event for it.',
+  '- ⚙ GLOBALS → #[record] structs made once at Curio::create() (records are edited, never added):',
+  '  read with ledger.read::<T>() (a read-only Rc<T>). Built-ins are yours for free: SysRecordTime',
+  '  (ledger.time().scaled_delta_time / scaled_time), SysRecordInput, SysRecordCamera, SysRecordScreen.',
+  '- DATA TYPE (Foe { hp: int, pos: Vec }) → a #[facet] struct + FieldOverride::apply/get_state when a',
+  '  .comp composition must edit it; a plain struct or record field set when only code touches it.',
+  '  Vec → Vector3/Vector2, int → i32, float → f32, bool → bool, Foe[] → Vec<Form> or an ECS query.',
+  '- VAR “hero” → context.spawner("hero").position(…).facet(Facet::builder()….build()).spawn();',
+  '  hold the Form on the habit struct, destroy() it in disable(). A VAR of ⚙/record fields is a write.',
+  '- MACHINE ⇣/⇡ wires at a call site, and every # ⇣ port ← slug.part :type line, are value hand-offs:',
+  '  read the producer’s record/facet, then write it in or pass it — the ← side names exactly which part.',
+  '- ACTION (chain waits for a click) → ledger.read::<SysRecordInput>(); raw.get_button(&ButtonCode::KeyW).is_down',
+  '  for physical keys, or map logical names once in InputMapping::new(…) and read',
+  '  mapped[seat].get_button_or_default("paddle_up") — the seat index is the multiplayer player.',
+  '- CHOICE options → each option is an input-mapped button that gates which stimulant gets enqueued;',
+  '  an unwired option means nothing gets enqueued, so the game waits — which is what the brief says.',
+  '- condition / IF / for / foreach / goto → plain Rust if / match / for / while in the habit or impulse body;',
+  '  foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
+  '- ƒ function / nested GRAPH section → a plain Rust fn (ENTER vars = parameters, EXIT vars = the return),',
+  '  or a separate #[habit] whose Scope.is_enabled is the condition under which it runs every frame.',
+  '- ASSETS (🎨 art, ⚙️ system) → asset.manifest entries with a unique i16 id and type Embedded|Local|Remote;',
+  '  Assets::append_listing_group(generated_assets()) at startup, then Assets::load_asset::<ModelAsset>(&2665)',
+  '  at the use site (Arc cached), or Assets::try_lookup_key_for_name("assets/mesh/Cube.glb") by name.',
+  '  build.rs fails on a missing/empty or duplicated id/uri — asset ids in the brief must stay distinct.',
+  '- system fn call (roster.foes()) → an ECS query over the context, not a lookup table; user fns are facets.',
+  '- TEXT frame / TODO part → a comment and a // todo in the generated code: they carry intent, not logic.',
+  '- ⚠ lines (goto, parallel chain, unwired branch, deleted part) → the design left this open: state the',
+  '  choice you made in a comment, and never invent an engine call the brief did not name.',
+  '',
+  'Startup shape: Curio::create().identity(…).plugin(SystemComponentDefaultTime/Graphics/Input/',
+  'Networking/Gameplay::<MyStimulant, MyUIEvent>::new()).formation(Formation::template_local_single(…)).imbue(),',
+  'with #[curio_entry] on the fn that returns it — every habit, impulse, facet and record is macro-registered,',
+  'so wiring the brief means declaring the parts, not hand-hooking them.',
+  '',
+]
+
 export function exportForLLM(doc) {
   const out = []
   const used = new Set()
@@ -433,6 +492,7 @@ export function exportForLLM(doc) {
     out.push(`- ${m.label || k} — ${m.hint || ''}`)
   }
   out.push('')
+  out.push(...CURIO)
   out.push('(end of brief — lossless source of this design is the .json export of the same document.)')
   return out.join('\n')
 }
