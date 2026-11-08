@@ -562,6 +562,11 @@ svg.edges {
 svg.edges .edge {
   pointer-events: auto;
   cursor: pointer;
+  transition: opacity 120ms ease;
+}
+/* focus: when a node is hovered, fade wires not attached to it */
+.edge-dim {
+  opacity: 0.16;
 }
 .edge-hit {
   fill: none;

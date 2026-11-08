@@ -608,6 +608,8 @@ export default function NodeCard({
   onCardClick,
   onResizeDown, // drag the corner of a text cell
   onSimCall, // set a live sys-call return value during sim
+  onNodeEnter, // hover starts — canvases use it to animate attached wires
+  onNodeLeave, // hover ends
 }) {
   const meta = kindMeta(node)
   // a func body is a machine canvas as far as looks go — same card width,
@@ -1975,6 +1977,8 @@ export default function NodeCard({
       data-node-id={node.id}
       style={{ left: node.x, top: node.y, width: W, height: H }}
       onMouseDown={(e) => onSelect(node.id, e.shiftKey)}
+      onMouseEnter={() => onNodeEnter && onNodeEnter(node.id)}
+      onMouseLeave={() => onNodeLeave && onNodeLeave(node.id)}
       onClick={() => onCardClick && onCardClick(node.id)}
       onDoubleClick={(e) => {
         // dbl-click a GRAPH/MACHINE/FUNC card walks into it — the open → /
