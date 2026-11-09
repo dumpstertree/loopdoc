@@ -168,7 +168,7 @@ test('llm export — unwired paths are not flagged: the code shape carries them'
 
 test('llm export — Curio cheatsheet closes the brief', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('## Curio mapping — cheatsheet: graph part → engine feature'), 'mapping section present')
+  assert.ok(t.includes('## Curio mapping — the engine features that carry the parts this brief uses'), 'mapping section present')
   assert.ok(t.includes('named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum'), 'machine doors map onto events')
   assert.ok(t.includes('⚙ GLOBALS → #[record] structs'), 'globals map onto records')
   assert.ok(t.includes('GET LEDGER / SET LEDGER (system ledger variables, listed up top under Shared'), 'the ledger idiom maps onto ledger records')
@@ -195,4 +195,102 @@ test('llm export — system fn descriptions ride the export', () => {
 test('llm export — fn description is optional; docs without one export unchanged', () => {
   const t = exportForLLM(doc)
   assert.ok(t.includes('fn foes( ) ⇡ foes:Foe[]\n'), 'no desc, no trailing dash')
+})
+
+// a design the LLM reviewer tore into: three machine exits, a part that fans out
+// inside the machine, card-typed operands, a call nobody feeds, a value producer
+// no chain walks, and a script its own validator calls broken
+const crit = {
+  app: 'loopdoc-composer',
+  name: 'Critique',
+  types: [{ id: 't1', name: 'Vec', fields: [{ id: 'f1', name: 'x', typeId: 'float' }] }],
+  vars: [],
+  assets: [
+    { id: 'lv', kind: 'system', name: 'LevelEngine', api: [
+      { id: 'gen', name: 'generate', inputs: [{ id: 'p1', name: 'min_w', type: 'int' }], outputs: [{ id: 'o1', name: 'map', type: 'int' }] },
+    ] },
+    { id: 'ie', kind: 'system', name: 'InputEngine', api: [] },
+  ],
+  funcs: [],
+  design: {
+    mode: 'flow',
+    name: 'Main Loop',
+    entry: 'e1',
+    nodes: [
+      { id: 'e1', kind: 'event', name: '', x: 0, y: 0, calls: [{ asset: 'lv', fn: 'gen' }] },
+      { id: 'disp', kind: 'step', name: '', x: 0, y: 0, note: 'display tiles' },
+      { id: 'gl_in', kind: 'getledger', name: '', x: 0, y: 0, lRef: 'ie', lName: 'input', lType: 'InputEngine:Input' },
+      { id: 'gl_d', kind: 'getledger', name: '', x: 0, y: 0, lRef: 'lv', lName: 'depth', lType: 'int' },
+      { id: 'insp', kind: 'inspect', name: '', x: 0, y: 0, fields: [{ id: 'fx', name: 'x', typeId: 'float' }] },
+      { id: 'add1', kind: 'add', name: '', x: 0, y: 0, aVal: '1', bVal: '' },
+      { id: 'sl_d', kind: 'setledger', name: '', x: 0, y: 0, lRef: 'lv', lName: 'depth', lType: 'int' },
+      { id: 'sl_p', kind: 'setledger', name: '', x: 0, y: 0, lRef: 'lv', lName: 'position', lType: 'Vec' },
+      { id: 'mach', kind: 'machine', name: '', x: 0, y: 0, graph: {
+        mode: 'machine',
+        name: 'walk',
+        nodes: [
+          { id: 'en', kind: 'enter', name: 'door', x: 0, y: 0, vars: [{ id: 'ev1', name: 'location', type: 'Vec' }] },
+          { id: 'cd', kind: 'code', name: '', x: 0, y: 0, lang: 'python', code: 'def move(location):\n    delta_x += 1\n    return location', inVars: [{ id: 'iv0', name: 'location', type: 'Vec' }], outVars: [{ id: 'ov1', name: 'delta_z', type: 'int' }] },
+          { id: 'if3', kind: 'ifb', name: '', x: 0, y: 0, op: '==', cmpType: 'bool' },
+          { id: 'if4', kind: 'ifb', name: '', x: 0, y: 0, op: '==', cmpType: 'bool' },
+          { id: 'x_c', kind: 'exit', name: 'continue', x: 0, y: 0, vars: [{ id: 'xv1', name: 'location', type: 'Vec' }] },
+          { id: 'x_d', kind: 'exit', name: 'descend', x: 0, y: 0 },
+          { id: 'x_u', kind: 'exit', name: 'ascend', x: 0, y: 0 },
+          { id: 'er1', kind: 'exitinst', name: '', x: 0, y: 0, exitRef: 'x_d' },
+          { id: 'er2', kind: 'exitinst', name: '', x: 0, y: 0, exitRef: 'x_c' },
+        ],
+        links: [
+          { id: 'mf1', kind: 'flow', from: 'en', fromPort: 'out', to: 'cd', toPort: 'in' },
+          { id: 'mf2', kind: 'flow', from: 'cd', fromPort: 'out', to: 'if3', toPort: 'in' },
+          { id: 'mf3', kind: 'flow', from: 'cd', fromPort: 'out', to: 'if4', toPort: 'in' },
+          { id: 'mf4', kind: 'flow', from: 'if3', fromPort: 'true', to: 'er1', toPort: 'in' },
+          { id: 'mf5', kind: 'flow', from: 'if3', fromPort: 'false', to: 'er2', toPort: 'in' },
+          { id: 'md1', kind: 'data', from: 'en', fromPort: 'ev1', to: 'cd', toPort: 'iv0' },
+          { id: 'md2', kind: 'data', from: 'en', fromPort: 'ev1', to: 'er2', toPort: 'xv1' },
+        ],
+      } },
+    ],
+    links: [
+      { id: 'l1', kind: 'flow', from: 'e1', fromPort: 'out', to: 'disp', toPort: 'in' },
+      { id: 'l2', kind: 'flow', from: 'disp', fromPort: 'out', to: 'mach', toPort: 'in' },
+      { id: 'l3', kind: 'flow', from: 'mach', fromPort: 'x_c', to: 'sl_p', toPort: 'in' },
+      { id: 'l4', kind: 'flow', from: 'mach', fromPort: 'x_d', to: 'gl_d', toPort: 'in' },
+      { id: 'l5', kind: 'flow', from: 'gl_d', fromPort: 'out', to: 'add1', toPort: 'in' },
+      { id: 'l6', kind: 'flow', from: 'add1', fromPort: 'out', to: 'sl_d', toPort: 'in' },
+      { id: 'd1', kind: 'data', from: 'insp', fromPort: 'fx', to: 'add1', toPort: '__b__' },
+      { id: 'd2', kind: 'data', from: 'add1', fromPort: '__val__', to: 'sl_d', toPort: '__val__' },
+      { id: 'd3', kind: 'data', from: 'gl_in', fromPort: '__val__', to: 'sl_p', toPort: '__val__' },
+    ],
+  },
+}
+
+test('llm export — a multi-exit machine prints one labelled block per door', () => {
+  const t = exportForLLM(crit)
+  assert.ok(t.includes('  if it leaves by "continue":') && t.includes('  if it leaves by "descend":'), 'exit routing is named at the call site, not left to parallel-chain markers')
+  assert.ok(t.includes('    exitref: ends the machine via “descend”'), 'the door inside the machine names itself too')
+  assert.ok(t.includes('  ⚠ a second flow wire leaves code on its out port — both get enqueued'), 'the fan-out rides where it belongs: inside the machine, at its own indent')
+  assert.ok(!t.includes('parallel chain'), 'no chain is hoisted to the foot of the section any more')
+})
+
+test('llm export — values the design typed instead of wiring are printed', () => {
+  const t = exportForLLM(crit)
+  assert.ok(t.includes('# ⇣ a = 1 — typed on the card, nothing wires it'), 'the card value is in the brief, so +1 is not a guess')
+  assert.ok(t.includes('# ⇣ min_w:int — no wire feeds it'), 'a call parameter nothing feeds says so')
+  assert.ok(t.includes('# ⇣ b ← inspect.x :float'), 'the value producer a live wire reads rides in the brief — no dangling handle')
+})
+
+test('llm export — a script the validator calls broken says so', () => {
+  const t = exportForLLM(crit)
+  assert.ok(t.includes("# ⚠ its script does not validate at line 1: output 'delta_z' is never assigned"), 'the fault is stated where the script is, so the reader fixes it once instead of shipping it')
+  assert.ok(t.includes('  def move(location):'), 'the script still rides under its part verbatim')
+})
+
+test('llm export — handles read as the design says, and the cheatsheet only maps used parts', () => {
+  const t = exportForLLM(crit)
+  assert.ok(t.includes('step_display_tiles (note: "display tiles")'), 'an unnamed part\'s handle comes from its note, so it reads as what it is for')
+  assert.ok(t.includes('- system ledger InputEngine.input :InputEngine:Input — read by getledger · no part in this design writes it'), 'an engine-only ledger value says nobody writes it')
+  assert.ok(t.includes('## Curio mapping — the engine features that carry the parts this brief uses'), 'the mapping section says it is filtered')
+  assert.ok(t.includes('- CODE part (its script is printed under the part, verbatim)'), 'a kind this brief uses maps onto the engine')
+  assert.ok(!t.includes('CHOICE options') && !t.includes('VAR “hero”'), 'mappings for kinds this brief never carries are left out')
+  assert.ok((t.match(/```/g) || []).length % 2 === 0, 'fences stay balanced with the new blocks inside them')
 })
