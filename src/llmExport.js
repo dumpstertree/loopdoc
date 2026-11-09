@@ -7,8 +7,9 @@
 // are, so the vocabulary exists by the time the first chain does. Art assets are
 // a legacy feature: the brief never mentions them. Content the design never
 // reaches (unchained parts, dead values) is culled quietly rather than flagged.
-// A Curio cheatsheet closes the brief, mapping each concept onto the engine
-// feature that carries it, so the model builds the game instead of guessing.
+// A Curio mapping closes the brief in three levels: the engine's own primitives,
+// then how this design's canvases become them, then how each part does — so the
+// model builds the game instead of guessing which Curio construct a part means.
 // Not re-importable — this is the communication artifact, written so it stands
 // alone: the model building from it is never handed the .json, so every handle
 // the brief uses has to resolve inside the brief itself.
@@ -492,45 +493,99 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
 }
 
 // the target engine this brief is written for: curio-engine (Rust, ECS on hecs,
-// wgpu). The cheatsheet below maps every concept the lowering can emit onto the
-// engine construct that carries it, in the engine's own words — so the model
-// building the game never has to guess which Curio primitive a graph part means.
-// each entry names the graph kinds it explains; entries for kinds this brief
-// never carries are dropped, the same rule that keeps unused parts out of the
-// programs — the reader only reads the mappings their own parts need
+// wgpu). The mapping is three deep on the same fact, in the engine's own words:
+// the primitives a built game is made of, then how this design's canvases become
+// them, then how each individual part does — so the model building from the brief
+// never has to guess which Curio construct a graph part means, and never has to
+// look up a name the brief did not define. canvas and node entries name the graph
+// kinds they explain; entries for kinds this brief never carries are dropped, the
+// same rule that keeps unused parts out of the programs, so the reader only reads
+// the mappings their own parts need
 const CURIO_HEAD = [
-  '## Curio mapping — the engine features that carry the parts this brief uses',
-  'Handles in the brief are slugs; each one becomes the Rust name below it —',
-  '  every name the brief uses is defined in the brief itself, so nothing here',
+  '## Curio features — the engine primitives a built game is made of',
+  'Handles in the brief are slugs; each one becomes the Rust name below it,',
+  '  and every name the brief uses is defined in the brief itself — nothing here',
   '  needs the design file or any other source to look up.',
   '',
 ]
-const CURIO_MAP = [
+// the engine's own vocabulary: always printed, because both mappings below are
+// phrased in it
+const CURIO_FEATURES = [
+  '- HABIT → a recurring loop: #[habit] on a struct, run every frame while its Scope.is_enabled()',
+  '  says so. enable()/disable() fire on the transitions into and out of being enabled, tick()',
+  '  is the per-frame body — the graph’s whole chain, written in order. Habits belong to no object:',
+  '  they live for the whole Curio, and the macro registers them, so nothing hand-hooks them.',
+  '- IMPULSE → a one-shot reaction to an event: #[impulse(MyStimulant)] on a struct whose',
+  '  dequeue_event(…, stimulant) runs once when a stimulant it listens for is drained. This is',
+  '  where a graph’s chain lands when the design only runs on an announcement.',
+  '- STIMULANT → the engine’s event type: one #[stimulant] enum whose variants are the events the',
+  '  game can send, passed to SystemComponentDefaultGameplay::<MyStimulant, MyUIEvent> at startup so',
+  '  every event is typed. Sent with nerve.enqueue_event(MyStimulant::V) during a frame, drained at',
+  '  the START of the next frame before anything else; a stimulant that sends another keeps that',
+  '  chain going before the Tick phase resumes.',
+  '- SCOPE → the trait every habit and impulse carries: is_enabled() decides whether it runs,',
+  '  run_on_instance() → NetworkModes::all() which multiplayer instances run it.',
+  '- LEDGER → where the Curio’s state lives: ledger.read::<T>() gives a read-only Rc<T>,',
+  '  ledger.write::<T>(|rec| rec.field = …) edits it. Every ⇣/⇡ value hand-off in the brief ends',
+  '  here or in a facet — a built game has nowhere else to keep a value.',
+  '- RECORD → one struct of that state: #[record(name = "…", ownership = RecordScope::Instance)].',
+  '  Made once when the Curio is created — records are edited, never added or removed — so every',
+  '  field the brief names has to exist at startup. Built-ins come free: SysRecordTime',
+  '  (ledger.time().scaled_delta_time / scaled_time), SysRecordInput, SysRecordCamera, SysRecordScreen.',
+  '- FACET → a property a Form is built from: #[facet] on a struct plus a FieldOverride impl',
+  '  (apply/get_state) so a COMPOSITION and the editor can edit its fields by name. Builders are',
+  '  fluent, Facet::builder()….build(), and a facet alone does nothing: a HABIT queries and edits it.',
+  '- FORM → an object that persists in the world: context.spawner("name").position(…).facet(…).spawn();',
+  '  edit_facet::<T>(|t| …)/get_facet::<T>() reach its properties, .child(…spawn()) adds parts, destroy()',
+  '  ends it. The usability wrapper over the ECS world underneath.',
+  '- COMPOSITION → a serialized Form hierarchy (.comp): components whose type: matches a facet struct',
+  '  name, each field string fed to that facet’s FieldOverride::apply, base: inheriting another one.',
+  '  Spawned with .composition(Some(comp)) — how a repeated or authored object is data, not code.',
+  '- CONTEXT → the world itself: spawner() makes Forms, edit::<(&mut Transform3D, &Foe)>(|q| …) queries',
+  '  them in bulk. A system fn call in the brief is one of these queries.',
+  '- NERVE → the event sender every habit/impulse body is handed: enqueue_event(…) is how one part’s',
+  '  return reaches the next part.',
+  '',
+]
+const CURIO_CANVAS = [
   // k: the kinds this entry explains; empty = always part of the mapping
   {
     k: [],
     l: [
-      '- FLOW graph (the Main Loop) → the game loop itself: one #[habit] whose Scope.is_enabled is the',
-      '  “keep playing” test; its chain, written in order, is that habit’s tick(). Use enable()/disable()',
-      '  for the game’s start and teardown.',
+      '- FLOW → the game loop itself: one #[habit] whose Scope.is_enabled is the “keep playing” test;',
+      '  its chain, written in order, is that habit’s tick(). Use enable()/disable() for the game’s',
+      '  start and teardown.',
+    ],
+  },
+  {
+    k: [],
+    l: [
+      '- chain hop A → B → nerve.enqueue_event(MyStimulant::B): B is a STIMULANT variant and the',
+      '  IMPULSE listening for it runs B’s body at the start of the next frame — that is what one',
+      '  token walking one hop per step means for the engine.',
     ],
   },
   {
     k: ['machine'],
     l: [
-      '- MACHINE part / nested machine → a #[habit] (recurring, runs every frame while its Scope is',
-      '  enabled) for loops, or a #[impulse(MyStimulant)] (one-shot, reacts to an event) for behaviour',
-      '  that only runs when something announces it. Habits and impulses self-register by macro;',
-      '  Scope.run_on_instance() → NetworkModes::all() picks which multiplayer instances run it.',
+      '- MACHINE / nested machine / GRAPH → either a #[habit] (recurring: runs every frame while its',
+      '  Scope is enabled) for behaviour that is always live, or a #[impulse(MyStimulant)] (one-shot:',
+      '  reacts to an event) for behaviour that only runs when something announces it. The design',
+      '  chooses; a machine whose doors carry ⇣/⇡ values reads as the impulse. Both self-register',
+      '  by macro, and Scope.run_on_instance() → NetworkModes::all() picks which instances run them.',
     ],
   },
   {
-    k: [],
+    k: ['func'],
     l: [
-      '- chain hop A → B → nerve.enqueue_event(MyStimulant::B): stimulants are drained at the START of the',
-      '  next frame, and a stimulant that sends another keeps chaining before the Tick phase resumes.',
+      '- FUNC / ƒ → a plain Rust fn, called rather than scheduled: its parameters are the ƒ’s ⇣ inputs',
+      '  and its return its ⇡ outputs, and call sites pass those args inline. No #[habit]/#[impulse],',
+      '  no Scope, no registration — nothing about a ƒ touches the engine’s loop.',
     ],
   },
+]
+const CURIO_NODE = [
+  // k: the kinds this entry explains; empty = always part of the mapping
   {
     k: ['enter'],
     l: [
@@ -539,15 +594,13 @@ const CURIO_MAP = [
     ],
   },
   {
-    k: ['exit'],
+    k: ['exit', 'exitinst'],
     l: [
       '- named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum, plus the records that carry',
-      '  its values. “kills the token” = form.destroy() or stop the habit’s Scope.',
+      '  its values: the door’s return is nerve.enqueue_event(MyStimulant::door). An EXIT REF re-enqueues',
+      '  that variant — the one the named EXIT already owns, never a second event minted for it.',
+      '  “kills the token” = form.destroy() or stop the habit’s Scope.',
     ],
-  },
-  {
-    k: ['exitinst'],
-    l: ['- EXIT REF → enqueue the variant that named EXIT already owns — never mint a second event for it.'],
   },
   {
     k: ['getg', 'setg'],
@@ -596,21 +649,21 @@ const CURIO_MAP = [
     ],
   },
   {
-    k: ['condition', 'ifb', 'for', 'foreach'],
+    k: ['condition', 'ifb', 'and', 'or', 'for', 'foreach'],
     l: [
-      '- condition / IF / for / foreach / goto → plain Rust if / match / for / while in the habit or impulse body;',
-      '  foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
-      '  pass is an empty block: nothing gets enqueued and nothing gets written — an arm, loop body',
-      '  or option the design left unwired.',
+      '- condition / IF / AND / OR / for / foreach → plain Rust if / match / for / while in the habit or',
+      '  impulse body; foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
+      '  An arm printed as pass is an empty block: nothing gets enqueued and nothing gets written — an',
+      '  arm, loop body or option the design left unwired.',
     ],
   },
   {
-    k: ['machine', 'graph', 'func'],
+    k: ['add', 'sub', 'mul', 'div', 'mod', 'append', 'join', 'remove', 'removeat', 'sort', 'clone', 'inspect'],
     l: [
-      '- machine "name"(params): section / ƒ section / nested GRAPH → a #[habit]/#[impulse] or a plain Rust',
-      '  fn: the signature’s parameters are the ENTER door’s vars, and a return is an EXIT part — call',
-      '  sites pass their ⇣ args inline, so the machine call maps to a habit/impulse fired with its record',
-      '  fields written, and ƒ maps to the fn.',
+      '- math (+ − × ÷ %, with a # ⇣ a = 1 line for an operand typed on the card) and append / join /',
+      '  remove / removeat / sort / clone / INSPECT → plain Rust on the values the brief names: + - * / %,',
+      '  push / concat / drop / sort, a by-value copy, a field read. They are expressions inside the body,',
+      '  never engine calls of their own.',
     ],
   },
   {
@@ -650,11 +703,18 @@ const CURIO_MAP = [
   },
 ]
 
-// the cheatsheet only maps the parts this brief actually carries (see CURIO_MAP)
+// the mapping only carries what this brief actually has: the engine vocabulary is
+// always there, the canvas and node entries only for kinds the walk printed
+const keep = (e, kinds) => !e.k.length || e.k.some((x) => kinds.has(x))
 const curioOf = (kinds) =>
   [
     ...CURIO_HEAD,
-    ...CURIO_MAP.flatMap((e) => (!e.k.length || e.k.some((x) => kinds.has(x)) ? e.l : [])),
+    ...CURIO_FEATURES,
+    '## Canvas → Curio feature — how the design’s own canvases become engine constructs',
+    ...CURIO_CANVAS.flatMap((e) => (keep(e, kinds) ? e.l : [])),
+    '',
+    '## Node → Curio feature — what each part in the programs above becomes',
+    ...CURIO_NODE.flatMap((e) => (keep(e, kinds) ? e.l : [])),
     '',
     'Startup shape: Curio::create().identity(…).plugin(SystemComponentDefaultTime/Graphics/Input/',
     'Networking/Gameplay::<MyStimulant, MyUIEvent>::new()).formation(Formation::template_local_single(…)).imbue(),',
@@ -799,9 +859,10 @@ export function exportForLLM(doc) {
     'under it is the logic and nothing else restates it. A block whose only line is pass was left',
     'unwired in the design — that branch or option exists and does nothing; nothing else marks an',
     'unwired path. Read it in this order: the vocabulary of the parts this brief uses, then what',
-    'the design is made of (systems, data types, shared state), then the programs, then how Curio',
-    'carries each part. Content the design never reaches is left out of the brief — if it is',
-    'not here, it is not in the design.',
+    'the design is made of (systems, data types, shared state), then the programs, then the Curio',
+    'features that carry them — first the engine’s own primitives, then how this design’s canvases',
+    'and its individual parts become those primitives. Content the design never reaches is left',
+    'out of the brief — if it is not here, it is not in the design.',
     '',
   )
 
