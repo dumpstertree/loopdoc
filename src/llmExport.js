@@ -1,13 +1,16 @@
 // LLM export — flattens the whole document into one self-contained plain-text
-// brief written FOR a language model to read and build a game from: each graph
-// is lowered into a table of statements in the design's own code shape (one entry
-// per part, a part declared exactly once, the entry for the next hop written one
-// indent deeper so the indentation IS the chain's step, { braces } carrying what
-// a part does — its own logic as code, a machine's parts, a CODE part's script —
-// and one slot notation covering wired values, values typed on a card and inputs
-// nothing feeds), so a nested machine or sub-graph is written inside the braces
-// where it is called rather than as a section the call site points into — ƒs keep
-// their own section, since every call site shares one body.
+// brief written FOR a language model to read and build a game from: every graph
+// the design states gets a section of its own, written as a table of statements
+// in the design's own code shape (one entry per part, a part declared exactly
+// once, the entry for the next hop written one indent deeper so the indentation
+// IS the chain's step, { braces } carrying what a part does — its own logic as
+// code, a CODE part's script — and one slot notation covering wired values,
+// values typed on a card and inputs nothing feeds). A machine, a sub-graph and
+// an ƒ are different things the design is made of, so each gets its own section
+// under its own heading rather than riding inside the braces of its call site;
+// the sections are ordered so that everything a section calls is stated above
+// it — ƒs first, then machines, then graphs — and a call site only names the
+// handle whose parts are already on the page.
 // The part reference for the kinds actually used is read BEFORE the tables are,
 // so the vocabulary exists by the time the first chain does. Art assets are
 // a legacy feature: the brief never mentions them. Content the design never
@@ -90,9 +93,9 @@ function detail(n, g, doc) {
     case 'choice':
       return `waits for player: ${(n.exits || []).map((e) => `"${e.label || '?'}"`).join(' | ')}`
     case 'graph':
-      return 'nested flow graph — its own parts are inside the braces of this line (its RETURN leads back out)'
+      return 'flow graph the design nests inside another — its own parts are stated in their own section above it, and its RETURN leads back out here'
     case 'machine':
-      return 'nested machine — its own parts are inside the braces of this line'
+      return 'machine — its own parts are stated in their own section above it, and its ENTER/EXIT doors frame that section’s chain'
     case 'getg':
       return `reads ⚙ ${n.gName || '?'} (${n.gType || '?'})`
     case 'setg':
@@ -169,7 +172,7 @@ function detail(n, g, doc) {
         : 'checklist — empty'
     case 'func': {
       const f = (doc?.funcs || []).find((x) => x.id === n.func)
-      if (f) return `ƒ ${f.name || '(unnamed)'} — see Defined functions${f.note ? ` (${f.note})` : ''}`
+      if (f) return `ƒ ${f.name || '(unnamed)'} — its body is stated in its own section above${f.note ? ` (${f.note})` : ''}`
       return n.func ? 'ƒ ⚠ picks a function that was deleted' : 'ƒ — no function picked yet'
     }
     default:
@@ -181,41 +184,50 @@ function detail(n, g, doc) {
 // entry per part, stepped in the order its chain actually runs, and each hop
 // written one indent deeper than the part that runs it — so the chain's order
 // IS the indentation, and { braces } carry what a part's own operation is: a
-// machine's or sub-graph's parts inside the braces of its call site, a CODE part's
-// script verbatim inside them, and the part's own logic as code where the design
-// has one (result=a+b, if a==b / else, for x in arr). Nothing restates a part: the
-// header line carries its handle, its ⇣ slots and its ⇡ slots, and the braces carry
-// its operation. A slot is one notation for the three ways an input gets a value
-// (type:name ~ SOURCE.part wired, type:name ~ value the design typed on a card,
-// type:name alone when nothing wires it), which replaces the separate wire, card
-// and call-gap lines a program form needs. Where the chain goes on rides at the
-// end of the closing brace as [ PORT:slug ] — PORT is the name the design gives
-// that exit (an IF arm, a machine's EXIT door, a CHOICE option, a loop's iter/end),
-// left out for the plain out port, so a part with several successors names them
-// where it is declared rather than in a block below. Those are alternatives, so
-// they carry no ⚠: only two flow wires leaving the SAME port do, because those
-// really do enqueue two events at once, and that second run prints at the end of
-// the run above it. A part that names no successor has an arm or body the design
-// left unwired — it does nothing, as an unwired branch does in code, so absence
-// is carried by the shape and never flagged. The stair is stepped in walk order,
+// CODE part's script verbatim inside them, and the part's own logic written as
+// code where the design has one (result=a+b, if a==b / else, for x in arr). A
+// machine's or sub-graph's parts are NOT inside the braces of its call site:
+// every graph the design states gets its own section under its own heading, and
+// the sections are ordered so that a machine, a sub-graph or an ƒ is always
+// written before the section that calls it — functionality that is written
+// inside other functionality reads as one nesting tree, but a machine, a ƒ and
+// a graph are different things the design is made of, and one nesting tree
+// means a call site has to hold a name until the parts behind it appear below
+// it. Section order removes that: by the time a call site names a handle, the
+// parts behind it are already above it on the page. Nothing restates a part:
+// the header line carries its handle, its ⇣ slots and its ⇡ slots, and the
+// braces carry its operation. A slot is one notation for the three ways an
+// input gets a value (type:name ~ SOURCE.part wired, type:name ~ value the
+// design typed on a card, type:name alone when nothing wires it), which
+// replaces the separate wire, card and call-gap lines a program form needs.
+// Where the chain goes on rides at the end of the closing brace as
+// [ PORT:slug ] — PORT is the name the design gives that exit (an IF arm, a
+// machine's EXIT door, a CHOICE option, a loop's iter/end), left out for the
+// plain out port, so a part with several successors names them where it is
+// declared rather than in a block below. Those are alternatives, so they carry
+// no ⚠: only two flow wires leaving the SAME port do, because those really do
+// enqueue two events at once, and that second run prints at the end of the run
+// above it. A part that names no successor has an arm or body the design left
+// unwired — it does nothing, as an unwired branch does in code, so absence is
+// carried by the shape and never flagged. The stair is stepped in walk order,
 // not an order of the data, so a cycle is one hop back to a name declared above
 // — no goto, and a loop-carried value simply reads a part printed further down.
-// A machine's body rides where it is called, so nothing points forward to a
-// section below (only MACHINE/GRAPH nodes own their graph, so only they nest; ƒs
-// keep their own section because every call site shares one body). Parts reached
-// by nothing, and values that feed nothing, are dropped — the keep rule still
-// grows from the table until nothing new feeds it, because a value producer a
-// live wire reads has to be declared or that wire would name a part the table
-// never printed
-function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs, body) {
-  const L = []
+// Value producers that join no chain ride ABOVE the chains that read them, so
+// the stated-before-used rule keeps holding inside a section. Parts reached by
+// nothing, and values that feed nothing, are dropped — the keep rule still
+// grows from the chains until nothing new feeds it, because a value producer a
+// live wire reads has to be declared or that wire would name a part the section
+// never printed. refs collects the machines, sub-graphs and ƒs the parts this
+// section prints call, so the caller can state them before it states this one
+function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
+  const L = [] // the section's chains, printed after the value producers they read
   const labels = makeLabels(g)
   const nodes = g.nodes || []
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const datas = (g.links || []).filter((l) => l.kind === 'data')
   const pad = (i) => '  '.repeat(i)
-  const top = body ? body.ind : 0
+  const top = 0 // every graph is a section of its own now, so its chains open at the fence
   // a machine/ƒ section's doors frame it even when no chain walks them: ENTER
   // starts the table and every EXIT is a label the parent's [ ] list prints,
   // so their kinds belong to the vocabulary the brief opens with
@@ -324,9 +336,16 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
         return [`leave by the door ${q(t.name || 'exit')}`]
       }
       case 'step':
+        return [] // its operation is the chain it steps on below it
       case 'machine':
-      case 'graph':
-        return [] // its operation is the block inside its braces, not a line
+      case 'graph': {
+        if (!(n.graph || {}).nodes || !(n.graph || {}).nodes.length)
+          return ['no parts written yet — its ports stay'] // nothing to state as a section
+        return [
+          `${slugs[n.id] || labels[n.id]} — its own parts are stated in the section for it above${
+            n.kind === 'graph' ? ', its RETURN leads back out here' : ''}`,
+        ]
+      }
       case 'code':
         return String(n.code || '').trim() ? [] : ['no script written yet — its ports stay']
       default: {
@@ -393,36 +412,23 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     }
     return out
   }
-  // the braced block of a nested machine/sub-graph: its own parts, each declared
-  // once, printed inside the braces of the call site — so no line points forward
-  // to a section below
-  const nest = (n, ind) =>
-    graphSection(
-      n.graph,
-      doc,
-      '',
-      '',
-      slugs,
-      kindsUsed,
-      calledFuncs,
-      {
-        label: '',
-        ind: ind + 1,
-      },
-    )
+  // a machine's or sub-graph's own parts belong to a section of their own, so all
+  // this section has to remember is that it calls into it: the caller states that
+  // section before it states this one, and the call site's own braces carry the
+  // handle plus the values it passes
+  const ownGraph = (n) =>
+    n.graph && (n.kind === 'machine' || n.kind === 'graph') && (n.graph.nodes || []).length ? n : null
 
   const visited = new Set()
 
   // one run of a chain: the part's statement, then its successor one indent
   // deeper — the design's chain steps read as nested statements, which is why
   // the stair's order is the chain's order and a part never needs a second entry
-  // where its chain comes back to it. A part whose braces hold a machine body
-  // steps on at the same indent it declared its doors at, so the parts after a
-  // machine still belong to the graph that calls it. The first wire on a port
-  // continues this run; another wire on the SAME port is a second event
-  // enqueued at once, which is the only real double enqueue, and is marked ⚠ and
-  // printed at the end of this run. Wires on different ports are alternatives
-  // (an arm, a door, an option) and carry no ⚠
+  // where its chain comes back to it. The first wire on a port continues this
+  // run; another wire on the SAME port is a second event enqueued at once, which
+  // is the only real double enqueue, and is marked ⚠ and printed at the end of
+  // this run. Wires on different ports are alternatives (an arm, a door, an
+  // option) and carry no ⚠
   const chain = (id, ind) => {
     const pend = [] // this run's extra flow wires: named in the part's list, run after this one
     let cur = id
@@ -443,7 +449,10 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
       kindsUsed.add(n.kind)
       // a FUNC part only earns its ƒ if it was actually written out, not merely
       // present in the graph — a call site nothing reaches calls nothing
-      if (n.kind === 'func') calledFuncs.add(n.func)
+      if (n.kind === 'func') {
+        calledFuncs.add(n.func)
+        refs.funcs.add(n.func)
+      }
 
       const pname = slugs[cur] || labels[cur]
       const first = {}
@@ -453,12 +462,14 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
         if (first[l.fromPort]) fan.push(l)
         else first[l.fromPort] = l
       }
-      // the part's statement: header, its operation, its body where it has one,
-      // then the brace that closes it with the [ ] list of its successors
+      // the part's statement: header, its operation, then the brace that closes
+      // it with the [ ] list of its successors — a machine or sub-graph names
+      // itself inside its braces and asks nothing of the reader, because its
+      // parts are in the section above this one
       L.push(head(n, at))
       if (n.kind === 'code' && String(n.code || '').trim()) L.push(...script(n, at + 1))
       else L.push(...op(n).map((l) => `${pad(at + 1)}${l}`))
-      if (n.graph && (n.kind === 'machine' || n.kind === 'graph')) L.push(...nest(n, at))
+      if (ownGraph(n)) refs.nodes.add(cur)
       const ss = outs.map((l) => succName(n, l))
       L.push(`${pad(at)}}${ss.length ? ` [ ${ss.join(', ')} ]` : ''}`)
 
@@ -510,13 +521,8 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     }
   }
 
-  if (body) {
-    // the braces are the call site's own, so the body's parts open right under
-    // them and the caller closes them — nothing here prints a label line
-  } else {
-    L.push(`${heading}${g.name ? ` ${q(g.name)}` : ''}${parentNote ? ` — ${parentNote}` : ''}`)
-    L.push('```')
-  }
+  // the section's heading and ``` fence are printed by the caller, which knows
+  // which graph this is and where it sits in the brief's section order
 
   const doors = nodes.filter((n) => n.kind === 'enter')
   let starts
@@ -554,27 +560,30 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
   // chain but hands a value to one that does must be declared, or the slot that
   // reads it would point at a part the table never printed
   const side = nodes.filter((n) => !visited.has(n.id) && kept.has(n.id))
+  const pre = []
   if (side.length) {
-    L.push('')
-    L.push(`${pad(top)}# declared here, reached by no chain — the slots above read their ⇡ values`)
-    for (const n of side) {
+    const rest = side.slice()
+    while (rest.length) {
+      const n = rest.find((x) => !rest.some((y) => y !== x && datas.some((l) => l.from === y.id && l.to === x.id))) || rest[0]
+      rest.splice(rest.indexOf(n), 1)
+      if (ownGraph(n)) refs.nodes.add(n.id)
+      if (n.kind === 'func' && n.func) refs.funcs.add(n.func)
       kindsUsed.add(n.kind)
-      L.push(head(n, top))
-      if (n.graph && (n.kind === 'machine' || n.kind === 'graph')) L.push(...nest(n, top))
-      if (n.kind === 'code' && String(n.code || '').trim()) L.push(...script(n, top + 1))
-      else L.push(...op(n).map((l) => `${pad(top + 1)}${l}`))
-      L.push(`${pad(top)}}`)
+      if (!pre.length) pre.push(`${pad(top)}# declared here, reached by no chain — the chains below read their ⇡ values`)
+      pre.push(head(n, top))
+      if (n.kind === 'code' && String(n.code || '').trim()) pre.push(...script(n, top + 1))
+      else pre.push(...op(n).map((l) => `${pad(top + 1)}${l}`))
+      pre.push(`${pad(top)}}`)
     }
   }
 
   const dang = datas.filter((l) => !byId[l.to])
+  const tail = []
   if (dang.length) {
-    L.push('')
-    L.push(`${pad(top)}⚠ wires into deleted parts`)
-    for (const l of dang) L.push(`${pad(top)}⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
+    tail.push(`${pad(top)}⚠ wires into deleted parts`)
+    for (const l of dang) tail.push(`${pad(top)}⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
   }
-  if (!body) L.push('```')
-  return L
+  return [...(pre.length ? [...pre, ''] : []), ...L, ...(tail.length ? ['', ...tail] : [])]
 }
 const CURIO_HEAD = [
   '## Curio features — the engine primitives a built game is made of',
@@ -643,7 +652,7 @@ const CURIO_CANVAS = [
   {
     k: ['machine'],
     l: [
-      '- MACHINE / nested machine / GRAPH → either a #[habit] (recurring: runs every frame while its',
+      '- MACHINE / GRAPH → either a #[habit] (recurring: runs every frame while its',
       '  Scope is enabled) for behaviour that is always live, or a #[impulse(MyStimulant)] (one-shot:',
       '  reacts to an event) for behaviour that only runs when something announces it. The design',
       '  chooses; a machine whose doors carry ⇣/⇡ values reads as the impulse. Both self-register',
@@ -881,40 +890,110 @@ export function exportForLLM(doc) {
   noteUse(doc.design)
   for (const f of doc.funcs || []) noteUse(f.graph || { nodes: [] })
 
-  // the graphs are lowered first and aside, because a ƒ earns its section only
-  // if a FUNC part that survived the walk calls it — and a ƒ named only by a
-  // part nothing reaches is dead code like that part
-  // the graphs are lowered first and aside, because a ƒ earns its section only
-  // if a FUNC part that survived the walk calls it — and a ƒ named only by a
-  // part nothing reaches is dead code like that part. A nested machine or
-  // sub-graph is lowered where it is called, inside its call site's braced
-  // block, so only the graphs reached by a chain are lowered at all: a machine
-  // body no chain ever calls is content this design does not run
-  const graphsOut = []
-  graphsOut.push(...graphSection(doc.design, doc, `${'#'.repeat(3)} Flow Graph`, '', slugs, kindsUsed, calledFuncs, null))
-  graphsOut.push('')
-
-  const funcsOut = []
-  const lowered = new Set()
-  let more = true
-  while (more) {
-    more = false
-    for (const f of doc.funcs || []) {
-      if (lowered.has(f.id) || !calledFuncs.has(f.id)) continue
-      lowered.add(f.id)
-      more = true
-      funcsOut.push(`- ${f.name || '(unnamed)'}${f.note ? ` — ${f.note}` : ''}`)
-      funcsOut.push(...graphSection(f.graph || { mode: 'func', nodes: [], links: [] }, doc, '### ƒ', '', slugs, kindsUsed, calledFuncs))
-      funcsOut.push('')
+  // every graph the design states gets a section of its own, and a section is
+  // written after the sections it leans on: an ƒ's body before the section that
+  // calls it, a machine nested in a machine before the machine that runs it, a
+  // sub-graph before the graph that runs it. Lowering a section is what reveals
+  // the sections it calls, so the walk grows until nothing new is left to lower,
+  // then the sections are sorted by that edge — so a call site that names a
+  // machine, a ƒ or a sub-graph always has its parts above it on the page, and
+  // the brief never asks the reader to hold a name until later. A machine or
+  // sub-graph no chain ever reaches is content this design does not run, so it
+  // is never lowered and earns no section
+  const secs = new Map()
+  const queue = [{
+    id: '__top__',
+    kind: 'graph',
+    node: null,
+    graph: doc.design,
+    depth: 0,
+  }]
+  while (queue.length) {
+    const q = queue.shift()
+    if (secs.has(q.id)) continue
+    const refs = {
+      nodes: new Set(),
+      funcs: new Set(),
     }
+    const lines = graphBody(q.graph, doc, slugs, kindsUsed, calledFuncs, refs)
+    const deps = new Set()
+    for (const nid of refs.nodes) {
+      const owner = (q.graph.nodes || []).find((x) => x.id === nid)
+      if (!owner) continue
+      const sid = `${q.id}/${nid}`
+      deps.add(sid)
+      if (!secs.has(sid)) queue.push({ id: sid, kind: owner.kind, node: owner, graph: owner.graph, depth: q.depth + 1 })
+    }
+    for (const fid of refs.funcs) {
+      const f = (doc.funcs || []).find((x) => x.id === fid)
+      if (!f) continue
+      const sid = `ƒ/${fid}` // one ƒ body per function, however many call sites name it
+      deps.add(sid)
+      if (!secs.has(sid)) queue.push({ id: sid, kind: 'func', node: f, graph: f.graph || { mode: 'func', nodes: [], links: [] }, depth: 0 })
+    }
+    secs.set(q.id, {
+      kind: q.kind,
+      node: q.node,
+      graph: q.graph,
+      lines,
+      deps,
+      depth: q.depth,
+    })
   }
-  if (lowered.size) {
-    body.push('## Defined functions — ƒ isolated bodies a FUNC part calls by name')
-    body.push(...funcsOut)
-    body.push('')
+
+  // the order the sections print in: a section comes after everything it calls,
+  // and where nothing decides between two sections the design's own order of
+  // what it is made of comes first — ƒs, then machines, then flow graphs
+  const rankOf = (k) => k === 'func' ? 0 : k === 'machine' ? 1 : 2
+  const remaining = new Set(secs.keys())
+  const stated = new Set()
+  const order = []
+  while (remaining.size) {
+    const ready = [...remaining].filter((id) => [...secs.get(id).deps].every((d) => stated.has(d) || !remaining.has(d)))
+    const pool = ready.length ? ready : [...remaining] // sections that call each other break here
+    pool.sort((a, b) => {
+      const sa = secs.get(a)
+      const sb = secs.get(b)
+      if (rankOf(sa.kind) !== rankOf(sb.kind)) return rankOf(sa.kind) - rankOf(sb.kind)
+      if (sa.depth !== sb.depth) return sb.depth - sa.depth // innermost first, so a nested machine precedes its caller
+      return 0
+    })
+    const id = pool[0]
+    order.push(id)
+    stated.add(id)
+    remaining.delete(id)
   }
-  body.push('## Graphs — one entry per part, stepped in the order its chain runs')
-  body.push(...graphsOut)
+
+  const groupOf = [
+    '## Defined functions — ƒ isolated bodies a FUNC part calls by name',
+    '## Machines — each machine’s own chain, in a section stated before the section that runs it',
+    '## Graphs — one entry per part, stepped in the order its chain runs',
+  ]
+  let lastRank = -1
+  for (const id of order) {
+    const s = secs.get(id)
+    const rank = rankOf(s.kind)
+    if (rank !== lastRank) {
+      if (lastRank !== -1) body.push('')
+      body.push(groupOf[rank])
+      lastRank = rank
+    } else body.push('') // a blank line between two sections of the same kind
+    const named = (s.graph || {}).name || ''
+    const handle = s.node ? slugs[s.node.id] || '' : ''
+    const title =
+      s.kind === 'func'
+        ? `### ƒ ${s.node.name || '(unnamed)'}${s.node.note ? ` — ${s.node.note}` : ''}`
+        : s.kind === 'machine'
+        ? `### Machine ${handle}${named ? ` ${q(named)}` : ''}`
+        : id === '__top__'
+        ? `### Flow Graph ${q(s.graph.name || '')}`
+        : `### Sub-graph ${handle}${named ? ` ${q(named)}` : ''}`
+    body.push(title.replace(/\s+$/, ''))
+    body.push('```')
+    body.push(...s.lines)
+    body.push('```')
+  }
+  if (order.length) body.push('') // a blank line closes the last section before the mapping
 
   out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
   out.push(
@@ -927,17 +1006,20 @@ export function exportForLLM(doc) {
     'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
     'data wires ⇣/⇡ carry typed values between parts). A token moves one hop per step;',
     'ENTER doors start machine chains; flow graphs run from their entry.',
-    'Each graph is written as a table of statements inside a fenced code block: one entry per part,',
-    'a part is declared exactly once, and the entry for the part the chain goes to next is written',
+    'Every graph the design states gets a section of its own — a ƒ, a machine, a sub-graph and the',
+    'flow graph each open under their own heading, with their own fenced table inside: one entry per',
+    'part, a part declared exactly once, and the entry for the part the chain goes to next written',
     'one indent deeper — the indentation IS the chain’s step, and { braces } carry what a part does',
-    'rather than where it sits. An entry reads',
+    'rather than where it sits. Sections are ordered so everything a section calls is stated above',
+    'it — ƒs, then machines, then graphs — so a call site never has to hold a name until its parts',
+    'appear below: it only writes  handle — its own parts are stated in the section for it above. An',
+    'entry reads',
     '  KIND: handle "name" ( ⇣ slots ) -> ( ⇡ slots ) { its operation } [ PORT:successor ]',
     'a slot reads  type:name ~ SOURCE.part  wired by another part ·  type:name ~ value  the design',
     'typed on a card ·  type:name  alone when nothing in the design wires it; a ⇡ slot names the',
     'EXIT door it belongs to, as  type:name @ "door". The braces hold the part’s own operation: a',
-    'machine’s or sub-graph’s parts inside the braces of its call site, a CODE part’s script verbatim',
-    'inside them, and the part’s own logic written as code where the design has one (result=a+b,',
-    'if a==b / else, for item in arr). Where the chain goes on rides on the closing brace as',
+    'CODE part’s script verbatim inside them, and the part’s own logic written as code where the',
+    'design has one (result=a+b, if a==b / else, for item in arr). Where the chain goes on rides on',
     '[ PORT:slug ] — PORT is the name the design gives that exit (an IF arm, a machine’s EXIT door,',
     'a CHOICE option, a loop’s iter/end) and is left out for the plain out port, so a part with',
     'several successors names them where it is declared rather than in a block below. Those are',
@@ -948,17 +1030,20 @@ export function exportForLLM(doc) {
     'A line marked # → is the chain hopping back to a part declared above: the stair is stepped in',
     'walk order, not an order of the data, so the block above is that part’s only entry and a slot',
     'may read a value printed further down. Parts under',
-    '  # declared here, reached by no chain — the slots above read their ⇡ values',
-    'join no chain but hand a value to something that does, so their slots stay resolvable. A ƒ',
-    'keeps its own section, because every call site shares one body. A CODE part names its language',
+    '  # declared here, reached by no chain — the chains below read their ⇡ values',
+    'join no chain but hand a value to something that does, so they are printed above the chains',
+    'that read them, and their slots stay resolvable. Every section is stated after the sections',
+    'it calls into, so a ƒ body, a machine body and a sub-graph are all on the page before the',
+    'call site that names their handle. A CODE part names its language',
     'on the entry line and carries its script verbatim inside its braces — the def’s parameters are',
     'its ⇣ inputs and its return values its ⇡ outputs, so the script is the logic and nothing else',
     'restates it.',
     'Read it in this order: the vocabulary of the parts this brief uses, then what',
-    'the design is made of (systems, data types, shared state), then the programs, then the Curio',
-    'features that carry them — first the engine’s own primitives, then how this design’s canvases',
-    'and its individual parts become those primitives. Content the design never reaches is left',
-    'out of the brief — if it is not here, it is not in the design.',
+    'the design is made of (systems, data types, shared state), then its programs — one section per',
+    'graph, ƒs first, then machines, then graphs, each stated after everything it calls — and then',
+    'the Curio features that carry them: first the engine’s own primitives, then how this design’s',
+    'canvases and its individual parts become those primitives. Content the design never reaches',
+    'is left out of the brief — if it is not here, it is not in the design.',
     '',
   )
 

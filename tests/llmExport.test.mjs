@@ -137,15 +137,17 @@ test('llm export — flow graph: entry, typed VAR with real values, nesting', ()
   assert.ok(t.includes('TEXT') || t.includes('annotation frame'), 'text frame carried')
 })
 
-test('llm export — a nested machine rides inside the braces of its call site', () => {
+test('llm export — a machine gets its own section, stated before the graph that runs it', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('MACHINE: mach_combat "combat" ('), 'the machine is written where it is called, not in a section below')
-  assert.ok(t.includes('mach_combat "combat" ( int:lives ~ var_hero.hero, int:round ~ getg.depth, int:rank ~ getledger.rank'), 'the call site’s slots carry the values the machine takes')
-  assert.ok(t.includes('ENTER: enter_door "door" -> ( int:lives, int:round, int:rank, asset:sprites ) {') && t.includes('  lives = 3'), 'the door declares its ⇡ values and the typed ones ride in its braces')
+  assert.ok(t.includes('### Machine mach_combat "combat"'), 'the machine opens under a heading of its own, not inside a call site')
+  assert.ok(t.includes('MACHINE: mach_combat "combat" ( int:lives ~ var_hero.hero, int:round ~ getg.depth, int:rank ~ getledger.rank'), 'the call site’s slots still carry the values the machine takes')
+  assert.ok(t.includes('mach_combat — its own parts are stated in the section for it above'), 'the call site only names the handle — its parts are already above it on the page')
+  assert.ok(t.indexOf('### Machine mach_combat "combat"') < t.indexOf('MACHINE: mach_combat'), 'the machine section is stated before the section that calls it')
+  assert.ok(t.includes('## Machines') && t.indexOf('## Machines') < t.indexOf('## Graphs'), 'machine sections come before the graphs that run them')
   assert.ok(!t.includes('📦'), 'assets the door carries are legacy — culled from the brief')
   assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the machine')
   assert.ok(t.includes('for item, index in arr [iter]') && t.includes('end the loop [end]'), 'foreach lowered to a loop header, its iter/end ports named')
-  assert.ok(t.includes('        ACTION: action_spend "spend" {') && t.includes('          chain waits here for a click'), 'the loop body is stepped one indent deeper than the loop')
+  assert.ok(t.includes('    ACTION: action_spend "spend" {') && t.includes('      chain waits here for a click'), 'inside its own section, the loop body is stepped one indent deeper than the loop')
   assert.ok(t.includes('EXIT: exit_victory "victory" {'), 'an EXIT prints as the part that ends its chain')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
 })
@@ -285,7 +287,7 @@ test('llm export — values the design typed instead of wiring are printed', () 
 test('llm export — a script the validator calls broken says so', () => {
   const t = exportForLLM(crit)
   assert.ok(t.includes("⚠ its script does not validate at line 1: output 'delta_z' is never assigned"), 'the fault is stated where the script is, so the reader fixes it once instead of shipping it')
-  assert.ok(t.includes('          def move(location):') && t.includes('              delta_x += 1'), 'the script still rides inside its part’s braces verbatim, its own indentation relative')
+  assert.ok(t.includes('    def move(location):') && t.includes('        delta_x += 1'), 'the script still rides inside its part’s braces verbatim, its own indentation kept relative')
 })
 
 test('llm export — handles read as the design says, and the cheatsheet only maps used parts', () => {
