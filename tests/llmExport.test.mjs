@@ -93,11 +93,11 @@ test('llm export — a CODE part carries its own script verbatim', () => {
     },
   }
   const t = exportForLLM(cdoc)
-  assert.ok(t.includes('code_clamp — CODE "clamp": python script: ⇣ a:int, b:int in · ⇡ result:int out'), 'the part names the script and its typed ports')
-  assert.ok(t.includes('  def clamp(a, b):') && t.includes('      return a if a < b else b'), 'script printed verbatim, pushed in one level so its own indentation stays relative')
-  assert.ok(t.includes('    return v + 1'), 'tab-indented python becomes spaces — the brief stays readable')
-  assert.ok(t.includes('code_blank — CODE "blank": no script written yet — its ports stay'), 'an empty CODE part says so instead of looking truncated')
-  assert.ok(t.includes('# ⇣ a ← var_hp.hp :int'), 'the value feeding the script’s param names its producer by slug')
+  assert.ok(t.includes('CODE: code_clamp "clamp" ( int:a ~ var_hp.hp, int:b ) -> ( int:result ) python script {'), 'the entry names the script, its language and its typed ports on one line')
+  assert.ok(t.includes('    def clamp(a, b):') && t.includes('        return a if a < b else b'), 'script printed verbatim inside the part’s braces, pushed in one level so its own indentation stays relative')
+  assert.ok(t.includes('      def bump(v):') && t.includes('        return v + 1'), 'tab-indented python becomes spaces — the brief stays readable')
+  assert.ok(t.includes('CODE: code_blank "blank" {\n        no script written yet — its ports stay'), 'an empty CODE part says so instead of looking truncated')
+  assert.ok(t.includes('( int:a ~ var_hp.hp, int:b )'), 'the value feeding the script’s param is a wired slot, and the one nothing feeds is the bare slot')
   const ref = t.slice(t.indexOf('## Part reference'), t.indexOf('## Graphs'))
   assert.ok(ref.includes('CODE —'), 'the script kind is explained in the vocabulary')
 })
@@ -131,22 +131,22 @@ test('llm export — content the design never reaches is culled, not flagged', (
 
 test('llm export — flow graph: entry, typed VAR with real values, nesting', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.indexOf('STEP "start"') > t.indexOf('### Flow Graph "Main Loop"') && t.indexOf('STEP "start"') < t.indexOf('MACHINE "combat"'), 'chain written in run order, entry first')
-  assert.ok(t.includes('var_hero — VAR "hero": makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'definition keeps both handles: slug + display label')
-  assert.ok(t.includes('mach_combat(lives ← var_hero.hero :Foe'), 'a machine call folds its data wires into call arguments')
-  assert.ok(t.includes('NOTE') || t.includes('annotation frame'), 'text frame carried')
+  assert.ok(t.indexOf('STEP: step_start') > t.indexOf('### Flow Graph "Main Loop"') && t.indexOf('STEP: step_start') < t.indexOf('MACHINE: mach_combat'), 'chain written in run order, entry first')
+  assert.ok(t.includes('VAR: var_hero "hero" ( Foe:hero ) -> ( Foe:hero ) {\n  makes hero:Foe = { hp: 3, pos: { x: 1, y: 2 } }'), 'definition keeps both handles: slug + display label')
+  assert.ok(t.includes('mach_combat "combat" ( int:lives ~ var_hero.hero'), 'a machine call folds its data wires into its slot list')
+  assert.ok(t.includes('TEXT') || t.includes('annotation frame'), 'text frame carried')
 })
 
-test('llm export — machine section reads as a function: signature, loops, returns', () => {
+test('llm export — a nested machine rides inside the braces of its call site', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('Machine "combat"') && t.includes('inside MACHINE "combat"'), 'nested machine sectioned under its parent')
-  assert.ok(t.includes('machine "combat"(lives:int = 3, round:int, rank:int):'), 'a single-door machine reads as a function signature: its door vars are parameters')
-  assert.ok(t.includes('# enter_door — ENTER "door" starts it'), 'the door names itself on the signature, not as a line in the body')
+  assert.ok(t.includes('MACHINE: mach_combat "combat" ('), 'the machine is written where it is called, not in a section below')
+  assert.ok(t.includes('mach_combat "combat" ( int:lives ~ var_hero.hero, int:round ~ getg.depth, int:rank ~ getledger.rank'), 'the call site’s slots carry the values the machine takes')
+  assert.ok(t.includes('ENTER: enter_door "door" -> ( int:lives, int:round, int:rank, asset:sprites ) {') && t.includes('  lives = 3'), 'the door declares its ⇡ values and the typed ones ride in its braces')
   assert.ok(!t.includes('📦'), 'assets the door carries are legacy — culled from the brief')
-  assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the section')
-  assert.ok(t.includes('for item:Foe (+index) in'), 'foreach lowered to a loop header')
-  assert.ok(t.includes('    action_spend — ACTION "spend": chain waits here for a click'), 'loop body is an indented block under the signature')
-  assert.ok(t.includes('return "victory"  # exit_victory — EXIT "victory"'), 'an EXIT prints as a return')
+  assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the machine')
+  assert.ok(t.includes('for item, index in arr [iter]') && t.includes('end the loop [end]'), 'foreach lowered to a loop header, its iter/end ports named')
+  assert.ok(t.includes('        ACTION: action_spend "spend" {') && t.includes('          chain waits here for a click'), 'the loop body is stepped one indent deeper than the loop')
+  assert.ok(t.includes('EXIT: exit_victory "victory" {'), 'an EXIT prints as the part that ends its chain')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
 })
 
@@ -155,7 +155,7 @@ test('llm export — ledger and global reads name what they touch', () => {
   assert.ok(t.includes('## Shared state — named values every graph & machine reads or writes'), 'shared state gets its own section before the programs')
   assert.ok(t.includes('system ledger roster.rank :int — read by getledger'), 'the ledger variable is declared with the part that reads it')
   assert.ok(t.includes('reads system ledger roster.rank (int)'), 'the get part names the ledger variable it reads')
-  assert.ok(t.includes('rank ← getledger.rank :int'), 'the ledger value reaches the call by name, as a call argument')
+  assert.ok(t.includes('int:rank ~ getledger.rank'), 'the ledger value reaches the call as a wired slot named by its producer')
   assert.ok(t.includes('reads ⚙ depth (int)'), 'the global read names the global')
 })
 
@@ -267,25 +267,25 @@ const crit = {
   },
 }
 
-test('llm export — a multi-exit machine prints one labelled block per door', () => {
+test('llm export — a multi-exit machine names each door on its closing brace', () => {
   const t = exportForLLM(crit)
-  assert.ok(t.includes('  if it leaves by "continue":') && t.includes('  if it leaves by "descend":'), 'exit routing is named at the call site, not left to parallel-chain markers')
-  assert.ok(t.includes('    exitref: ends the machine via “descend”'), 'the door inside the machine names itself too')
-  assert.ok(t.includes('  ⚠ a second flow wire leaves code on its out port — both get enqueued'), 'the fan-out rides where it belongs: inside the machine, at its own indent')
+  assert.ok(t.includes('} [ "continue":setledger_2, "descend":getledger_2 ]'), 'exit routing is named where the machine is declared, not left to parallel-chain markers')
+  assert.ok(t.includes('EXIT REF: exitref {') && t.includes('leave by the door "descend"'), 'the door inside the machine names itself inside its braces')
+  assert.ok(t.includes('⚠ a second flow wire leaves code on its out port — both get enqueued'), 'the fan-out rides where it belongs: inside the machine, at its own indent')
   assert.ok(!t.includes('parallel chain'), 'no chain is hoisted to the foot of the section any more')
 })
 
 test('llm export — values the design typed instead of wiring are printed', () => {
   const t = exportForLLM(crit)
-  assert.ok(t.includes('# ⇣ a = 1 — typed on the card, nothing wires it'), 'the card value is in the brief, so +1 is not a guess')
-  assert.ok(t.includes('# ⇣ min_w:int — no wire feeds it'), 'a call parameter nothing feeds says so')
-  assert.ok(t.includes('# ⇣ b ← inspect.x :float'), 'the value producer a live wire reads rides in the brief — no dangling handle')
+  assert.ok(t.includes('ADD: add ( num:a ~ 1, num:b ~ inspect.x ) -> ( int:result ) {'), 'the card value is in the brief, so +1 is not a guess, and a wired slot names its producer')
+  assert.ok(t.includes('EVENT: event ( int:min_w ) -> ( int:map ) {'), 'a call parameter nothing feeds prints as a bare slot')
+  assert.ok(t.includes('num:b ~ inspect.x') && t.includes('INSPECT: inspect ( any:obj ) -> ( float:x )'), 'the value producer a live wire reads rides in the brief — no dangling handle')
 })
 
 test('llm export — a script the validator calls broken says so', () => {
   const t = exportForLLM(crit)
-  assert.ok(t.includes("# ⚠ its script does not validate at line 1: output 'delta_z' is never assigned"), 'the fault is stated where the script is, so the reader fixes it once instead of shipping it')
-  assert.ok(t.includes('  def move(location):'), 'the script still rides under its part verbatim')
+  assert.ok(t.includes("⚠ its script does not validate at line 1: output 'delta_z' is never assigned"), 'the fault is stated where the script is, so the reader fixes it once instead of shipping it')
+  assert.ok(t.includes('          def move(location):') && t.includes('              delta_x += 1'), 'the script still rides inside its part’s braces verbatim, its own indentation relative')
 })
 
 test('llm export — handles read as the design says, and the cheatsheet only maps used parts', () => {
@@ -293,7 +293,7 @@ test('llm export — handles read as the design says, and the cheatsheet only ma
   assert.ok(t.includes('step_display_tiles (note: "display tiles")'), 'an unnamed part\'s handle comes from its note, so it reads as what it is for')
   assert.ok(t.includes('- system ledger InputEngine.input :InputEngine:Input — read by getledger · no part in this design writes it'), 'an engine-only ledger value says nobody writes it')
   assert.ok(t.includes('## Curio features — the engine primitives a built game is made of'), 'the mapping section opens with the engine vocabulary')
-  assert.ok(t.includes('- CODE part (its script is printed under the part, verbatim)'), 'a kind this brief uses maps onto the engine')
+  assert.ok(t.includes('- CODE part (its script is printed inside its own braces, verbatim)'), 'a kind this brief uses maps onto the engine')
   assert.ok(!t.includes('CHOICE options') && !t.includes('VAR “hero”'), 'mappings for kinds this brief never carries are left out')
   assert.ok(!t.includes('- FUNC / ƒ'), 'a whole canvas this design has no ƒ in is left out too')
   assert.ok((t.match(/```/g) || []).length % 2 === 0, 'fences stay balanced with the new blocks inside them')

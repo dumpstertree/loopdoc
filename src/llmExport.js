@@ -1,10 +1,15 @@
 // LLM export — flattens the whole document into one self-contained plain-text
 // brief written FOR a language model to read and build a game from: each graph
-// is lowered into an ordered pseudo-program (chains in run order, control
-// structures as indented blocks, data wires as # lines under their consumer),
-// nested graphs/machines/functions become sections the call site points into,
-// and the part reference for the kinds actually used is read BEFORE the programs
-// are, so the vocabulary exists by the time the first chain does. Art assets are
+// is lowered into a table of statements in the design's own code shape (one entry
+// per part, a part declared exactly once, the entry for the next hop written one
+// indent deeper so the indentation IS the chain's step, { braces } carrying what
+// a part does — its own logic as code, a machine's parts, a CODE part's script —
+// and one slot notation covering wired values, values typed on a card and inputs
+// nothing feeds), so a nested machine or sub-graph is written inside the braces
+// where it is called rather than as a section the call site points into — ƒs keep
+// their own section, since every call site shares one body.
+// The part reference for the kinds actually used is read BEFORE the tables are,
+// so the vocabulary exists by the time the first chain does. Art assets are
 // a legacy feature: the brief never mentions them. Content the design never
 // reaches (unchained parts, dead values) is culled quietly rather than flagged.
 // A Curio mapping closes the brief in three levels: the engine's own primitives,
@@ -85,9 +90,9 @@ function detail(n, g, doc) {
     case 'choice':
       return `waits for player: ${(n.exits || []).map((e) => `"${e.label || '?'}"`).join(' | ')}`
     case 'graph':
-      return 'nested flow graph — its section is below (called here with its ⇣ args; RETURN leads back out)'
+      return 'nested flow graph — its own parts are inside the braces of this line (its RETURN leads back out)'
     case 'machine':
-      return 'nested machine — its section is below (called here with its ⇣ args; its EXIT returns are its ⇡ outputs)'
+      return 'nested machine — its own parts are inside the braces of this line'
     case 'getg':
       return `reads ⚙ ${n.gName || '?'} (${n.gType || '?'})`
     case 'setg':
@@ -172,27 +177,37 @@ function detail(n, g, doc) {
   }
 }
 
-// lower one graph into an ordered pseudo-program written like real code: chains
-// start at the entry / ENTER doors and run in the order they actually run; if/else,
-// loops and player choices become indented blocks instead of arrow pairs; a machine
-// or ƒ with a single door gets a function signature — the door's ⇣ vars become the
-// parameter list (`machine "name"(params):`) and its body is indented under it with
-// EXIT parts printing as returns; a machine with several EXIT doors prints one block
-// per door labelled with that door, and a part with more than one flow wire out prints
-// each run at the indent it belongs to, marked ⚠ for the double enqueue; call sites fold
-// their data wires into call arguments `slug(port ← SOURCE.part, …)`. An unwired arm
-// prints nothing: like real code, a branch that goes nowhere does nothing, so it is
-// not flagged. A value the design typed on a card instead of wiring is printed, and
-// so is a call parameter nothing feeds — both are in the document, and leaving them
-// out makes the reader guess. The body rides inside a ``` fence so the # lines and
-// indentation survive markdown rendering. Parts that join no chain ride as a side
-// list whenever they feed one that does — a value producer a live wire reads must be
-// named, or the wire would point at a part the brief never printed. Anything the
-// lowering cannot place — cycles, wires into deleted parts, scripts the validator
-// calls broken — stays marked ⚠ where it happens. Parts reached by nothing, and
-// values that feed nothing, are simply left out: unused content is not part of this
-// design
-function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs) {
+// lower one graph as a TABLE OF STATEMENTS, in the design's own code shape: one
+// entry per part, stepped in the order its chain actually runs, and each hop
+// written one indent deeper than the part that runs it — so the chain's order
+// IS the indentation, and { braces } carry what a part's own operation is: a
+// machine's or sub-graph's parts inside the braces of its call site, a CODE part's
+// script verbatim inside them, and the part's own logic as code where the design
+// has one (result=a+b, if a==b / else, for x in arr). Nothing restates a part: the
+// header line carries its handle, its ⇣ slots and its ⇡ slots, and the braces carry
+// its operation. A slot is one notation for the three ways an input gets a value
+// (type:name ~ SOURCE.part wired, type:name ~ value the design typed on a card,
+// type:name alone when nothing wires it), which replaces the separate wire, card
+// and call-gap lines a program form needs. Where the chain goes on rides at the
+// end of the closing brace as [ PORT:slug ] — PORT is the name the design gives
+// that exit (an IF arm, a machine's EXIT door, a CHOICE option, a loop's iter/end),
+// left out for the plain out port, so a part with several successors names them
+// where it is declared rather than in a block below. Those are alternatives, so
+// they carry no ⚠: only two flow wires leaving the SAME port do, because those
+// really do enqueue two events at once, and that second run prints at the end of
+// the run above it. A part that names no successor has an arm or body the design
+// left unwired — it does nothing, as an unwired branch does in code, so absence
+// is carried by the shape and never flagged. The stair is stepped in walk order,
+// not an order of the data, so a cycle is one hop back to a name declared above
+// — no goto, and a loop-carried value simply reads a part printed further down.
+// A machine's body rides where it is called, so nothing points forward to a
+// section below (only MACHINE/GRAPH nodes own their graph, so only they nest; ƒs
+// keep their own section because every call site shares one body). Parts reached
+// by nothing, and values that feed nothing, are dropped — the keep rule still
+// grows from the table until nothing new feeds it, because a value producer a
+// live wire reads has to be declared or that wire would name a part the table
+// never printed
+function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs, body) {
   const L = []
   const labels = makeLabels(g)
   const nodes = g.nodes || []
@@ -200,21 +215,20 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
   const flows = (g.links || []).filter((l) => l.kind !== 'data')
   const datas = (g.links || []).filter((l) => l.kind === 'data')
   const pad = (i) => '  '.repeat(i)
-  const sideKind = (n) => n.kind === 'text' || n.kind === 'todo' || kindMeta(n).dataOnly
-  const doors = nodes.filter((n) => n.kind === 'enter')
-  // the doors frame the section even when no chain walks them: ENTER starts it and
-  // every EXIT is a label the parent's call site prints, so their kinds belong to
-  // the vocabulary the brief opens with
+  const top = body ? body.ind : 0
+  // a machine/ƒ section's doors frame it even when no chain walks them: ENTER
+  // starts the table and every EXIT is a label the parent's [ ] list prints,
+  // so their kinds belong to the vocabulary the brief opens with
   if (g.mode === 'machine' || g.mode === 'func')
     for (const n of nodes) if (n.kind === 'enter' || n.kind === 'exit') kindsUsed.add(n.kind)
-  // a single-door machine/ƒ reads as a function: the door is the section's
-  // signature, not a line in its body
-  const sigDoor = (g.mode === 'machine' || g.mode === 'func') && doors.length === 1 ? doors[0] : null
-  const sigDoors = new Set(sigDoor ? [sigDoor.id] : [])
+  const ports = (n) => dataPorts(n, doc.assets, doc.funcs || [], g)
+  // the name a port wears in a slot or a [ ] list: the name the design gives it,
+  // or the EXIT door it belongs to (numbered when that door declares several) —
+  // a synthetic port id the reader could not resolve inside the brief is never
+  // worth printing
   const portHandle = (node, id, dir) => {
-    const dp = dataPorts(node, doc.assets, doc.funcs || [], g)
-    const ports = dp[dir] || []
-    const p = ports.find((x) => x.id === id)
+    const ps = ports(node)[dir] || []
+    const p = ps.find((x) => x.id === id)
     if (!p) return id
     const nm = (p.name || '').trim()
     if (nm && !/^(var|field)$/.test(nm)) return nm
@@ -223,97 +237,206 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     // reader cannot resolve anywhere inside the brief is never worth printing
     const exit = (p.exit || '').trim()
     if (!exit) return id
-    const same = ports.filter((x) => (x.exit || '').trim() === exit)
+    const same = ps.filter((x) => (x.exit || '').trim() === exit)
     if (same.length === 1) return exit
     return `${exit}${same.findIndex((x) => x.id === id) + 1}`
   }
+  // the source side of a data wire names only the part and the port it leaves
+  // through: the slot it fills already says what type lands in it
   const wire = (l) => {
     const s = byId[l.from]
     if (!s) return `⚠ deleted part (id ${l.from})`
-    const out = dataPorts(s, doc.assets, doc.funcs || [], g).out.find((x) => x.id === l.fromPort)
-    return `${slugs[l.from] || labels[l.from]}.${portHandle(s, l.fromPort, 'out')}${out?.type ? ` :${out.type}` : ''}`
+    return `${slugs[l.from] || labels[l.from]}.${portHandle(s, l.fromPort, 'out')}`
   }
   const outFlow = (id, port) => flows.filter((l) => l.from === id && (port == null || l.fromPort === port))
   const feed = (id) => datas.filter((l) => l.to === id)
-  // a named part shows both handles (slug — KIND "name") so the line stays
-  // scannable; an unnamed one shows its slug alone, whose kind prefix carries
-  // what the bare KIND label would have said
-  const disp = (id) => {
-    const s = slugs[id] || labels[id]
-    return labels[id].includes('"') ? `${s} — ${labels[id]}` : s
-  }
-  const headLine = (n, ind) => {
-    const d = detail(n, g, doc)
-    return `${pad(ind)}${disp(n.id)}${d ? `: ${d}` : ''}${n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''}`
-  }
-  const wires = (n, ind) => feed(n.id).map((l) => `${pad(ind + 1)}# ⇣ ${portHandle(n, l.toPort, 'in')} ← ${wire(l)}`)
-  // an operand the design left on the card instead of wiring: the value IS in
-  // the document, so print it — otherwise the reader cannot tell which add is
-  // the +1 and which the -1 and has to guess from the direction names
-  const cards = (n, ind) => {
-    if (!MATH[n.kind]) return []
-    const fedPorts = new Set(feed(n.id).map((l) => l.toPort))
-    return ['a', 'b'].flatMap((s) => {
-      const v = s === 'a' ? n.aVal : n.bVal
-      if (fedPorts.has(`__${s}__`) || v === undefined || String(v).trim() === '') return []
-      return [`${pad(ind + 1)}# ⇣ ${s} = ${String(v).trim()} — typed on the card, nothing wires it`]
+  // one slot for one port. type:name normally; name :type when the type itself
+  // carries a colon (a system ledger type, InputEngine:Input) — otherwise the
+  // slot would read with two colons and the reader could not tell which
+  const slot = (p, nm, extra) =>
+    `${(p.type || '').includes(':') ? `${nm} :${p.type}` : `${p.type || '?'}:${nm}`}${extra}`
+  // ⇣ slots: wired ~ SOURCE.part, a value the design typed on the card ~ value,
+  // or the bare slot when the design feeds nothing — all three wear the same
+  // ~ because the design itself calls a card value a custom value of that port
+  const inSlots = (n) =>
+    (ports(n).in || []).map((p) => {
+      const nm = portHandle(n, p.id, 'in')
+      const l = feed(n.id).find((x) => x.toPort === p.id)
+      if (l) return slot(p, nm, ` ~ ${wire(l)}`)
+      const card = MATH[n.kind] ? (p.id === '__a__' ? n.aVal : p.id === '__b__' ? n.bVal : undefined) : undefined
+      if (card !== undefined && String(card).trim() !== '') return slot(p, nm, ` ~ ${String(card).trim()}`)
+      return slot(p, nm, '')
     })
-  }
-  // a call part states the fn it calls, so the hand-off is in the brief; what is
-  // missing is a value for any parameter no wire feeds — name those too, or the
-  // reader is left to guess which arguments the design meant to leave empty
-  const callGaps = (n, ind) =>
-    (n.calls || []).flatMap((c) => {
-      const r = resolveCall(c, doc.assets)
-      if (!r) return []
-      const fedPorts = new Set(feed(n.id).map((l) => l.toPort))
-      return (r.fn.inputs || []).flatMap((v) =>
-        fedPorts.has(v.id) || !v.name ? [] : [`${pad(ind + 1)}# ⇣ ${v.name}:${v.type || '?'} — no wire feeds it`]
-      )
+  const outSlots = (n) =>
+    (ports(n).out || []).map((p) => {
+      const nm = portHandle(n, p.id, 'out')
+      const door = (p.exit || '').trim()
+      return slot(p, nm, door && door !== nm ? ` @ ${q(door)}` : '')
     })
-  // a CODE part carries a script the design wrote itself: print it verbatim, pushed
-  // in one level under the part's own line so its indentation stays relative and
-  // the brief never restates what the code already says; blank lines stay blank so
-  // nothing outside a fence swallows them
-  const codeLines = (n, ind) => {
+  // what the part does, as code where the design's own operation has a code
+  // form: an equation for math, if/else for a test, a loop header for a loop,
+  // the typed values a door declares. Kinds whose operation is an engine
+  // statement (ledger, inspect, an annotation frame) keep the design's words.
+  const pnameOf = (n, p, dir) => portHandle(n, p.id, dir)
+  const op = (n) => {
+    const P = ports(n)
+    switch (n.kind) {
+      case 'add':
+      case 'sub':
+      case 'mul':
+      case 'div':
+      case 'mod': {
+        const a = (P.in || []).find((p) => p.id === '__a__')
+        const b = (P.in || []).find((p) => p.id === '__b__')
+        const o = (P.out || [])[0]
+        if (a && b && o) return [`${pnameOf(n, o, 'out')}=${pnameOf(n, a, 'in')}${MATH[n.kind]}${pnameOf(n, b, 'in')}`]
+        return [`⇡ = ⇣ a ${MATH[n.kind]} ⇣ b`]
+      }
+      case 'ifb': {
+        const a = (P.in || []).find((p) => p.id === '__a__')
+        const b = (P.in || []).find((p) => p.id === '__b__')
+        return [`if ${a ? pnameOf(n, a, 'in') : 'a'}${n.op || '=='}${b ? pnameOf(n, b, 'in') : 'b'} [TRUE]`, 'else [FALSE]']
+      }
+      case 'condition':
+        return [n.cond ? `if ${n.cond} [TRUE]` : 'if its ⇣ operands [TRUE]', 'else [FALSE]']
+      case 'for': {
+        const i = (P.out || []).find((p) => (p.name || '') === 'i' || p.id === 'i')
+        const to = (P.in || []).find((p) => /to|count|n/.test(p.name || p.id || ''))
+        return [`${i ? `for ${pnameOf(n, i, 'out')} = 1 .. ${to ? pnameOf(n, to, 'in') : '⇣to'}` : 'for ⇣to times'} [iter]`, 'end the loop [end]']
+      }
+      case 'foreach': {
+        const items = (P.out || []).map((p) => pnameOf(n, p, 'out'))
+        const arr = (P.in || []).find((p) => /arr|list|items/.test(p.name || p.id || ''))
+        return [`${items.length ? `for ${items.join(', ')} in ${arr ? pnameOf(n, arr, 'in') : '⇣arr'}` : 'for each ⇣arr'} [iter]`, 'end the loop [end]']
+      }
+      case 'enter': {
+        const v = (n.vars || []).filter((x) => String(x.value ?? '') !== '')
+        return v.map((x) => `${x.name || 'var'} = ${x.value}`)
+      }
+      case 'exit':
+      case 'exitinst': {
+        if (n.kind === 'exit') {
+          const v = (n.vars || []).filter((x) => String(x.value ?? '') !== '')
+          return v.map((x) => `${x.name || 'var'} = ${x.value}`)
+        }
+        const t = (g?.nodes || []).find((x) => x.kind === 'exit' && x.id === n.exitRef)
+        if (!t) return [n.exitRef ? '⚠ routes to an EXIT that no longer exists — re-pick' : 'no EXIT picked yet']
+        return [`leave by the door ${q(t.name || 'exit')}`]
+      }
+      case 'step':
+      case 'machine':
+      case 'graph':
+        return [] // its operation is the block inside its braces, not a line
+      case 'code':
+        return String(n.code || '').trim() ? [] : ['no script written yet — its ports stay']
+      default: {
+        const d = detail(n, g, doc)
+        return d ? [d] : []
+      }
+    }
+  }
+  // the part's header: KIND · handle · its ⇣ slots · its ⇡ slots, then the brace
+  // that opens whatever its operation is; the handle is the slug the slots and
+  // the [ ] lists use, and the design's own name rides beside it when it has one
+  const head = (n, ind) => {
+    const note = n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''
+    const named = (n.kind === 'machine' || n.kind === 'graph' ? (n.graph || {}).name : n.name) || ''
+    const s = slugs[n.id] || labels[n.id]
+    const ins = inSlots(n)
+    const gets = outSlots(n)
+    const lang = n.kind === 'code' && String(n.code || '').trim() ? ` ${(n.lang || 'python')} script` : ''
+    return `${pad(ind)}${KIND(n)}: ${s}${named ? ` ${q(named)}` : ''}${note}${ins.length ? ` ( ${ins.join(', ')} )` : ''}${gets.length ? ` -> ( ${gets.join(', ')} )` : ''}${lang} {`
+  }
+  // where the chain goes on: [ PORT:slug ], PORT named by what the design calls
+  // that exit (an IF arm, a machine's EXIT door, a CHOICE option, a loop's
+  // iter/end), left out for the plain out port — the names here are the names
+  // the parts stepped under the part are run as
+  const portName = (n, port) => {
+    if (port == null) return ''
+    // a loop’s body port is id out but the design calls it iter — the name is
+    // what tells the reader which run repeats and which one is after the loop
+    if (n.kind === 'for' || n.kind === 'foreach') return port === 'out' ? 'iter' : port
+    if (port === 'out' || port === '') return ''
+    if (n.kind === 'machine' || n.kind === 'graph') {
+      const e = ((n.graph || {}).nodes || []).find((x) => x.id === port)
+      if (e) return q(e.name || 'exit')
+    }
+    if (n.kind === 'choice') {
+      const e = (n.exits || []).find((x) => x.id === port)
+      if (e) return q(e.label || '?')
+    }
+    if (n.kind === 'ifb' || n.kind === 'condition') return (port || '').toUpperCase()
+    return port
+  }
+  const succName = (n, l) => {
+    const nm2 = portName(n, l.fromPort)
+    const dest = byId[l.to] ? slugs[l.to] || labels[l.to] : `id ${l.to}`
+    return `${nm2 ? `${nm2}:` : ''}${dest}`
+  }
+  // a CODE part carries a script the design wrote itself: print it verbatim, so
+  // its indentation stays relative and the brief never restates what the code
+  // already says; blank lines stay blank so nothing outside a fence swallows
+  // them. The braces around it are the part's own, so its script reads exactly
+  // as the design wrote it, at the indent the part sits at
+  const script = (n, ind) => {
     const raw = String(n.code || '').replace(/\r\n?/g, '\n').split('\n')
     while (raw.length && !raw[0].trim()) raw.shift()
     while (raw.length && !raw[raw.length - 1].trim()) raw.pop()
-    return raw.map((l) => (l.trim() ? pad(ind) + l.replace(/\t/g, '  ').replace(/\s+$/, '') : ''))
+    const out = []
+    for (const l of raw) out.push(l.trim() ? `${pad(ind)}${l.replace(/\t/g, '  ').replace(/\s+$/, '')}` : '')
+    if (String(n.code || '').trim()) {
+      const v = validateCode(String(n.code), n.lang || 'python', { outputs: n.outVars || [] })
+      // a script the validator calls broken is a fact about the design, not an
+      // open point: the app checked it, and this is the only place the reader
+      // can learn the logic as written is broken
+      for (const e of [...v.errors, ...v.warnings]) out.push(`${pad(ind)}⚠ its script does not validate at line ${e.line}: ${e.message}`)
+    }
+    return out
   }
-
-  // a CODE script that does not validate is a fact about the design, not an
-  // open point: the app checked it and the brief is the only place the reader
-  // can learn that the logic as written is broken, so name the faults here and
-  // let the reader fix them once, deliberately, instead of shipping the bug
-  const codeFaults = (n, ind) => {
-    if (!String(n.code || '').trim()) return []
-    const v = validateCode(String(n.code), n.lang || 'python', { outputs: n.outVars || [] })
-    const bad = [...v.errors, ...v.warnings]
-    return bad.map((e) => `${pad(ind)}# ⚠ its script does not validate at line ${e.line}: ${e.message}`)
-  }
+  // the braced block of a nested machine/sub-graph: its own parts, each declared
+  // once, printed inside the braces of the call site — so no line points forward
+  // to a section below
+  const nest = (n, ind) =>
+    graphSection(
+      n.graph,
+      doc,
+      '',
+      '',
+      slugs,
+      kindsUsed,
+      calledFuncs,
+      {
+        label: '',
+        ind: ind + 1,
+      },
+    )
 
   const visited = new Set()
-  const residue = []
 
-  // a chain is lowered as one run: its own fan-outs (a part with more than one
-  // flow wire out of it) are printed at the END of this run, pushed in at the
-  // indent of the part they come from — never hoisted to the top of the section,
-  // which is what made a branch look like it sat outside the machine it belongs
-  // to. The ⚠ stays because two wires out of one part really do enqueue two
-  // events at once, and which one the design meant is not the brief's to decide
+  // one run of a chain: the part's statement, then its successor one indent
+  // deeper — the design's chain steps read as nested statements, which is why
+  // the stair's order is the chain's order and a part never needs a second entry
+  // where its chain comes back to it. A part whose braces hold a machine body
+  // steps on at the same indent it declared its doors at, so the parts after a
+  // machine still belong to the graph that calls it. The first wire on a port
+  // continues this run; another wire on the SAME port is a second event
+  // enqueued at once, which is the only real double enqueue, and is marked ⚠ and
+  // printed at the end of this run. Wires on different ports are alternatives
+  // (an arm, a door, an option) and carry no ⚠
   const chain = (id, ind) => {
-    const L2 = []
-    const br = [] // this run's fan-out chains, with the indent they belong at
+    const pend = [] // this run's extra flow wires: named in the part's list, run after this one
     let cur = id
+    let at = ind // the stair: every hop of this run sits one indent deeper
     while (cur) {
       const n = byId[cur]
       if (!n) {
-        L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${cur})`)
+        L.push(`${pad(at)}⚠ flow enters a deleted part (id ${cur})`)
         break
       }
       if (visited.has(cur)) {
-        L2.push(`${pad(ind)}goto ${slugs[cur] || labels[cur]} — ⚠ this chain returns to a part already written above`)
+        // the stair is stepped in walk order, so a hop back is a name already
+        // declared above: it needs no second entry, and nothing is undecided
+        L.push(`${pad(at)}# → ${slugs[cur] || labels[cur]} — this chain returns to a part declared above; the block above is its only entry`)
         break
       }
       visited.add(cur)
@@ -321,123 +444,81 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
       // a FUNC part only earns its ƒ if it was actually written out, not merely
       // present in the graph — a call site nothing reaches calls nothing
       if (n.kind === 'func') calledFuncs.add(n.func)
-      const take = (port) => {
-        const ls = port == null ? outFlow(cur) : outFlow(cur, port)
-        for (const l of ls.slice(1))
-          br.push({
-            to: l.to,
-            ind,
-            why: `⚠ a second flow wire leaves ${slugs[cur] || labels[cur]}${port == null || l.fromPort !== 'out' ? ` on its ${l.fromPort} port` : ''} — both get enqueued`,
-          })
-        return ls[0]
+
+      const pname = slugs[cur] || labels[cur]
+      const first = {}
+      const fan = []
+      const outs = outFlow(cur, null)
+      for (const l of outs) {
+        if (first[l.fromPort]) fan.push(l)
+        else first[l.fromPort] = l
       }
-      const step = (l) => {
-        if (!l) return null
-        if (byId[l.to]) return l.to
-        L2.push(`${pad(ind)}⚠ flow enters a deleted part (id ${l.to})`)
-        return null
+      // the part's statement: header, its operation, its body where it has one,
+      // then the brace that closes it with the [ ] list of its successors
+      L.push(head(n, at))
+      if (n.kind === 'code' && String(n.code || '').trim()) L.push(...script(n, at + 1))
+      else L.push(...op(n).map((l) => `${pad(at + 1)}${l}`))
+      if (n.graph && (n.kind === 'machine' || n.kind === 'graph')) L.push(...nest(n, at))
+      const ss = outs.map((l) => succName(n, l))
+      L.push(`${pad(at)}}${ss.length ? ` [ ${ss.join(', ')} ]` : ''}`)
+
+      // which of a part's flow ports open a block under it, and which continue
+      // at the next indent: an arm, a door and an option are blocks; a loop's
+      // body is a block and its end continues; everything else is linear
+      const portsOut = Object.keys(first)
+      const branchPorts =
+        n.kind === 'choice' ? (n.exits || []).map((e) => e.id)
+        : n.kind === 'condition' || n.kind === 'ifb' ? ['true', 'false']
+        : n.kind === 'machine' || n.kind === 'graph' ? portsOut // a machine's flow ports ARE its EXIT doors
+        : n.kind === 'for' || n.kind === 'foreach' ? ['out'] // iter = body; end continues below
+        : portsOut.length > 1 ? portsOut // more than one port = the part really does branch
+        : []
+      const blocks = branchPorts.filter((p) => first[p])
+      for (const p of blocks) {
+        const l = first[p]
+        if (byId[l.to]) chain(l.to, at + 1)
+        else L.push(`${pad(at + 1)}⚠ flow enters a deleted part (id ${l.to})`)
       }
-      // a link whose far end no longer exists — the id is all the document has
-      const dead = (id, ind2) => L2.push(`${pad(ind2)}⚠ deleted part (id ${id})`)
-      const k = n.kind
-      if (k === 'condition' || k === 'ifb') {
-        const test = k === 'condition'
-          ? n.cond || '(branches on its wired operands)'
-          : ['a', 'b'].map((s) => {
-              const l = feed(cur).find((x) => x.toPort === `__${s}__`)
-              const card = s === 'a' ? n.aVal : n.bVal
-              if (l) return wire(l)
-              return String(card ?? '').trim() ? String(card).trim() : `⇣${s}`
-            }).join(` ${n.op || '=='} `)
-        L2.push(`${pad(ind)}if (${test}):  # ${disp(cur)}`)
-        const tb = take('true')
-        if (tb && byId[tb.to]) L2.push(...chain(tb.to, ind + 1))
-        else if (tb) dead(tb.to, ind + 1)
-        else L2.push(`${pad(ind + 1)}pass`) // an empty block is still a block: the shape stays legal
-        const fb = take('false')
-        if (fb) {
-          L2.push(`${pad(ind)}else:`)
-          if (byId[fb.to]) L2.push(...chain(fb.to, ind + 1))
-          else dead(fb.to, ind + 1)
-        }
+      const isDoor = n.kind === 'exit' || n.kind === 'exitinst' // doors end their chain
+      const rest = isDoor ? [] : portsOut.filter((p) => !blocks.includes(p))
+      if (rest.length > 1) {
+        for (const p of rest) chain(first[p].to, at + 1)
         cur = null
-      } else if (k === 'choice') {
-        L2.push(`${pad(ind)}wait for player choice:  # ${disp(cur)}`)
-        for (const e of n.exits || []) {
-          const ls = outFlow(cur, e.id)
-          for (const l of ls.slice(1))
-            br.push({ to: l.to, ind, why: `⚠ a second wire leaves the option ${q(e.label || '?')} of ${slugs[cur] || labels[cur]} — both get enqueued` })
-          L2.push(`${pad(ind)}if player picks ${q(e.label || '?')}:`)
-          if (ls[0] && byId[ls[0].to]) L2.push(...chain(ls[0].to, ind + 1))
-          else if (ls[0]) dead(ls[0].to, ind + 1)
-          else L2.push(`${pad(ind + 1)}pass`) // the option exists; picking it enqueues nothing
-        }
-        cur = null
-      } else if (k === 'for' || k === 'foreach') {
-        const src = feed(cur).find((l) => l.toPort === (k === 'for' ? '__to__' : '__arr__'))
-        L2.push(
-          pad(ind) +
-          (k === 'for'
-            ? `for i:int up to ${src ? wire(src) : '?'}:  # ${disp(cur)}`
-            : `for item:${n.itemType || '?'} (+index) in ${src ? wire(src) : '?'}:  # ${disp(cur)}`),
-        )
-        const body = take('out') // the loop's iter port
-        if (body) {
-          if (byId[body.to]) L2.push(...chain(body.to, ind + 1))
-          else dead(body.to, ind + 1)
-        } else L2.push(`${pad(ind + 1)}pass`) // the loop runs; its body is empty
-        const end = take('end')
-        if (end) cur = step(end)
-        else cur = null
-      } else {
-        const d = detail(n, g, doc)
-        const ws = feed(n.id)
-        const note = n.note && n.kind !== 'text' ? ` (note: ${q(n.note)})` : ''
-        if (k === 'exit')
-          L2.push(`${pad(ind)}return${n.name ? ` ${q(n.name)}` : ''}  # ${disp(n.id)}${d ? `: ${d}` : ''}${note}`)
-        else if ((k === 'machine' || k === 'graph' || k === 'func') && ws.length) {
-          const args = ws.map((l) => `${portHandle(n, l.toPort, 'in')} ← ${wire(l)}`).join(', ')
-          const s = slugs[n.id] || labels[n.id]
-          L2.push(`${pad(ind)}${s}(${args})${labels[n.id].includes('"') ? ` — ${labels[n.id]}` : ''}${d ? `: ${d}` : ''}${note}`)
-        } else if (sigDoors.has(n.id)) { /* the door is the section's signature, printed above */ }
-        else if (k === 'code') {
-          // the script rides under its own line: its params are fed by the ⇣ wires above it
-          L2.push(headLine(n, ind), ...wires(n, ind), ...codeLines(n, ind + 1), ...codeFaults(n, ind + 1))
-        } else if (MATH[k]) L2.push(headLine(n, ind), ...wires(n, ind), ...cards(n, ind))
-        else L2.push(headLine(n, ind), ...wires(n, ind), ...callGaps(n, ind))
-        if (k === 'exit' || k === 'exitinst') cur = null // doors end their chain
-        else if (k === 'enter') cur = step(take('out'))
-        else if (k === 'graph') cur = step(take('return'))
-        else if (k === 'machine' && outFlow(cur, null).length > 1) {
-          // a multi-exit machine's flow ports ARE its EXIT doors: print one
-          // labeled block per door, so the call site reads as the switch it
-          // becomes and every exit says where the design goes on
-          for (const l of outFlow(cur, null)) {
-            const door = ((n.graph || {}).nodes || []).find((x) => x.kind === 'exit' && x.id === l.fromPort)
-            L2.push(`${pad(ind + 1)}if it leaves by ${q(door?.name || 'exit')}:`)
-            if (byId[l.to]) L2.push(...chain(l.to, ind + 2))
-            else L2.push(`${pad(ind + 2)}⚠ flow enters a deleted part (id ${l.to})`)
-          }
+      } else if (rest.length === 1) {
+        const l = first[rest[0]]
+        if (byId[l.to]) {
+          cur = l.to
+          at += 1
+        } else {
+          L.push(`${pad(at)}⚠ flow enters a deleted part (id ${l.to})`)
           cur = null
-        } else cur = step(take(null)) // machines exit by name; everything linear by 'out'
-      }
+        }
+      } else cur = null
+      // the second wire on the port this part already runs: both events are
+      // enqueued, so the second run belongs at the end of this one
+      for (const l of fan)
+        pend.push({
+          to: l.to,
+          ind: at,
+          why: `⚠ a second flow wire leaves ${pname} on its ${portName(n, l.fromPort) || l.fromPort} port — both get enqueued`,
+        })
     }
-    for (const b of br) {
-      L2.push(`${pad(b.ind)}${b.why}`)
-      if (byId[b.to]) L2.push(...chain(b.to, b.ind))
-      else L2.push(`${pad(b.ind)}⚠ flow enters a deleted part (id ${b.to})`)
+    for (const p of pend) {
+      L.push(`${pad(p.ind)}${p.why}`)
+      if (byId[p.to]) chain(p.to, p.ind)
+      else L.push(`${pad(p.ind)}⚠ flow enters a deleted part (id ${p.to})`)
     }
-    return L2
   }
 
-  L.push(`${heading}${g.name ? ` ${q(g.name)}` : ''}${parentNote ? ` — ${parentNote}` : ''}`)
-  L.push('```')
-  if (sigDoor) {
-    const ps = (sigDoor.vars || []).map((v) => `${v.name || 'var'}:${v.type || 'int'}${String(v.value ?? '') ? ` = ${v.value}` : ''}`)
-    const nm = g.name || sigDoor.name || ''
-    L.push(`${g.mode === 'machine' ? 'machine' : 'fn'} ${nm ? q(nm) : ''}(${ps.join(', ')}):  # ${disp(sigDoor.id)} starts it · its vars are parameters`)
-    for (const l of feed(sigDoor.id)) L.push(`  # ⇣ ${portHandle(sigDoor, l.toPort, 'in')} ← ${wire(l)}`)
+  if (body) {
+    // the braces are the call site's own, so the body's parts open right under
+    // them and the caller closes them — nothing here prints a label line
+  } else {
+    L.push(`${heading}${g.name ? ` ${q(g.name)}` : ''}${parentNote ? ` — ${parentNote}` : ''}`)
+    L.push('```')
   }
+
+  const doors = nodes.filter((n) => n.kind === 'enter')
   let starts
   if ((g.mode === 'machine' || g.mode === 'func') && doors.length) starts = doors.map((d) => d.id)
   else if (g.entry && byId[g.entry]) starts = [g.entry]
@@ -446,16 +527,16 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     starts = (roots.length ? roots : nodes.filter((n) => n.kind !== 'text' && n.kind !== 'todo' && !kindMeta(n).dataOnly)).map((n) => n.id)
   }
   for (let i = 0; i < starts.length; i++) {
-    if (i) L.push(`# a second chain runs alongside the one above:`)
-    L.push(...chain(starts[i], sigDoor ? 1 : 0))
+    if (i) L.push(`${pad(top)}# a second chain runs alongside the one above:`)
+    chain(starts[i], top)
   }
 
   // a part that joins no chain still belongs to the brief if its ⇡ value feeds
-  // something that is in the brief — so the set of kept parts grows from the
-  // chain until nothing new feeds it; anything left over (an unchained part
-  // nothing reads, a value nothing consumes) is content this design does not
-  // use, and is dropped. Annotation frames and checklists ride always: they
-  // carry intent, not logic
+  // something that does — so the set of kept parts grows from the table until
+  // nothing new feeds it; anything left over (an unchained part nothing reads,
+  // a value nothing consumes) is content this design does not use, and is
+  // dropped. Annotation frames and checklists ride always: they carry intent,
+  // not logic
   const kept = new Set(visited)
   const feeds = (n) => datas.some((l) => l.from === n.id && kept.has(l.to))
   let grew = true
@@ -470,37 +551,31 @@ function graphSection(g, doc, heading, parentNote, slugs, kindsUsed, calledFuncs
     }
   }
   // the keep rule is not restricted to data-only kinds: a part that joins no
-  // chain but hands a value to one that does must be named, or the wire that
-  // reads it would point at a part the brief never printed
+  // chain but hands a value to one that does must be declared, or the slot that
+  // reads it would point at a part the table never printed
   const side = nodes.filter((n) => !visited.has(n.id) && kept.has(n.id))
   if (side.length) {
     L.push('')
-    L.push('# not in any chain — the parts above read their ⇡ values through the wires below')
+    L.push(`${pad(top)}# declared here, reached by no chain — the slots above read their ⇡ values`)
     for (const n of side) {
       kindsUsed.add(n.kind)
-      L.push(headLine(n, 0), ...wires(n, 0))
+      L.push(head(n, top))
+      if (n.graph && (n.kind === 'machine' || n.kind === 'graph')) L.push(...nest(n, top))
+      if (n.kind === 'code' && String(n.code || '').trim()) L.push(...script(n, top + 1))
+      else L.push(...op(n).map((l) => `${pad(top + 1)}${l}`))
+      L.push(`${pad(top)}}`)
     }
   }
 
   const dang = datas.filter((l) => !byId[l.to])
   if (dang.length) {
     L.push('')
-    L.push('# ⚠ wires into deleted parts')
-    for (const l of dang) L.push(`⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
+    L.push(`${pad(top)}⚠ wires into deleted parts`)
+    for (const l of dang) L.push(`${pad(top)}⚠ data wire ${wire(l)} goes to a deleted part (id ${l.to})`)
   }
-  L.push('```')
+  if (!body) L.push('```')
   return L
 }
-
-// the target engine this brief is written for: curio-engine (Rust, ECS on hecs,
-// wgpu). The mapping is three deep on the same fact, in the engine's own words:
-// the primitives a built game is made of, then how this design's canvases become
-// them, then how each individual part does — so the model building from the brief
-// never has to guess which Curio construct a graph part means, and never has to
-// look up a name the brief did not define. canvas and node entries name the graph
-// kinds they explain; entries for kinds this brief never carries are dropped, the
-// same rule that keeps unused parts out of the programs, so the reader only reads
-// the mappings their own parts need
 const CURIO_HEAD = [
   '## Curio features — the engine primitives a built game is made of',
   'Handles in the brief are slugs; each one becomes the Rust name below it,',
@@ -626,11 +701,14 @@ const CURIO_NODE = [
     ],
   },
   {
-    k: ['machine', 'graph', 'func'],
+    k: [],
     l: [
-      '- MACHINE ⇣/⇡ wires at a call site — printed name(port ← SOURCE.part) — and every # ⇣ port ← slug.part',
-      '  :type line, are value hand-offs: read the producer’s record/facet, then write it in or pass it — the',
-      '  ← side names exactly which part hands what over.',
+      '- A part’s ( ⇣ slots ) and ( ⇡ slots ) — each one  type:name ~ SOURCE.part  wired,  type:name ~ value',
+      '  the design typed on the card, or  type:name  alone fed by nothing — are its value hand-offs:',
+      '  read the producer’s record/facet, then write it in or pass it; the ~ side names exactly which part',
+      '  hands what over or what value lands in the slot, and  @ "door"  marks the EXIT door a ⇡ value',
+      '  leaves its machine through. A call site’s own slots ARE its arguments, so a ƒ’s parameters and a',
+      '  machine’s door vars are filled by the same slots the parts above feed it.',
     ],
   },
   {
@@ -645,7 +723,7 @@ const CURIO_NODE = [
     k: ['choice'],
     l: [
       '- CHOICE options → each option is an input-mapped button that gates which stimulant gets enqueued;',
-      '  an option whose only line is pass enqueues nothing, so the game waits.',
+      '  an option with no name in the part’s [ ] list enqueues nothing, so the game waits.',
     ],
   },
   {
@@ -653,15 +731,17 @@ const CURIO_NODE = [
     l: [
       '- condition / IF / AND / OR / for / foreach → plain Rust if / match / for / while in the habit or',
       '  impulse body; foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
-      '  An arm printed as pass is an empty block: nothing gets enqueued and nothing gets written — an',
-      '  arm, loop body or option the design left unwired.',
+      '  The arm or body the chain takes is stepped one indent deeper and named on the closing brace as',
+      '  [ TRUE:slug ] / [ iter:slug ] / [ "door":slug ]; an option with no name in its [ ] list enqueues',
+      '  nothing, and the design’s if / else pair prints inside the part’s own braces.',
     ],
   },
   {
     k: ['add', 'sub', 'mul', 'div', 'mod', 'append', 'join', 'remove', 'removeat', 'sort', 'clone', 'inspect'],
     l: [
-      '- math (+ − × ÷ %, with a # ⇣ a = 1 line for an operand typed on the card) and append / join /',
-      '  remove / removeat / sort / clone / INSPECT → plain Rust on the values the brief names: + - * / %,',
+      '- math (+ − × ÷ %, with a  type:name ~ 1  slot for an operand the design typed on the card rather than',
+      '  wired, and written inside its braces as  result=a+b) and',
+      '  append / join / remove / removeat / sort / clone / INSPECT → plain Rust on the values the brief names: + - * / %,',
       '  push / concat / drop / sort, a by-value copy, a field read. They are expressions inside the body,',
       '  never engine calls of their own.',
     ],
@@ -669,7 +749,7 @@ const CURIO_NODE = [
   {
     k: ['code'],
     l: [
-      '- CODE part (its script is printed under the part, verbatim) → the design wrote the logic itself:',
+      '- CODE part (its script is printed inside its own braces, verbatim) → the design wrote the logic itself:',
       '  translate it statement by statement into the habit/impulse body or a plain Rust fn — its def',
       '  parameters are the ⇣ inputs and its return values the ⇡ outputs. Keep its arithmetic and control',
       '  flow; replace only the reads/writes the brief already names with the ledger or facet calls it lists.',
@@ -696,9 +776,9 @@ const CURIO_NODE = [
   {
     k: [],
     l: [
-      '- ⚠ lines (a second flow wire leaving one part, goto, a deleted part, a script that does not validate,',
-      '  a port nothing wires) → the document itself says this: state the choice you made in a comment, and',
-      '  never invent an engine call the brief did not name.',
+      '- ⚠ lines (a second flow wire leaving one part on the port it already runs, a flow wire into a',
+      '  deleted part, a script the validator calls broken) → the document itself says this: state the',
+      '  choice you made in a comment, and never invent an engine call the brief did not name.',
     ],
   },
 ]
@@ -713,7 +793,7 @@ const curioOf = (kinds) =>
     '## Canvas → Curio feature — how the design’s own canvases become engine constructs',
     ...CURIO_CANVAS.flatMap((e) => (keep(e, kinds) ? e.l : [])),
     '',
-    '## Node → Curio feature — what each part in the programs above becomes',
+    '## Node → Curio feature — what each part in the tables above becomes',
     ...CURIO_NODE.flatMap((e) => (keep(e, kinds) ? e.l : [])),
     '',
     'Startup shape: Curio::create().identity(…).plugin(SystemComponentDefaultTime/Graphics/Input/',
@@ -730,8 +810,9 @@ export function exportForLLM(doc) {
   // name — or from the part's note when that is all the design says about it —
   // made unique against the WHOLE document (container prefix only when the
   // plain form clashes with a part another graph already claimed), so every
-  // cross-reference (wire source, goto, the labelled block under a fan-out)
-  // names one part and an unnamed part's handle still reads as what it is for
+  // cross-reference (a slot's wire source, the hop back to a declared part, a
+  // name in a part's [ ] successor list) names one part and an unnamed part's
+  // handle still reads as what it is for
   const slugs = {}
   {
     const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
@@ -803,14 +884,15 @@ export function exportForLLM(doc) {
   // the graphs are lowered first and aside, because a ƒ earns its section only
   // if a FUNC part that survived the walk calls it — and a ƒ named only by a
   // part nothing reaches is dead code like that part
+  // the graphs are lowered first and aside, because a ƒ earns its section only
+  // if a FUNC part that survived the walk calls it — and a ƒ named only by a
+  // part nothing reaches is dead code like that part. A nested machine or
+  // sub-graph is lowered where it is called, inside its call site's braced
+  // block, so only the graphs reached by a chain are lowered at all: a machine
+  // body no chain ever calls is content this design does not run
   const graphsOut = []
-  const walkGraph = (g, depth, note) => {
-    graphsOut.push(...graphSection(g, doc, `${'#'.repeat(3 + depth)} ${g.mode === 'machine' ? 'Machine' : 'Flow Graph'}`, note, slugs, kindsUsed, calledFuncs))
-    graphsOut.push('')
-    for (const n of g.nodes || [])
-      if (n.graph) walkGraph(n.graph, depth + 1, `inside ${kindMeta(n).label} ${q(n.name || '')}`.trim())
-  }
-  walkGraph(doc.design, 0)
+  graphsOut.push(...graphSection(doc.design, doc, `${'#'.repeat(3)} Flow Graph`, '', slugs, kindsUsed, calledFuncs, null))
+  graphsOut.push('')
 
   const funcsOut = []
   const lowered = new Set()
@@ -831,7 +913,7 @@ export function exportForLLM(doc) {
     body.push(...funcsOut)
     body.push('')
   }
-  body.push('## Graphs')
+  body.push('## Graphs — one entry per part, stepped in the order its chain runs')
   body.push(...graphsOut)
 
   out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
@@ -845,20 +927,34 @@ export function exportForLLM(doc) {
     'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
     'data wires ⇣/⇡ carry typed values between parts). A token moves one hop per step;',
     'ENTER doors start machine chains; flow graphs run from their entry.',
-    'Each graph is written as a program inside a fenced code block: parts appear in the',
-    'order their chain runs, and if/else, counted & array loops, and player choices are',
-    'indented blocks — structure by containment, not by tracing arrows. Machines and ƒs',
-    'read as functions: machine "name"(params): takes the ENTER door’s vars as parameters,',
-    'EXIT parts return, and call sites pass their ⇣ args inline (name(port ← SOURCE.part)).',
-    'A machine with several EXIT doors prints one block per door, each labelled with the door',
-    'the chain leaves through — the call site reads as the switch it becomes. A part with more',
-    'than one flow wire leaving it prints each of those runs separately, marked ⚠ because the',
-    'design really does enqueue both.',
-    'A CODE part prints its own script verbatim under its line, in the language the part names',
-    '— the def’s parameters are its ⇣ inputs and its return values its ⇡ outputs, so the code',
-    'under it is the logic and nothing else restates it. A block whose only line is pass was left',
-    'unwired in the design — that branch or option exists and does nothing; nothing else marks an',
-    'unwired path. Read it in this order: the vocabulary of the parts this brief uses, then what',
+    'Each graph is written as a table of statements inside a fenced code block: one entry per part,',
+    'a part is declared exactly once, and the entry for the part the chain goes to next is written',
+    'one indent deeper — the indentation IS the chain’s step, and { braces } carry what a part does',
+    'rather than where it sits. An entry reads',
+    '  KIND: handle "name" ( ⇣ slots ) -> ( ⇡ slots ) { its operation } [ PORT:successor ]',
+    'a slot reads  type:name ~ SOURCE.part  wired by another part ·  type:name ~ value  the design',
+    'typed on a card ·  type:name  alone when nothing in the design wires it; a ⇡ slot names the',
+    'EXIT door it belongs to, as  type:name @ "door". The braces hold the part’s own operation: a',
+    'machine’s or sub-graph’s parts inside the braces of its call site, a CODE part’s script verbatim',
+    'inside them, and the part’s own logic written as code where the design has one (result=a+b,',
+    'if a==b / else, for item in arr). Where the chain goes on rides on the closing brace as',
+    '[ PORT:slug ] — PORT is the name the design gives that exit (an IF arm, a machine’s EXIT door,',
+    'a CHOICE option, a loop’s iter/end) and is left out for the plain out port, so a part with',
+    'several successors names them where it is declared rather than in a block below. Those are',
+    'alternatives, so they carry no ⚠: only two flow wires leaving the SAME port do, because those',
+    'really do enqueue two events at once, and that second run prints at the end of the run above',
+    'it, marked ⚠. A closing brace with no [ ] list has an arm or body the design left unwired —',
+    'it does nothing, as an unwired branch does in code, so nothing else marks an unwired path.',
+    'A line marked # → is the chain hopping back to a part declared above: the stair is stepped in',
+    'walk order, not an order of the data, so the block above is that part’s only entry and a slot',
+    'may read a value printed further down. Parts under',
+    '  # declared here, reached by no chain — the slots above read their ⇡ values',
+    'join no chain but hand a value to something that does, so their slots stay resolvable. A ƒ',
+    'keeps its own section, because every call site shares one body. A CODE part names its language',
+    'on the entry line and carries its script verbatim inside its braces — the def’s parameters are',
+    'its ⇣ inputs and its return values its ⇡ outputs, so the script is the logic and nothing else',
+    'restates it.',
+    'Read it in this order: the vocabulary of the parts this brief uses, then what',
     'the design is made of (systems, data types, shared state), then the programs, then the Curio',
     'features that carry them — first the engine’s own primitives, then how this design’s canvases',
     'and its individual parts become those primitives. Content the design never reaches is left',
