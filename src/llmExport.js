@@ -1,27 +1,22 @@
 // LLM export — flattens the whole document into one self-contained plain-text
-// brief written FOR a language model to read and build a game from: every graph
-// the design states gets a section of its own, written as a table of statements
-// in the design's own code shape (one entry per part, a part declared exactly
-// once, the entry for the next hop written one indent deeper so the indentation
-// IS the chain's step, { braces } carrying what a part does — its own logic as
-// code, a CODE part's script — and one slot notation covering wired values,
-// values typed on a card and inputs nothing feeds). A machine, a sub-graph and
-// an ƒ are different things the design is made of, so each gets its own section
-// under its own heading rather than riding inside the braces of its call site;
-// the sections are ordered so that everything a section calls is stated above
-// it — ƒs first, then machines, then graphs — and a call site only names the
-// handle whose parts are already on the page.
-// The part reference for the kinds actually used is read BEFORE the tables are,
-// so the vocabulary exists by the time the first chain does. Art assets are
-// a legacy feature: the brief never mentions them. Content the design never
-// reaches (unchained parts, dead values) is culled quietly rather than flagged.
-// A Curio mapping closes the brief in three levels: the engine's own primitives,
-// then how this design's canvases become them, then how each part does — so the
-// model builds the game instead of guessing which Curio construct a part means.
+// brief written FOR a language model to read and build a Curio game from, in a
+// fixed document shape the design fills: a Document Brief, a Graph Type Brief
+// (what Nodes/Flow/Machine/Function graphs are), the Dependencies, Data types,
+// Static Functions and Ledger Records the design leans on (Imported vs Custom),
+// then the Graph Definitions — one section per graph, Function Graphs, Machine
+// Graphs and Flow Graphs each under their own heading, ordered so everything a
+// section calls is stated above it. Inside a section every part is one entry in
+// the design's own node syntax — slug, ⇣/⇡ slots with one ~ notation for wired
+// values and card values, { braces } carrying the part's operation, and
+// [ transition:slug ] naming what runs next — declared exactly once, printed
+// flat in walk order. Art assets are legacy: the brief never mentions them, and
+// content the design never reaches (unchained parts, dead values, whole unused
+// canvases) is culled quietly rather than flagged. A Curio Engine Primitives
+// section closes the brief with the engine's own words for the parts' shapes.
 // Not re-importable — this is the communication artifact, written so it stands
 // alone: the model building from it is never handed the .json, so every handle
 // the brief uses has to resolve inside the brief itself.
-import { kindMeta, dataPorts, assetIcon, assetLabel, resolveCall, typedValue, MATH } from './model.js'
+import { kindMeta, dataPorts, assetLabel, resolveCall, typedValue, MATH } from './model.js'
 import { validateCode } from './codeLang.js'
 
 const q = (s) => (s === undefined || s === null || s === '' ? '' : `"${s}"`)
@@ -219,7 +214,7 @@ function detail(n, g, doc) {
 // live wire reads has to be declared or that wire would name a part the section
 // never printed. refs collects the machines, sub-graphs and ƒs the parts this
 // section prints call, so the caller can state them before it states this one
-function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
+function graphBody(g, doc, slugs, calledFuncs, refs) {
   const L = [] // the section's chains, printed after the value producers they read
   const labels = makeLabels(g)
   const nodes = g.nodes || []
@@ -229,10 +224,7 @@ function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
   const pad = (i) => '  '.repeat(i)
   const top = 0 // every graph is a section of its own now, so its chains open at the fence
   // a machine/ƒ section's doors frame it even when no chain walks them: ENTER
-  // starts the table and every EXIT is a label the parent's [ ] list prints,
-  // so their kinds belong to the vocabulary the brief opens with
-  if (g.mode === 'machine' || g.mode === 'func')
-    for (const n of nodes) if (n.kind === 'enter' || n.kind === 'exit') kindsUsed.add(n.kind)
+  // starts the table and every EXIT is a label the parent's [ ] list prints
   const ports = (n) => dataPorts(n, doc.assets, doc.funcs || [], g)
   // the name a port wears in a slot or a [ ] list: the name the design gives it,
   // or the EXIT door it belongs to (numbered when that door declares several) —
@@ -446,7 +438,6 @@ function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
         break
       }
       visited.add(cur)
-      kindsUsed.add(n.kind)
       // a FUNC part only earns its ƒ if it was actually written out, not merely
       // present in the graph — a call site nothing reaches calls nothing
       if (n.kind === 'func') {
@@ -568,7 +559,6 @@ function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
       rest.splice(rest.indexOf(n), 1)
       if (ownGraph(n)) refs.nodes.add(n.id)
       if (n.kind === 'func' && n.func) refs.funcs.add(n.func)
-      kindsUsed.add(n.kind)
       if (!pre.length) pre.push(`${pad(top)}# declared here, reached by no chain — the chains below read their ⇡ values`)
       pre.push(head(n, top))
       if (n.kind === 'code' && String(n.code || '').trim()) pre.push(...script(n, top + 1))
@@ -585,232 +575,6 @@ function graphBody(g, doc, slugs, kindsUsed, calledFuncs, refs) {
   }
   return [...(pre.length ? [...pre, ''] : []), ...L, ...(tail.length ? ['', ...tail] : [])]
 }
-const CURIO_HEAD = [
-  '## Curio features — the engine primitives a built game is made of',
-  'Handles in the brief are slugs; each one becomes the Rust name below it,',
-  '  and every name the brief uses is defined in the brief itself — nothing here',
-  '  needs the design file or any other source to look up.',
-  '',
-]
-// the engine's own vocabulary: always printed, because both mappings below are
-// phrased in it
-const CURIO_FEATURES = [
-  '- HABIT → a recurring loop: #[habit] on a struct, run every frame while its Scope.is_enabled()',
-  '  says so. enable()/disable() fire on the transitions into and out of being enabled, tick()',
-  '  is the per-frame body — the graph’s whole chain, written in order. Habits belong to no object:',
-  '  they live for the whole Curio, and the macro registers them, so nothing hand-hooks them.',
-  '- IMPULSE → a one-shot reaction to an event: #[impulse(MyStimulant)] on a struct whose',
-  '  dequeue_event(…, stimulant) runs once when a stimulant it listens for is drained. This is',
-  '  where a graph’s chain lands when the design only runs on an announcement.',
-  '- STIMULANT → the engine’s event type: one #[stimulant] enum whose variants are the events the',
-  '  game can send, passed to SystemComponentDefaultGameplay::<MyStimulant, MyUIEvent> at startup so',
-  '  every event is typed. Sent with nerve.enqueue_event(MyStimulant::V) during a frame, drained at',
-  '  the START of the next frame before anything else; a stimulant that sends another keeps that',
-  '  chain going before the Tick phase resumes.',
-  '- SCOPE → the trait every habit and impulse carries: is_enabled() decides whether it runs,',
-  '  run_on_instance() → NetworkModes::all() which multiplayer instances run it.',
-  '- LEDGER → where the Curio’s state lives: ledger.read::<T>() gives a read-only Rc<T>,',
-  '  ledger.write::<T>(|rec| rec.field = …) edits it. Every ⇣/⇡ value hand-off in the brief ends',
-  '  here or in a facet — a built game has nowhere else to keep a value.',
-  '- RECORD → one struct of that state: #[record(name = "…", ownership = RecordScope::Instance)].',
-  '  Made once when the Curio is created — records are edited, never added or removed — so every',
-  '  field the brief names has to exist at startup. Built-ins come free: SysRecordTime',
-  '  (ledger.time().scaled_delta_time / scaled_time), SysRecordInput, SysRecordCamera, SysRecordScreen.',
-  '- FACET → a property a Form is built from: #[facet] on a struct plus a FieldOverride impl',
-  '  (apply/get_state) so a COMPOSITION and the editor can edit its fields by name. Builders are',
-  '  fluent, Facet::builder()….build(), and a facet alone does nothing: a HABIT queries and edits it.',
-  '- FORM → an object that persists in the world: context.spawner("name").position(…).facet(…).spawn();',
-  '  edit_facet::<T>(|t| …)/get_facet::<T>() reach its properties, .child(…spawn()) adds parts, destroy()',
-  '  ends it. The usability wrapper over the ECS world underneath.',
-  '- COMPOSITION → a serialized Form hierarchy (.comp): components whose type: matches a facet struct',
-  '  name, each field string fed to that facet’s FieldOverride::apply, base: inheriting another one.',
-  '  Spawned with .composition(Some(comp)) — how a repeated or authored object is data, not code.',
-  '- CONTEXT → the world itself: spawner() makes Forms, edit::<(&mut Transform3D, &Foe)>(|q| …) queries',
-  '  them in bulk. A system fn call in the brief is one of these queries.',
-  '- NERVE → the event sender every habit/impulse body is handed: enqueue_event(…) is how one part’s',
-  '  return reaches the next part.',
-  '',
-]
-const CURIO_CANVAS = [
-  // k: the kinds this entry explains; empty = always part of the mapping
-  {
-    k: [],
-    l: [
-      '- FLOW → the game loop itself: one #[habit] whose Scope.is_enabled is the “keep playing” test;',
-      '  its chain, written in order, is that habit’s tick(). Use enable()/disable() for the game’s',
-      '  start and teardown.',
-    ],
-  },
-  {
-    k: [],
-    l: [
-      '- chain hop A → B → nerve.enqueue_event(MyStimulant::B): B is a STIMULANT variant and the',
-      '  IMPULSE listening for it runs B’s body at the start of the next frame — that is what one',
-      '  token walking one hop per step means for the engine.',
-    ],
-  },
-  {
-    k: ['machine'],
-    l: [
-      '- MACHINE / GRAPH → either a #[habit] (recurring: runs every frame while its',
-      '  Scope is enabled) for behaviour that is always live, or a #[impulse(MyStimulant)] (one-shot:',
-      '  reacts to an event) for behaviour that only runs when something announces it. The design',
-      '  chooses; a machine whose doors carry ⇣/⇡ values reads as the impulse. Both self-register',
-      '  by macro, and Scope.run_on_instance() → NetworkModes::all() picks which instances run them.',
-    ],
-  },
-  {
-    k: ['func'],
-    l: [
-      '- FUNC / ƒ → a plain Rust fn, called rather than scheduled: its parameters are the ƒ’s ⇣ inputs',
-      '  and its return its ⇡ outputs, and call sites pass those args inline. No #[habit]/#[impulse],',
-      '  no Scope, no registration — nothing about a ƒ touches the engine’s loop.',
-    ],
-  },
-]
-const CURIO_NODE = [
-  // k: the kinds this entry explains; empty = always part of the mapping
-  {
-    k: ['enter'],
-    l: [
-      '- ENTER door + ⇣ vars → the habit’s/impulse’s inputs: fields of a #[record(ownership = RecordScope::Instance)]',
-      '  written with ledger.write::<T>(|rec| …) before the enqueue, a facet field, or plain fn parameters.',
-    ],
-  },
-  {
-    k: ['exit', 'exitinst'],
-    l: [
-      '- named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum, plus the records that carry',
-      '  its values: the door’s return is nerve.enqueue_event(MyStimulant::door). An EXIT REF re-enqueues',
-      '  that variant — the one the named EXIT already owns, never a second event minted for it.',
-      '  “kills the token” = form.destroy() or stop the habit’s Scope.',
-    ],
-  },
-  {
-    k: ['getg', 'setg'],
-    l: [
-      '- ⚙ GLOBALS → #[record] structs made once at Curio::create() (records are edited, never added):',
-      '  read with ledger.read::<T>() (a read-only Rc<T>). Built-ins are yours for free: SysRecordTime',
-      '  (ledger.time().scaled_delta_time / scaled_time), SysRecordInput, SysRecordCamera, SysRecordScreen.',
-    ],
-  },
-  {
-    k: [],
-    l: [
-      '- DATA TYPE (Foe { hp: int, pos: Vec }) → a #[facet] struct + FieldOverride::apply/get_state when a',
-      '  .comp composition must edit it; a plain struct or record field set when only code touches it.',
-      '  Vec → Vector3/Vector2, int → i32, float → f32, bool → bool, Foe[] → Vec<Form> or an ECS query.',
-    ],
-  },
-  {
-    k: ['var'],
-    l: [
-      '- VAR “hero” → context.spawner("hero").position(…).facet(Facet::builder()….build()).spawn();',
-      '  hold the Form on the habit struct, destroy() it in disable(). A VAR of ⚙/record fields is a write.',
-    ],
-  },
-  {
-    k: [],
-    l: [
-      '- A part’s ( ⇣ slots ) and ( ⇡ slots ) — each one  type:name ~ SOURCE.part  wired,  type:name ~ value',
-      '  the design typed on the card, or  type:name  alone fed by nothing — are its value hand-offs:',
-      '  read the producer’s record/facet, then write it in or pass it; the ~ side names exactly which part',
-      '  hands what over or what value lands in the slot, and  @ "door"  marks the EXIT door a ⇡ value',
-      '  leaves its machine through. A call site’s own slots ARE its arguments, so a ƒ’s parameters and a',
-      '  machine’s door vars are filled by the same slots the parts above feed it.',
-    ],
-  },
-  {
-    k: ['action'],
-    l: [
-      '- ACTION (chain waits for a click) → ledger.read::<SysRecordInput>(); raw.get_button(&ButtonCode::KeyW).is_down',
-      '  for physical keys, or map logical names once in InputMapping::new(…) and read',
-      '  mapped[seat].get_button_or_default("paddle_up") — the seat index is the multiplayer player.',
-    ],
-  },
-  {
-    k: ['choice'],
-    l: [
-      '- CHOICE options → each option is an input-mapped button that gates which stimulant gets enqueued;',
-      '  an option with no name in the part’s [ ] list enqueues nothing, so the game waits.',
-    ],
-  },
-  {
-    k: ['condition', 'ifb', 'and', 'or', 'for', 'foreach'],
-    l: [
-      '- condition / IF / AND / OR / for / foreach → plain Rust if / match / for / while in the habit or',
-      '  impulse body; foreach over an array of Forms = context.edit::<(&mut Transform3D, &Foe)>(|q| for (t, f) in q { … }).',
-      '  The arm or body the chain takes is stepped one indent deeper and named on the closing brace as',
-      '  [ TRUE:slug ] / [ iter:slug ] / [ "door":slug ]; an option with no name in its [ ] list enqueues',
-      '  nothing, and the design’s if / else pair prints inside the part’s own braces.',
-    ],
-  },
-  {
-    k: ['add', 'sub', 'mul', 'div', 'mod', 'append', 'join', 'remove', 'removeat', 'sort', 'clone', 'inspect'],
-    l: [
-      '- math (+ − × ÷ %, with a  type:name ~ 1  slot for an operand the design typed on the card rather than',
-      '  wired, and written inside its braces as  result=a+b) and',
-      '  append / join / remove / removeat / sort / clone / INSPECT → plain Rust on the values the brief names: + - * / %,',
-      '  push / concat / drop / sort, a by-value copy, a field read. They are expressions inside the body,',
-      '  never engine calls of their own.',
-    ],
-  },
-  {
-    k: ['code'],
-    l: [
-      '- CODE part (its script is printed inside its own braces, verbatim) → the design wrote the logic itself:',
-      '  translate it statement by statement into the habit/impulse body or a plain Rust fn — its def',
-      '  parameters are the ⇣ inputs and its return values the ⇡ outputs. Keep its arithmetic and control',
-      '  flow; replace only the reads/writes the brief already names with the ledger or facet calls it lists.',
-      '  Where its script carries a ⚠ line under it, the design’s own validator called that script broken:',
-      '  fix the logic once and say in a comment what you fixed — do not ship the fault.',
-    ],
-  },
-  {
-    k: ['getledger', 'setledger'],
-    l: [
-      '- GET LEDGER / SET LEDGER (system ledger variables, listed up top under Shared',
-      '  state) → the ledger record for that system: read with ledger.read::<T>() and write with',
-      '  ledger.write::<T>(|rec| rec.field = …) — records are made once at Curio::create() and edited, never added.',
-    ],
-  },
-  {
-    k: ['syscall', 'event', 'load', 'unload', 'input'],
-    l: ['- system fn call (roster.foes()) → an ECS query over the context, not a lookup table; user fns are facets.'],
-  },
-  {
-    k: ['text', 'todo'],
-    l: ['- TEXT frame / TODO part → a comment and a // todo in the generated code: they carry intent, not logic.'],
-  },
-  {
-    k: [],
-    l: [
-      '- ⚠ lines (a second flow wire leaving one part on the port it already runs, a flow wire into a',
-      '  deleted part, a script the validator calls broken) → the document itself says this: state the',
-      '  choice you made in a comment, and never invent an engine call the brief did not name.',
-    ],
-  },
-]
-
-// the mapping only carries what this brief actually has: the engine vocabulary is
-// always there, the canvas and node entries only for kinds the walk printed
-const keep = (e, kinds) => !e.k.length || e.k.some((x) => kinds.has(x))
-const curioOf = (kinds) =>
-  [
-    ...CURIO_HEAD,
-    ...CURIO_FEATURES,
-    '## Canvas → Curio feature — how the design’s own canvases become engine constructs',
-    ...CURIO_CANVAS.flatMap((e) => (keep(e, kinds) ? e.l : [])),
-    '',
-    '## Node → Curio feature — what each part in the tables above becomes',
-    ...CURIO_NODE.flatMap((e) => (keep(e, kinds) ? e.l : [])),
-    '',
-    'Startup shape: Curio::create().identity(…).plugin(SystemComponentDefaultTime/Graphics/Input/',
-    'Networking/Gameplay::<MyStimulant, MyUIEvent>::new()).formation(Formation::template_local_single(…)).imbue(),',
-    'with #[curio_entry] on the fn that returns it — every habit, impulse, facet and record is macro-registered,',
-    'so wiring the brief means declaring the parts, not hand-hooking them.',
-    '',
-  ]
 
 export function exportForLLM(doc) {
   const out = []
@@ -863,11 +627,9 @@ export function exportForLLM(doc) {
     for (const f of doc.funcs || []) slugWalk(f.graph || { nodes: [] }, `fn_${slugify(f.name || '') || 'fn'}`)
   }
 
-  // the programs are lowered first and kept aside: the vocabulary section that
-  // opens the brief can only be written once the walk has decided which kinds
-  // survive
+  // the programs are lowered first and kept aside: they ride the brief only
+  // once the walk has decided which sections exist at all
   const body = []
-  const kindsUsed = new Set()
 
   // shared state the brief names: globals its GET/SET GLOBAL parts read and the
   // system ledger variables its GET/SET LEDGER parts name — declared values no
@@ -915,7 +677,7 @@ export function exportForLLM(doc) {
       nodes: new Set(),
       funcs: new Set(),
     }
-    const lines = graphBody(q.graph, doc, slugs, kindsUsed, calledFuncs, refs)
+    const lines = graphBody(q.graph, doc, slugs, calledFuncs, refs)
     const deps = new Set()
     for (const nid of refs.nodes) {
       const owner = (q.graph.nodes || []).find((x) => x.id === nid)
@@ -964,11 +726,7 @@ export function exportForLLM(doc) {
     remaining.delete(id)
   }
 
-  const groupOf = [
-    '## Defined functions — ƒ isolated bodies a FUNC part calls by name',
-    '## Machines — each machine’s own chain, in a section stated before the section that runs it',
-    '## Graphs — one entry per part, stepped in the order its chain runs',
-  ]
+  const groupOf = ['## Function Graphs', '## Machine Graphs', '## Flow Graphs']
   let lastRank = -1
   for (const id of order) {
     const s = secs.get(id)
@@ -995,144 +753,150 @@ export function exportForLLM(doc) {
   }
   if (order.length) body.push('') // a blank line closes the last section before the mapping
 
-  out.push(`# Game design brief — ${doc.name || 'Untitled Design'}`)
+  out.push('# Document Brief')
   out.push(
     'Exported from loopdoc-composer as a plain-text reading of a node-graph design.',
-    'This brief is the whole design and the only thing a model gets: no design file,',
-    'no project data, no other source is available while it builds — every handle it',
-    'names (part slugs, systems, ledger variables, data types) is defined in it, and a',
-    'value the design types on a card is printed rather than left to infer.',
-    'Two canvases exist: FLOW graphs (control flow, one token walking the chain) and',
-    'MACHINES (chain execution: ENTER/EXIT doors frame the chain, wires carry it forward,',
-    'data wires ⇣/⇡ carry typed values between parts). A token moves one hop per step;',
-    'ENTER doors start machine chains; flow graphs run from their entry.',
-    'Every graph the design states gets a section of its own — a ƒ, a machine, a sub-graph and the',
-    'flow graph each open under their own heading, with their own fenced table inside: one entry per',
-    'part, a part declared exactly once, and the entry for the part the chain goes to next written',
-    'one indent deeper — the indentation IS the chain’s step, and { braces } carry what a part does',
-    'rather than where it sits. Sections are ordered so everything a section calls is stated above',
-    'it — ƒs, then machines, then graphs — so a call site never has to hold a name until its parts',
-    'appear below: it only writes  handle — its own parts are stated in the section for it above. An',
-    'entry reads',
-    '  KIND: handle "name" ( ⇣ slots ) -> ( ⇡ slots ) { its operation } [ PORT:successor ]',
-    'a slot reads  type:name ~ SOURCE.part  wired by another part ·  type:name ~ value  the design',
-    'typed on a card ·  type:name  alone when nothing in the design wires it; a ⇡ slot names the',
-    'EXIT door it belongs to, as  type:name @ "door". The braces hold the part’s own operation: a',
-    'CODE part’s script verbatim inside them, and the part’s own logic written as code where the',
-    'design has one (result=a+b, if a==b / else, for item in arr). Where the chain goes on rides on',
-    '[ PORT:slug ] — PORT is the name the design gives that exit (an IF arm, a machine’s EXIT door,',
-    'a CHOICE option, a loop’s iter/end) and is left out for the plain out port, so a part with',
-    'several successors names them where it is declared rather than in a block below. Those are',
-    'alternatives, so they carry no ⚠: only two flow wires leaving the SAME port do, because those',
-    'really do enqueue two events at once, and that second run prints at the end of the run above',
-    'it, marked ⚠. A closing brace with no [ ] list has an arm or body the design left unwired —',
-    'it does nothing, as an unwired branch does in code, so nothing else marks an unwired path.',
-    'A line marked # → is the chain hopping back to a part declared above: the stair is stepped in',
-    'walk order, not an order of the data, so the block above is that part’s only entry and a slot',
-    'may read a value printed further down. Parts under',
-    '  # declared here, reached by no chain — the chains below read their ⇡ values',
-    'join no chain but hand a value to something that does, so they are printed above the chains',
-    'that read them, and their slots stay resolvable. Every section is stated after the sections',
-    'it calls into, so a ƒ body, a machine body and a sub-graph are all on the page before the',
-    'call site that names their handle. A CODE part names its language',
-    'on the entry line and carries its script verbatim inside its braces — the def’s parameters are',
-    'its ⇣ inputs and its return values its ⇡ outputs, so the script is the logic and nothing else',
-    'restates it.',
-    'Read it in this order: the vocabulary of the parts this brief uses, then what',
-    'the design is made of (systems, data types, shared state), then its programs — one section per',
-    'graph, ƒs first, then machines, then graphs, each stated after everything it calls — and then',
-    'the Curio features that carry them: first the engine’s own primitives, then how this design’s',
-    'canvases and its individual parts become those primitives. Content the design never reaches',
-    'is left out of the brief — if it is not here, it is not in the design.',
+    'This document is designed to be instructions for an LLM to build a game using',
+    'CurioEngine, a custom ECS-hybrid game engine written in Rust. The most up to date',
+    'CurioEngine can be found here https://github.com/dumpstertree/curio-engine.',
     '',
   )
 
-  if (doc.notes?.business || doc.notes?.mood) {
-    out.push('## Notes')
-    if (doc.notes.business) out.push(`business: ${doc.notes.business}`)
-    if (doc.notes.mood) out.push(`mood: ${doc.notes.mood}`)
-    out.push('')
-  }
+  out.push('# Graph Type Brief')
+  out.push('## Nodes')
+  out.push(
+    "Nodes are the unit in which a a Graph is made up. They all share the ability for a single flow-input, and n 0-n outputs. Some graphs will allow you to connect multiple flow-inputs to a single flow-output and some will only allow one to one. Flow outputs can also be left disconnected which just results in the end of that line of logic. The nodes a graph can contain will vary from graph to graph but they will all have access to an ENTRY and EXIT. ENTRY is where logic starts and EXIT is where logic terminates. EXIT's will return the flow back to the parent graph and exit through its flow-output.",
+  )
+  out.push('')
+  out.push('## Flow Graph')
+  out.push(
+    'A state machine used to compose the flow of data through the application and defines the larger game loop.',
+    '- One required ENTER',
+    '- 0-n optional EXITS.',
+    '- One flow-input connection allowed per flow-output port',
+    '- Can contain Flow, Machine and Function Graphs.',
+    '',
+  )
+  out.push('## Machine Graph')
+  out.push(
+    'A async state machine that is entirely static. It ingests data and runs complex routing logic and outputs updated data and state changes. This is used to define game mechanics.',
+    '- One required ENTER',
+    '- 0-n optional EXITS.',
+    '- Mutiple flow-input connection allowed per flow-output port',
+    '- Can contain Function Graphs',
+    '',
+  )
+  out.push('## Function Graph')
+  out.push(
+    'A reusable static function.',
+    '- One required ENTER',
+    '- One required EXITS.',
+    '- Mutiple flow-input connection allowed per flow-output port',
+    '- Can contain Function Graphs',
+    '',
+  )
 
-  out.push('## Part reference — the kinds used by the parts this brief carries')
-  // the kind hints live in model.js and still name the legacy asset layer;
-  // this brief describes a design without that feature, so the clauses naming
-  // assets are trimmed here rather than in the editor's own vocabulary
-  const hintOf = (k) => {
-    const m = kindMeta({ kind: k })
-    let hint = (m.hint || '').replace(/ and 📦 assets publish ⇡ inside and appear as/, ' appear as')
-    if (/assets?|📦/i.test(hint))
-      hint = hint.split(' · ').filter((c) => !/assets?|📦/i.test(c)).join(' · ')
-    return `${m.label || k} — ${hint}`
+  out.push('# Dependencies')
+  out.push(
+    'Graphs will reference loopdoc.yaml files that act as headers for external packages so they can be wired into the graphs.',
+    'Packages can contain Types, StaticFunctions and LedgerRecords; these will be folded into the master lists with custom built.',
+    '',
+  )
+  const systems = (doc.assets || []).filter((a) => a.kind !== 'art')
+  const importedTypes = (doc.types || []).filter((t) => (t.name || '').includes(':'))
+  const customTypes = (doc.types || []).filter((t) => !(t.name || '').includes(':'))
+  // the packages this design leans on: the systems it wires into, plus the
+  // namespaces its imported types come from — loopdoc has no header file to
+  // point at yet, so the url stays not_yet_implemented and the design's own
+  // note for a system rides as its description when it gives one
+  const pkgs = []
+  for (const a of systems) pkgs.push({ name: a.name || '(unnamed)', note: a.note || '' })
+  for (const t of importedTypes) {
+    const ns = (t.name || '').split(':')[0]
+    if (!pkgs.some((p) => p.name === ns)) pkgs.push({ name: ns, note: '' })
   }
-  for (const k of [...kindsUsed].sort()) out.push(`- ${hintOf(k)}`)
+  for (const p of pkgs)
+    out.push(`- ${p.name}`, `  url: <not_yet_implemented>`, `  description: ${p.note || '<not_yet_implemented>'}`)
   out.push('')
 
-  const systems = (doc.assets || []).filter((a) => a.kind !== 'art')
-  if (systems.length) {
-    out.push('## Systems — what the engine hands this design, and the fns it can call')
-    for (const a of systems) {
-      out.push(`- ${assetIcon(a.kind)} ${a.name || '(unnamed)'} (${a.kind})${a.note ? ` — ${a.note}` : ''}`)
-      for (const f of a.api || [])
-        out.push(
-          `  - fn ${f.name || '?'}( ${(f.inputs || []).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ')}) ⇡ ${
-            (f.outputs || []).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ') || 'void'
-          }${f.desc ? ` — ${f.desc}` : ''}`,
-        )
-    }
-    out.push('')
-  }
+  const tline = (t) => `- ${t.name || '(unnamed)'} { ${(t.fields || []).map((f) => `${f.name || '?'}: ${f.typeId || '?'}`).join(', ')} }`
+  out.push('# Data types')
+  out.push('## Imported')
+  for (const t of importedTypes) out.push(tline(t))
+  out.push('')
+  out.push('## Custom')
+  for (const t of customTypes) out.push(tline(t))
+  out.push('')
 
-  if ((doc.types || []).length) {
-    const byNs = new Map()
-    for (const t of doc.types) {
-      const nm = t.name || '(unnamed)'
-      const ns = nm.includes(':') ? nm.split(':')[0] : '(no namespace)'
-      if (!byNs.has(ns)) byNs.set(ns, [])
-      byNs.get(ns).push(t)
-    }
-    out.push('## Data types — grouped by the namespace that owns them')
-    for (const [ns, ts] of byNs) {
-      if (byNs.size > 1) {
-        // a blank line each side of the group label: markdown reads a `- ` line
-        // straight under a bold line as that line's continuation, which swallows
-        // the whole list into the label paragraph
-        out.push(`**${ns}**`)
-        out.push('')
-      }
-      for (const t of ts)
-        out.push(`- ${t.name || '(unnamed)'} { ${(t.fields || []).map((f) => `${f.name || '?'}: ${f.typeId || '?'}`).join(', ')} }`)
-      if (byNs.size > 1) out.push('')
-    }
-    if (byNs.size > 1) out.pop() // the section writes its own trailing blank below
-    out.push('')
-  }
+  out.push('# Static Functions')
+  out.push('## Imported')
+  for (const a of systems)
+    for (const f of a.api || [])
+      out.push(`- fn ${a.name || '?'}.${f.name || '?'}( ${(f.inputs || []).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ')}) ⇡ ${(f.outputs || []).map((v) => `${v.name || '?'}:${v.type || '?'}`).join(', ') || 'void'}${f.desc ? ` — ${f.desc}` : ''}`)
+  out.push('')
+  out.push('## Custom')
+  // only the ƒs a chain actually calls: a body nothing reaches is content this
+  // design does not run, and it earns no line here and no section below
+  for (const f of doc.funcs || []) if (calledFuncs.has(f.id)) out.push(`- ƒ ${f.name || '(unnamed)'}${f.note ? ` — ${f.note}` : ''}`)
+  out.push('')
 
-  const liveVars = (doc.vars || []).filter((v) => usedGlobals.has(v.name || ''))
-  if (liveVars.length || ledgerRefs.size) {
-    out.push('## Shared state — named values every graph & machine reads or writes')
-    for (const v of liveVars) out.push(`- ⚙ global ${v.name || '?'}:${v.type || 'int'} = ${v.value ?? ''}`)
-    for (const [key, r] of ledgerRefs) {
-      const who = [
-        ...(r.read.length ? [`read by ${r.read.join(', ')}`] : []),
-        ...(r.written.length ? [`written by ${r.written.join(', ')}`] : []),
-        // a variable only read here is the engine's, not this design's: say so,
-        // or the reader looks for a write that was never meant to exist
-        ...(r.written.length ? [] : ['no part in this design writes it']),
-      ].join(' · ')
-      out.push(`- system ledger ${key} :${r.type}${who ? ` — ${who}` : ''}`)
-    }
-    out.push('')
+  out.push('# Ledger Records')
+  out.push('## Imported')
+  // a system ledger variable no part writes is the engine's own: the design
+  // only reads it, so it belongs with the imported things
+  for (const [key, r] of ledgerRefs) {
+    if (r.written.length) continue
+    const who = [
+      ...(r.read.length ? [`read by ${r.read.join(', ')}`] : []),
+      'no part in this design writes it',
+    ].join(' · ')
+    out.push(`- system ledger ${key} :${r.type}${who ? ` — ${who}` : ''}`)
   }
-
+  out.push('')
+  out.push('## Custom')
+  // declared values no part touches are content this design does not use
+  for (const v of (doc.vars || []).filter((v) => usedGlobals.has(v.name || '')))
+    out.push(`- ⚙ global ${v.name || '?'}:${v.type || 'int'} = ${v.value ?? ''}`)
+  for (const [key, r] of ledgerRefs) {
+    if (!r.written.length) continue
+    const who = [
+      ...(r.read.length ? [`read by ${r.read.join(', ')}`] : []),
+      `written by ${r.written.join(', ')}`,
+    ].join(' · ')
+    out.push(`- system ledger ${key} :${r.type}${who ? ` — ${who}` : ''}`)
+  }
+  out.push('')
+  out.push('# Graph Definitions')
+  out.push('Nodes are defined in a custom syntax')
+  out.push('```')
+  out.push('NODE_TYPE: slug ( type_a:var_nam_a~val_a, type_b:var_name_b~val_b ) -> (type_c:result_a, type_d:result_b) {')
+  out.push('  // custom data for the node')
+  out.push('} [ transition_a:next_slug_a, transition_b:next_slug_b ]')
+  out.push('```')
+  out.push('')
   out.push(...body)
 
-  out.push(...curioOf(kindsUsed))
+  out.push('# Curio Engine Primitives:')
   out.push(
-    '(end of brief — the text above is the whole design as it stands: every handle it',
-    'uses is defined in it, and the model building from it is given nothing else. Where',
-    'the brief marks a ⚠ the document is undecided or broken there — state what you',
-    'decided and what you fixed, and never invent an engine call the brief did not name.)',
+    'HABIT — #[habit] on a struct, runs every frame while its Scope.is_enabled(); enable()/disable() fire on enable/disable',
+    'transitions, tick() is the per-frame body. → Flow "Main Loop" (is_enabled = "keep playing").',
+    'IMPULSE — #[impulse(MyStimulant)] on a struct whose dequeue_event(…, stimulant) runs once per drained stimulant. → each',
+    'machine (its doors carry values). Scope.run_on_instance() → NetworkModes::all().',
+    'STIMULANT — one #[stimulant] enum of the variants above, passed to SystemComponentDefaultGameplay::<MyStimulant, MyUIEvent>.',
+    'RECORD — #[record(name = "…", ownership = RecordScope::Instance)], made once at Curio::create(); read with ledger.read::<T>(),',
+    'edited with ledger.write::<T>(|rec| rec.field = …). One record per system ledger:',
+    'LevelData { depth: i32, position: CurioCore:Vector2 (package type), map: LevelEngine:Map (package type) }',
+    'InputEngine { input: InputEngine:Input (package type) } — engine-provided, read only',
+    'MATH (a + b), IF (if/else), CODE (translate the printed script statement by statement, keeping its arithmetic and control flow;',
+    'replace only reads/writes with the ledger calls above), INSPECT (field read) → plain Rust inside the body.',
+    'Types: int → i32, float → f32, bool → bool.',
+    '',
+    'Startup shape: Curio::create().identity(…).plugin(SystemComponentDefaultTime/Graphics/Input/',
+    'Networking/Gameplay::<MyStimulant, MyUIEvent>::new()).formation(Formation::template_local_single(…)).imbue(),',
+    'with #[curio_entry] on the fn that returns it — every habit, impulse, facet and record is macro-registered,',
+    'so wiring the brief means declaring the parts, not hand-hooking them.',
+    '',
   )
+  out.push('(end of brief)')
   return out.join('\n')
 }

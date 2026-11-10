@@ -98,27 +98,26 @@ test('llm export — a CODE part carries its own script verbatim', () => {
   assert.ok(t.includes('      def bump(v):') && t.includes('        return v + 1'), 'tab-indented python becomes spaces — the brief stays readable')
   assert.ok(t.includes('CODE: code_blank "blank" {\n        no script written yet — its ports stay'), 'an empty CODE part says so instead of looking truncated')
   assert.ok(t.includes('( int:a ~ var_hp.hp, int:b )'), 'the value feeding the script’s param is a wired slot, and the one nothing feeds is the bare slot')
-  const ref = t.slice(t.indexOf('## Part reference'), t.indexOf('## Graphs'))
-  assert.ok(ref.includes('CODE —'), 'the script kind is explained in the vocabulary')
+  assert.ok(t.includes('CODE (translate the printed script statement by statement'), 'the script kind is mapped onto plain Rust in the engine primitives')
 })
 
-test('llm export — header, notes, types, shared state, systems all land', () => {
+test('llm export — document brief, types, dependencies, ledger records all land', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('# Game design brief — Goblin Depths'))
-  assert.ok(t.includes('cozy dread'), 'mood note carried')
+  assert.ok(t.includes('# Document Brief') && t.includes('curio-engine'), 'the fixed document brief opens the export')
+  assert.ok(!t.includes('cozy dread'), 'the template carries no notes — the design reading is what counts')
   assert.ok(t.includes('Foe { hp: int, pos: Vec }'), 'struct type expanded')
   assert.ok(t.includes('⚙ global depth:int = 0'), 'a global some GET GLOBAL reads is listed')
-  assert.ok(t.includes('fn foes(') && t.includes('foes:Foe[]'), 'system fn signature listed')
-  assert.ok(t.includes('⚙️ roster (system)'), 'systems still carry the brief')
+  assert.ok(t.includes('fn roster.foes(') && t.includes('foes:Foe[]'), 'system fn signature listed under its package')
+  assert.ok(t.includes('- roster\n  url: <not_yet_implemented>'), 'systems land as dependencies')
   assert.ok(!t.includes('🎨') && !t.includes('## Assets'), 'art assets are legacy — the brief never mentions them')
 })
 
 test('llm export — the brief introduces concepts in reading order', () => {
   const t = exportForLLM(doc)
   const at = (s) => t.indexOf(s)
-  assert.ok(at('## Part reference') < at('## Systems') && at('## Systems') < at('## Data types'), 'vocabulary, then the materials')
-  assert.ok(at('## Data types') < at('## Shared state') && at('## Shared state') < at('## Graphs'), 'shared state before the programs that use it')
-  assert.ok(at('## Graphs') < at('## Curio features'), 'the programs then the engine mapping close the brief')
+  assert.ok(at('# Dependencies') < at('# Data types') && at('# Data types') < at('# Static Functions'), 'the materials the graphs lean on come first')
+  assert.ok(at('# Static Functions') < at('# Ledger Records') && at('# Ledger Records') < at('# Graph Definitions'), 'the lists before the programs they name')
+  assert.ok(at('# Graph Definitions') < at('# Curio Engine Primitives:'), 'the programs then the engine mapping close the brief')
   assert.ok(t.includes('```'), 'programs ride in fenced code blocks — their # lines survive markdown intact')
 })
 
@@ -143,7 +142,7 @@ test('llm export — a machine gets its own section, stated before the graph tha
   assert.ok(t.includes('MACHINE: mach_combat "combat" ( int:lives ~ var_hero.hero, int:round ~ getg.depth, int:rank ~ getledger.rank'), 'the call site’s slots still carry the values the machine takes')
   assert.ok(t.includes('mach_combat — its own parts are stated in the section for it above'), 'the call site only names the handle — its parts are already above it on the page')
   assert.ok(t.indexOf('### Machine mach_combat "combat"') < t.indexOf('MACHINE: mach_combat'), 'the machine section is stated before the section that calls it')
-  assert.ok(t.includes('## Machines') && t.indexOf('## Machines') < t.indexOf('## Graphs'), 'machine sections come before the graphs that run them')
+  assert.ok(t.includes('## Machine Graphs') && t.indexOf('## Machine Graphs') < t.indexOf('## Flow Graphs'), 'machine sections come before the graphs that run them')
   assert.ok(!t.includes('📦'), 'assets the door carries are legacy — culled from the brief')
   assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the machine')
   assert.ok(t.includes('for item, index in arr [iter]') && t.includes('end the loop [end]'), 'foreach lowered to a loop header, its iter/end ports named')
@@ -154,7 +153,7 @@ test('llm export — a machine gets its own section, stated before the graph tha
 
 test('llm export — ledger and global reads name what they touch', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('## Shared state — named values every graph & machine reads or writes'), 'shared state gets its own section before the programs')
+  assert.ok(t.includes('# Ledger Records'), 'shared state gets its own section before the programs')
   assert.ok(t.includes('system ledger roster.rank :int — read by getledger'), 'the ledger variable is declared with the part that reads it')
   assert.ok(t.includes('reads system ledger roster.rank (int)'), 'the get part names the ledger variable it reads')
   assert.ok(t.includes('int:rank ~ getledger.rank'), 'the ledger value reaches the call as a wired slot named by its producer')
@@ -168,38 +167,35 @@ test('llm export — unwired paths are not flagged: the code shape carries them'
   assert.ok(!t.includes('has no flow'), 'no per-part note left behind claiming a branch is undecided')
 })
 
-test('llm export — Curio cheatsheet closes the brief', () => {
+test('llm export — the Curio primitives close the brief', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('## Curio features — the engine primitives a built game is made of'), 'the engine vocabulary opens the mapping')
-  assert.ok(t.includes('- HABIT →') && t.includes('- LEDGER →'), 'the primitives are explained in the engine’s own words, not just named')
-  assert.ok(t.includes('## Canvas → Curio feature'), 'the canvases map onto those primitives')
-  assert.ok(t.includes('## Node → Curio feature'), 'and so do the individual parts')
-  assert.ok(t.includes('named EXIT (its ⇡ announce vars) → one variant of the #[stimulant] enum'), 'machine doors map onto events')
-  assert.ok(t.includes('⚙ GLOBALS → #[record] structs'), 'globals map onto records')
-  assert.ok(t.includes('GET LEDGER / SET LEDGER (system ledger variables, listed up top under Shared'), 'the ledger idiom maps onto ledger records')
-  assert.ok(!t.includes('asset.manifest'), 'the cheatsheet no longer routes anything through asset plumbing')
-  assert.ok(t.indexOf('## Curio features') > t.indexOf('## Part reference'), 'cheatsheet closes the brief, after the vocabulary')
+  assert.ok(t.includes('# Curio Engine Primitives:'), 'the engine primitives open the closing section')
+  assert.ok(t.includes('HABIT — #[habit] on a struct') && t.includes('STIMULANT — one #[stimulant] enum'), 'the primitives are explained in the engine’s own words, not just named')
+  assert.ok(t.includes('ledger.read::<T>()'), 'the ledger idiom maps onto record reads and writes')
+  assert.ok(t.includes('Startup shape: Curio::create()'), 'the engine’s own startup registration shape is named')
+  assert.ok(t.includes('Types: int → i32, float → f32, bool → bool.'), 'the data types map onto the engine’s own')
+  assert.ok(!t.includes('asset.manifest'), 'the closing section no longer routes anything through asset plumbing')
+  assert.ok(t.indexOf('# Curio Engine Primitives:') > t.indexOf('# Graph Definitions'), 'the primitives close the brief, after the programs')
 })
 
-test('llm export — part reference covers only kinds used', () => {
+test('llm export — kinds the design never reaches stay out of the programs', () => {
   const t = exportForLLM(doc)
-  const ref = t.slice(t.indexOf('## Part reference'), t.indexOf('## Systems'))
-  assert.ok(ref.includes('ACTION —'), 'used kind explained')
-  assert.ok(ref.includes('FOREACH —'), 'loop kind explained')
-  assert.ok(ref.includes('GET LEDGER —') && ref.includes('GET GLOBAL —'), 'the shared-state kinds are explained')
-  assert.ok(!ref.includes('IF —'), 'the ifb part nothing reaches never brings its kind into the brief')
+  const ref = t.slice(t.indexOf('# Graph Definitions'), t.indexOf('# Curio Engine Primitives:'))
+  assert.ok(!ref.includes('IF: '), 'the ifb part nothing reaches never brings its kind into the programs')
+  assert.ok(ref.includes('MACHINE: mach_combat'), 'a kind a chain does walk is declared inside the programs')
+  assert.ok(!ref.includes('nope1') && !ref.includes('nope2'), 'unchained parts ride nowhere in the programs')
 })
 
 test('llm export — system fn descriptions ride the export', () => {
   const withDesc = structuredClone(doc)
   withDesc.assets[1].api[0].desc = 'every living foe, west to east'
   const t = exportForLLM(withDesc)
-  assert.ok(t.includes('fn foes( ) ⇡ foes:Foe[] — every living foe, west to east'), 'desc appended after the signature')
+  assert.ok(t.includes('fn roster.foes( ) ⇡ foes:Foe[] — every living foe, west to east'), 'desc appended after the signature')
 })
 
 test('llm export — fn description is optional; docs without one export unchanged', () => {
   const t = exportForLLM(doc)
-  assert.ok(t.includes('fn foes( ) ⇡ foes:Foe[]\n'), 'no desc, no trailing dash')
+  assert.ok(t.includes('fn roster.foes( ) ⇡ foes:Foe[]\n'), 'no desc, no trailing dash')
 })
 
 // a design the LLM reviewer tore into: three machine exits, a part that fans out
@@ -290,13 +286,13 @@ test('llm export — a script the validator calls broken says so', () => {
   assert.ok(t.includes('    def move(location):') && t.includes('        delta_x += 1'), 'the script still rides inside its part’s braces verbatim, its own indentation kept relative')
 })
 
-test('llm export — handles read as the design says, and the cheatsheet only maps used parts', () => {
+test('llm export — handles read as the design says, and the primitives stand even where kinds are missing', () => {
   const t = exportForLLM(crit)
   assert.ok(t.includes('step_display_tiles (note: "display tiles")'), 'an unnamed part\'s handle comes from its note, so it reads as what it is for')
   assert.ok(t.includes('- system ledger InputEngine.input :InputEngine:Input — read by getledger · no part in this design writes it'), 'an engine-only ledger value says nobody writes it')
-  assert.ok(t.includes('## Curio features — the engine primitives a built game is made of'), 'the mapping section opens with the engine vocabulary')
-  assert.ok(t.includes('- CODE part (its script is printed inside its own braces, verbatim)'), 'a kind this brief uses maps onto the engine')
-  assert.ok(!t.includes('CHOICE options') && !t.includes('VAR “hero”'), 'mappings for kinds this brief never carries are left out')
+  assert.ok(t.includes('# Curio Engine Primitives:'), 'the closing section carries the engine vocabulary')
+  assert.ok(t.includes('CODE (translate the printed script statement by statement'), 'a kind this brief uses maps onto the engine')
+  assert.ok(!t.includes('CHOICE options') && !t.includes('VAR “hero”'), 'the fixed text names no construct this design never carries')
   assert.ok(!t.includes('- FUNC / ƒ'), 'a whole canvas this design has no ƒ in is left out too')
   assert.ok((t.match(/```/g) || []).length % 2 === 0, 'fences stay balanced with the new blocks inside them')
 })
