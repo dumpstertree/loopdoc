@@ -48,16 +48,40 @@ export default function App() {
   const handleRef = useRef(null)
   const docRef = useRef(doc)
   docRef.current = doc
+  const historyRef = useRef({ past: [], future: [] })
   // live session values for ⚙ globals — shared by every machine sim so scene
   // changes hand state straight through (depth, position, flags). Fresh page
   // load, new document or open file starts a fresh session from defaults.
   const gstore = useMemo(makeGlobalsStore, [])
 
   const commit = (next) => {
+    const prev = docRef.current
+    if (prev === next) return
+    const past = historyRef.current.past
+    past.push(prev)
+    if (past.length > 100) past.shift()
+    historyRef.current.future = []
     setDoc(next)
     setDirty(true)
   }
   const updateGraph = (next) => commit(replaceGraph(docRef.current, path, next))
+
+  const undo = () => {
+    const h = historyRef.current
+    if (!h.past.length) return
+    const prev = h.past.pop()
+    h.future.push(docRef.current)
+    setDoc(prev)
+    setDirty(true)
+  }
+  const redo = () => {
+    const h = historyRef.current
+    if (!h.future.length) return
+    const next = h.future.pop()
+    h.past.push(docRef.current)
+    setDoc(next)
+    setDirty(true)
+  }
 
   // autosave to localStorage (debounced)
   useEffect(() => {
@@ -253,6 +277,7 @@ export default function App() {
       }
       const d = parseDoc(text)
       gstore.reset()
+      historyRef.current = { past: [], future: [] }
       setDoc(d)
       setPath([])
       setTab('design')
@@ -267,6 +292,7 @@ export default function App() {
     if (!window.confirm('Start a new empty document? Unsaved changes are lost.')) return
     handleRef.current = null
     gstore.reset()
+    historyRef.current = { past: [], future: [] }
     setDoc(newDoc())
     setPath([])
     setDirty(false)
@@ -274,13 +300,50 @@ export default function App() {
   }
   useEffect(() => {
     const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      const el = document.activeElement
+      const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
         e.preventDefault()
         doSave()
+        return
+      }
+      if (typing) return
+      if (mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        undo()
+        return
+      }
+      if ((mod && (e.key === 'y' || e.key === 'Y')) || (mod && e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
+        e.preventDefault()
+        redo()
+        return
+      }
+      if (e.altKey && !mod && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        undo()
+        return
+      }
+      if (e.altKey && !mod && e.key === 'ArrowRight') {
+        e.preventDefault()
+        redo()
+      }
+    }
+    const onMouse = (e) => {
+      if (e.button === 3) {
+        e.preventDefault()
+        undo()
+      } else if (e.button === 4) {
+        e.preventDefault()
+        redo()
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('mouseup', onMouse)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mouseup', onMouse)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
