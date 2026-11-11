@@ -32,9 +32,9 @@ const doc = {
             { id: 'ev2', name: 'round', type: 'int' },
             { id: 'ev3', name: 'rank', type: 'int' },
           ], assets: [{ id: 'ea1', asset: 'as1', name: 'sprites' }] },
-          { id: 'm2', kind: 'action', name: 'gold', x: 0, y: 0 },
+          { id: 'm2', kind: 'syscall', name: 'gold', x: 0, y: 0 },
           { id: 'm3', kind: 'foreach', x: 0, y: 0, itemType: 'Foe' },
-          { id: 'm4', kind: 'action', name: 'spend', x: 0, y: 0 },
+          { id: 'm4', kind: 'syscall', name: 'spend', x: 0, y: 0 },
           { id: 'm5', kind: 'exit', name: 'victory', x: 0, y: 0 },
           { id: 'm6', kind: 'todo', name: 'balance', x: 0, y: 0, todos: [{ id: 'td1', text: 'tune gold', done: true }, { id: 'td2', text: 'boss drop', done: false }] },
         ],
@@ -144,9 +144,9 @@ test('llm export — a machine gets its own section, stated before the graph tha
   assert.ok(t.indexOf('### Machine mach_combat "combat"') < t.indexOf('MACHINE: mach_combat'), 'the machine section is stated before the section that calls it')
   assert.ok(t.includes('## Machine Graphs') && t.indexOf('## Machine Graphs') < t.indexOf('## Flow Graphs'), 'machine sections come before the graphs that run them')
   assert.ok(!t.includes('📦'), 'assets the door carries are legacy — culled from the brief')
-  assert.ok(!t.includes('action_gold'), 'an action nothing chains to is culled out of the machine')
+  assert.ok(!t.includes('syscall_gold'), 'a part nothing chains to is culled out of the machine')
   assert.ok(t.includes('for item, index in arr [iter]') && t.includes('end the loop [end]'), 'foreach lowered to a loop header, its iter/end ports named')
-  assert.ok(t.includes('    ACTION: action_spend "spend" {') && t.includes('      chain waits here for a click'), 'inside its own section, the loop body is stepped one indent deeper than the loop')
+  assert.ok(t.includes('    SYS CALL: syscall_spend "spend" {') && t.includes('      calls'), 'inside its own section, the loop body is stepped one indent deeper than the loop')
   assert.ok(t.includes('EXIT: exit_victory "victory" {'), 'an EXIT prints as the part that ends its chain')
   assert.ok(t.includes('[x] tune gold') && t.includes('[ ] boss drop'), 'todo checklist with ticks')
 })
@@ -218,7 +218,7 @@ const crit = {
     name: 'Main Loop',
     entry: 'e1',
     nodes: [
-      { id: 'e1', kind: 'event', name: '', x: 0, y: 0, calls: [{ asset: 'lv', fn: 'gen' }] },
+      { id: 'e1', kind: 'syscall', name: '', x: 0, y: 0, calls: [{ asset: 'lv', fn: 'gen' }] },
       { id: 'disp', kind: 'step', name: '', x: 0, y: 0, note: 'display tiles' },
       { id: 'gl_in', kind: 'getledger', name: '', x: 0, y: 0, lRef: 'ie', lName: 'input', lType: 'InputEngine:Input' },
       { id: 'gl_d', kind: 'getledger', name: '', x: 0, y: 0, lRef: 'lv', lName: 'depth', lType: 'int' },
@@ -276,7 +276,7 @@ test('llm export — a multi-exit machine names each door on its closing brace',
 test('llm export — values the design typed instead of wiring are printed', () => {
   const t = exportForLLM(crit)
   assert.ok(t.includes('ADD: add ( num:a ~ 1, num:b ~ inspect.x ) -> ( int:result ) {'), 'the card value is in the brief, so +1 is not a guess, and a wired slot names its producer')
-  assert.ok(t.includes('EVENT: event ( int:min_w ) -> ( int:map ) {'), 'a call parameter nothing feeds prints as a bare slot')
+  assert.ok(t.includes('SYS CALL: syscall ( int:min_w ) -> ( int:map ) {'), 'a call parameter nothing feeds prints as a bare slot')
   assert.ok(t.includes('num:b ~ inspect.x') && t.includes('INSPECT: inspect ( any:obj ) -> ( float:x )'), 'the value producer a live wire reads rides in the brief — no dangling handle')
 })
 

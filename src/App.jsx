@@ -10,7 +10,7 @@ import Traverse from './Traverse.jsx'
 import BusinessDashboard from './BusinessDashboard.jsx'
 import { newDoc, parseDoc, serializeDoc, removeAssetRefs, renameTypeInDoc, makeGlobalsStore, resolveGraph, replaceGraph } from './model.js'
 import { exportForLLM } from './llmExport.js'
-import { runDRC } from './drc.js'
+import { runDRC, validateDoc, cleanDoc } from './drc.js'
 import { parseLoopDoc, registerPackages, corsUrl } from './loopdoc.js'
 
 const LS_KEY = 'loopdoc-composer:doc'
@@ -33,6 +33,9 @@ export default function App() {
   const [showTraverse, setShowTraverse] = useState(false)
   const [showDRC, setShowDRC] = useState(false)
   const [drcScope, setDrcScope] = useState('doc') // 'doc' | 'graph'
+  const [drcSel, setDrcSel] = useState(null) // part a DRC jump selects, handed to the canvas as focus
+  const [drcValidate, setDrcValidate] = useState(false) // ⚿ also merge whole-doc structural validation — catches floating data
+  const [drcClean, setDrcClean] = useState(null) // ✂ last clean-up summary, shown on the button
   const [menu, setMenu] = useState(false) // ☰ dial: opens the menu modal
   const [settings, setSettings] = useState(false) // ⚙ dial: opens the settings modal
   const [rail, setRail] = useState(true) // the vertical add-buttons rail on the left of canvases
@@ -311,9 +314,13 @@ export default function App() {
     return [...doc.assets, ...gen]
   }, [doc.assets, graph.nodes])
 
-  const drc = useMemo(() => (showDRC ? runDRC(doc, drcScope === 'graph' ? path : null) : []), [doc, showDRC, drcScope, path])
+  // ⚿ validate bolts the whole-doc structural scan onto the panel's list
+  const drcStruct = useMemo(() => (drcValidate ? validateDoc(doc) : []), [doc, drcValidate])
+  const drc = useMemo(() => (showDRC ? [...runDRC(doc, drcScope === 'graph' ? path : null), ...drcStruct] : []), [doc, showDRC, drcScope, path, drcStruct])
   const drcErr = drc.filter((f) => f.sev === 'error').length
   const drcWarn = drc.filter((f) => f.sev === 'warn').length
+  const drcStructErr = drcStruct.filter((f) => f.sev === 'error').length
+  const drcStructWarn = drcStruct.filter((f) => f.sev === 'warn').length
 
   // registry mutations shared by the ASSETS and DATA tabs
   const updateAssets = (fnOrList) =>
@@ -372,7 +379,7 @@ export default function App() {
               setSettings(false)
             }
           }}
-          title="menu — open · save · export llm · new · check · traverse"
+          title="menu — open · save · export llm · new · check · validate · clean · traverse"
         >
           ☰
         </button>
@@ -420,6 +427,7 @@ export default function App() {
             className="modal-item"
             onClick={() => {
               setShowDRC(!showDRC)
+              if (showDRC) setDrcValidate(false) // closing the panel also drops ⚿
               setMenu(false)
             }}
             title="design rule check — scans the open graph or the whole doc"
@@ -432,6 +440,42 @@ export default function App() {
               </span>
             )}
             {showDRC && drc.length === 0 && <span className="drc-badge drc-clean-badge">✓</span>}
+          </button>
+          <button
+            className="modal-item"
+            onClick={() => {
+              setShowDRC(true)
+              setDrcScope('doc')
+              setDrcValidate(true)
+              setMenu(false)
+            }}
+            title="validate every node in the whole doc — integrity checks that catch floating data left by edits (duplicate part ids, mounted-twice graphs, dead group links, never-called ƒ bodies); results ride in the ⚑ panel, click one to select the suspect part"
+          >
+            ⚿ validate
+            {drcValidate && (drcStruct.length > 0) && (
+              <span className="drc-badge">
+                {drcStructErr ? <b className="drc-err">✕{drcStructErr}</b> : null}
+                {drcStructWarn ? <b className="drc-warn">⚠{drcStructWarn}</b> : null}
+              </span>
+            )}
+            {drcValidate && drcStruct.length === 0 && <span className="drc-badge drc-clean-badge">✓</span>}
+          </button>
+          <button
+            className="modal-item"
+            onClick={() => {
+              const cleaned = cleanDoc(doc)
+              if (cleaned.total) commit(cleaned.doc)
+              setDrcClean(cleaned) // { doc, cut, total } — the button reads total
+              setMenu(false)
+            }}
+            title="✂ fix what ⚿ flags — drop duplicate part copies (the first copy wins) with their wires, unhook twice-mounted graphs, drop parts of an unknown kind, clear group links to a gone frame; ƒ bodies are never removed"
+          >
+            ✂ clean up
+            {drcClean && (
+              drcClean.total
+                ? <span className="drc-badge"><b className="drc-err">✂{drcClean.total}</b></span>
+                : <span className="drc-badge drc-clean-badge">✓ nothing to clean</span>
+            )}
           </button>
           <button className="modal-item" onClick={() => { setShowTraverse(!showTraverse); setMenu(false) }} title="walk the doc part by part, one screen at a time">
             ▶ traverse
@@ -446,76 +490,85 @@ export default function App() {
           className="modal modal-settings"
           onClick={(e) => { if (e.target === e.currentTarget) setSettings(false) }}
         >
-          <div className="modal-title">settings — styles.json · ⌁ loopdoc files</div>
-          <textarea
-            className="styles-edit"
-            spellCheck={false}
-            value={stylesSrc}
-            onChange={(e) => {
-              setStylesSrc(e.target.value)
-              setStylesNote('✎ edited — press 💾 apply to write it to styles.json')
-            }}
-            onKeyDown={(e) => e.stopPropagation()}
-          />
-          <button className="modal-item" onClick={() => applyStylesJson(stylesSrc)} title="write this text to styles.json and regenerate the theme">
-            💾 apply
-          </button>
-          <div className="modal-note">{stylesNote}</div>
-          <div className="modal-sub">
-            ⌁ loopdoc files — one package per row: id + url
-            <button
-              className="tb-btn"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => saveWebFiles([...webFiles, { url: '' }])}
-              title="add a loopdoc file row"
-            >
-              + add
+          <div className="modal-title">settings</div>
+
+          <div className="settings-section">
+            <div className="panel-head">
+              <span className="panel-title">⚙ styles.json</span>
+            </div>
+            <textarea
+              className="styles-edit"
+              spellCheck={false}
+              value={stylesSrc}
+              onChange={(e) => {
+                setStylesSrc(e.target.value)
+                setStylesNote('✎ edited — press 💾 apply to write it to styles.json')
+              }}
+              onKeyDown={(e) => e.stopPropagation()}
+            />
+            <button className="modal-item" onClick={() => applyStylesJson(stylesSrc)} title="write this text to styles.json and regenerate the theme">
+              💾 apply
             </button>
+            <div className="modal-note">{stylesNote}</div>
           </div>
-          {webFiles.map((w, i) => (
-            <div
-              key={`webrow${i}`}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}
-            >
-              <input
-                className="inp"
-                placeholder="https://…/loopdoc.yaml"
-                style={{ flex: 1 }}
-                value={w.url}
-                onChange={(e) => {
-                  const next = [...webFiles]
-                  next[i] = { ...next[i], url: e.target.value }
-                  saveWebFiles(next)
-                }}
-                onKeyDown={(e) => e.stopPropagation()}
-              />
-              <span className="modal-note" title="last fetch — ⌁ packages resolve their requirements against each other at fetch time">
-                {(() => {
-                  const s = webStatus.find((x) => x.row === i)
-                  if (!s) return '…'
-                  if (s.ok === true) return '✓ ok'
-                  if (s.ok === '⌁ cached') return `⌁ cached${s.msg ? ' · ' + s.msg : ''}`
-                  return `✕ ${s.msg}`
-                })()}
-              </span>
-              <button
-                className="icon-btn"
-                title="remove this loopdoc file (its types · system drop out of the doc)"
-                onClick={() => saveWebFiles(webFiles.filter((_, j) => j !== i))}
-              >
-                ×
+
+          <div className="settings-section">
+            <div className="panel-head">
+              <span className="panel-title">⌁ loopdoc files</span>
+              <span className="spacer" />
+              <button className="btn" onClick={() => saveWebFiles([...webFiles, { url: '' }])} title="add a loopdoc file row">
+                + add
               </button>
             </div>
-          ))}
-          {webFiles.length === 0 && (
             <div className="modal-note">
-              no loopdoc files — add a url row to pull its Types · Ledger · Statics into the doc; the yaml&apos;s
-              own Name: section is what names (and namespaces) the package
+              one url per row — the yaml&apos;s own Name: is the package · its Types · Ledger · Statics join the doc
             </div>
-          )}
-          <button className="modal-item" onClick={() => runWeb(webFiles)} title="re-fetch every loopdoc file right now — bypasses browser · CDN caches and rebuilds every ⌁ connection">
-            ↻ fetch now
-          </button>
+            <div className="settings-list">
+              {webFiles.map((w, i) => {
+                const s = webStatus.find((x) => x.row === i)
+                // the row's last fetch, in the app's own ✓ · ⌁ · ✕ vocabulary
+                const [status, tone] = !s
+                  ? ['… not fetched yet', '']
+                  : s.ok === true
+                    ? ['✓ ok', 'web-ok']
+                    : s.ok === '⌁ cached'
+                      ? [`⌁ cached${s.msg ? ` · ${s.msg}` : ''}`, 'web-cache']
+                      : [`✕ ${s.msg}`, 'web-bad']
+                return (
+                  <div key={`webrow${i}`} className="web-row">
+                    <input
+                      className="inp"
+                      placeholder="https://…/loopdoc.yaml"
+                      value={w.url}
+                      onChange={(e) => {
+                        const next = [...webFiles]
+                        next[i] = { ...next[i], url: e.target.value }
+                        saveWebFiles(next)
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    />
+                    <span className={`web-status ${tone}`} title="last fetch — ⌁ packages resolve their requirements against each other at fetch time">
+                      {status}
+                    </span>
+                    <button
+                      className="icon-btn"
+                      title="remove this loopdoc file (its types · system drop out of the doc)"
+                      onClick={() => saveWebFiles(webFiles.filter((_, j) => j !== i))}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
+              {webFiles.length === 0 && (
+                <div className="reg-empty">no files yet — paste a raw url of any loopdoc yaml</div>
+              )}
+            </div>
+            <button className="modal-item" onClick={() => runWeb(webFiles)} title="re-fetch every loopdoc file right now — bypasses browser · CDN caches and rebuilds every ⌁ connection">
+              ↻ fetch now
+            </button>
+          </div>
+
           <button className="modal-close" onClick={() => setSettings(false)}>
             ✕ close
           </button>
@@ -527,7 +580,7 @@ export default function App() {
           {tab === 'design' ? (
             <>
               {['machine', 'func'].includes(graph.mode) ? (
-                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} funcs={doc.funcs || []} gstore={gstore} onChange={updateGraph} onOpenNode={(id) => setPath([...path, id])} rail={rail} />
+                <MachineCanvas graph={graph} assets={doc.assets} types={doc.types || []} globals={doc.vars || []} funcs={doc.funcs || []} gstore={gstore} onChange={updateGraph} onOpenNode={(id) => setPath([...path, id])} focus={drcSel} rail={rail} />
               ) : (
                 <GraphCanvas
                   graph={graph}
@@ -537,6 +590,7 @@ export default function App() {
                   funcs={doc.funcs || []}
                   onChange={updateGraph}
                   onOpenGraph={(id) => setPath([...path, id])}
+                  focus={drcSel}
                   rail={rail}
                 />
               )}
@@ -602,9 +656,10 @@ export default function App() {
             findings={drc}
             scope={drcScope}
             onScope={setDrcScope}
-            onJump={(p) => {
+            onJump={(p, nid) => {
               setTab('design')
               setPath(p)
+              setDrcSel(nid ?? null)
             }}
             onClose={() => setShowDRC(false)}
           />

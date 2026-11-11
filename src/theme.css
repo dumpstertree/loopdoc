@@ -274,19 +274,85 @@ body {
   padding: var(--styles-edit-padding);
 }
 
-/* the settings popup: a big panel centered on the viewport, not the thin
-   ribbon hanging under the topbar — room to edit styles and test urls */
+/* settings sheet */
+/* the ⚙ dial's panel: the same flat bordered surface as the ☰ ribbon, hung under
+   the topbar on the right and stretching down to the bottom edge — it owns its
+   own space instead of floating over the canvas, and each section scrolls itself */
 .modal-settings {
   top: var(--modal-settings-top);
-  left: var(--modal-settings-left);
-  right: auto;
-  transform: var(--modal-settings-transform);
+  right: var(--modal-settings-right);
+  left: auto;
+  bottom: var(--modal-settings-bottom);
+  height: auto;
   width: var(--modal-settings-width);
-  height: var(--modal-settings-height);
+  overflow: auto;
   flex: none;
+  gap: var(--modal-settings-gap);
+  padding: var(--modal-settings-padding);
+}
+/* the two sections read as header bars, like the assets · rules panels */
+.modal-settings .panel-head {
+  background: var(--bg-4);
 }
 .modal-settings .styles-edit {
   height: var(--modal-settings-styles-edit-height);
+}
+/* the sheet is tall, so ✕ close tucks itself bottom right instead of stretching */
+.modal-settings .modal-close {
+  align-self: flex-end;
+}
+/* one labelled block per thing you set */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-section-gap);
+  flex: none;
+}
+/* the url list takes whatever the styles editor leaves and scrolls on its own */
+.settings-list {
+  flex: 1 0 auto;
+  min-height: var(--settings-list-min-height);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--settings-list-gap);
+}
+/* one url per row: the input, its last fetch, the remove tick — grid lines
+   the columns line up, hover lifts the whole row like the global · type rows */
+.web-row {
+  display: grid;
+  grid-template-columns: var(--web-row-grid-template-columns);
+  gap: var(--web-row-gap);
+  align-items: center;
+  padding: var(--web-row-padding);
+  border-bottom: var(--web-row-border-bottom);
+}
+.web-row:hover {
+  background: var(--bg-3);
+  border-color: var(--line-hi);
+}
+.web-row .inp {
+  width: var(--web-row-inp-width);
+}
+.web-row .icon-btn {
+  justify-self: end;
+}
+.web-status {
+  color: var(--dim);
+  font-size: var(--web-status-font-size);
+  font-weight: var(--web-status-font-weight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.web-status.web-ok {
+  color: var(--lime);
+}
+.web-status.web-cache {
+  color: var(--clay);
+}
+.web-status.web-bad {
+  color: var(--urgent);
 }
 
 /* blocky buttons: hover inverts */
@@ -978,9 +1044,7 @@ svg.edges .edge {
 }
 
 .nd-step { --kc: var(--clay); }
-.nd-event { --kc: var(--magenta); }
 .nd-cond { --kc: var(--cyan); }
-.nd-choice { --kc: var(--clay); }
 .nd-load { --kc: var(--lime); }
 .nd-unload { --kc: var(--urgent); }
 .nd-input { --kc: var(--mint); }
@@ -995,13 +1059,14 @@ svg.edges .edge {
 .mc-setledger { --kc: var(--amber); }
 .mc-func { --kc: var(--mc-func-kc); }
 .mc-ifb { --kc: var(--amber); }
+.mc-switch { --kc: var(--amber); }
 .mc-math { --kc: var(--cyan); }
 .mc-code { --kc: var(--cyan); }
 .mc-for { --kc: var(--amber); }
 .mc-foreach { --kc: var(--clay); }
+.mc-while { --kc: var(--clay); }
 .mc-inspect { --kc: var(--mc-inspect-kc); }
 .mc-append, .mc-join, .mc-remove, .mc-removeat, .mc-sort, .mc-clone { --kc: var(--mc-append-mc-join-mc-remove-mc-removeat-mc-sort-kc); }
-.mc-action { --kc: var(--amber); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); background: var(--mc-text-background); }
 .mc-todo { --kc: var(--amber); background: var(--mc-todo-background); }

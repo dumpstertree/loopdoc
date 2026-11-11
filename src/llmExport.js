@@ -66,8 +66,6 @@ function detail(n, g, doc) {
   }
   const fed = (port) => (g.links || []).some((l) => l.kind === 'data' && l.to === n.id && l.toPort === port)
   switch (n.kind) {
-    case 'event':
-      return (n.calls || []).map(callStr).map((c) => `calls ${c}`).join(' · ')
     case 'syscall':
       return `calls ${(n.calls || []).map(callStr).join(', ')}`
     case 'load':
@@ -81,12 +79,8 @@ function detail(n, g, doc) {
       if (!v.type) return `= ${q(v.value)}`
       return `makes ${v.name || 'value'}:${v.type} = ${shortVal(typedValue(v.type, v.value, doc.types))}`
     }
-    case 'condition':
-      return n.cond ? `test: ${n.cond}` : 'branch on its ⇣ operands'
     case 'ifb':
       return `verdict ⇡ = (⇣a ${n.op || '=='} ⇣b)`
-    case 'choice':
-      return `waits for player: ${(n.exits || []).map((e) => `"${e.label || '?'}"`).join(' | ')}`
     case 'graph':
       return 'flow graph the design nests inside another — its own parts are stated in their own section above it, and its RETURN leads back out here'
     case 'machine':
@@ -99,6 +93,10 @@ function detail(n, g, doc) {
       return `counted loop — ⇡ i counts to ⇣ to:int; iter = body, end = after`
     case 'foreach':
       return `iterates ⇣ arr one at a time — ⇡ item (${n.itemType || '?'}) · ⇡ idx; iter = body, end = after`
+    case 'while':
+      return 'body rounds as long as ⇣ cond:bool is true — cond is re-checked every round; end = once it turns false'
+    case 'switch':
+      return `⇣ val picks an arm by equality — ${(n.cases || []).map((c) => `${c.label || 'case'}=${c.val || '—'}`).join(' · ') || 'no cases'}; default = when nothing matches`
     case 'inspect':
       return `reads ⇣ obj fields: ${(n.fields || []).map((f) => `${f.name}:${f.typeId}`).join(', ') || '— none picked'}`
     case 'append':
@@ -113,14 +111,14 @@ function detail(n, g, doc) {
       return `⇡ = ⇣ arr ascending${n.field ? ` by ${n.field} of each item` : ' by value'}`
     case 'clone':
       return '⇡ = deep copy of ⇣ val — writes to it never reach the original'
+    case 'rand':
+      return '⇡ = one draw between ⇣ min and ⇣ max (inclusive for int bounds, unwired bounds take the card value)'
     case 'add':
     case 'sub':
     case 'mul':
     case 'div':
     case 'mod':
       return `⇡ = ⇣ a ${MATH[n.kind]} ⇣ b — int/float operands, unwired sides take the card's custom value`
-    case 'action':
-      return 'chain waits here for a click'
     case 'code': {
       const io = (arr) => (arr || []).map((v) => `${v.name || 'value'}:${v.type || 'int'}`)
       if (!String(n.code || '').trim()) return 'no script written yet — its ports stay'
@@ -197,7 +195,7 @@ function detail(n, g, doc) {
 // replaces the separate wire, card and call-gap lines a program form needs.
 // Where the chain goes on rides at the end of the closing brace as
 // [ PORT:slug ] — PORT is the name the design gives that exit (an IF arm, a
-// machine's EXIT door, a CHOICE option, a loop's iter/end), left out for the
+// machine's EXIT door, a loop's iter/end), left out for the
 // plain out port, so a part with several successors names them where it is
 // declared rather than in a block below. Those are alternatives, so they carry
 // no ⚠: only two flow wires leaving the SAME port do, because those really do
@@ -267,7 +265,12 @@ function graphBody(g, doc, slugs, calledFuncs, refs) {
       const nm = portHandle(n, p.id, 'in')
       const l = feed(n.id).find((x) => x.toPort === p.id)
       if (l) return slot(p, nm, ` ~ ${wire(l)}`)
-      const card = MATH[n.kind] ? (p.id === '__a__' ? n.aVal : p.id === '__b__' ? n.bVal : undefined) : undefined
+      const card =
+        MATH[n.kind]
+          ? (p.id === '__a__' ? n.aVal : p.id === '__b__' ? n.bVal : undefined)
+          : n.kind === 'rand'
+            ? (p.id === '__min__' ? n.minVal : p.id === '__max__' ? n.maxVal : undefined)
+            : undefined
       if (card !== undefined && String(card).trim() !== '') return slot(p, nm, ` ~ ${String(card).trim()}`)
       return slot(p, nm, '')
     })
@@ -296,13 +299,19 @@ function graphBody(g, doc, slugs, calledFuncs, refs) {
         if (a && b && o) return [`${pnameOf(n, o, 'out')}=${pnameOf(n, a, 'in')}${MATH[n.kind]}${pnameOf(n, b, 'in')}`]
         return [`⇡ = ⇣ a ${MATH[n.kind]} ⇣ b`]
       }
+      case 'rand': {
+        const mn = (P.in || []).find((p) => p.id === '__min__')
+        const mx = (P.in || []).find((p) => p.id === '__max__')
+        const o = (P.out || [])[0]
+        if (mn && mx && o)
+          return [`${pnameOf(n, o, 'out')}=rand(${pnameOf(n, mn, 'in')}..${pnameOf(n, mx, 'in')})`]
+        return ['⇡ = one draw between ⇣ min and ⇣ max']
+      }
       case 'ifb': {
         const a = (P.in || []).find((p) => p.id === '__a__')
         const b = (P.in || []).find((p) => p.id === '__b__')
         return [`if ${a ? pnameOf(n, a, 'in') : 'a'}${n.op || '=='}${b ? pnameOf(n, b, 'in') : 'b'} [TRUE]`, 'else [FALSE]']
       }
-      case 'condition':
-        return [n.cond ? `if ${n.cond} [TRUE]` : 'if its ⇣ operands [TRUE]', 'else [FALSE]']
       case 'for': {
         const i = (P.out || []).find((p) => (p.name || '') === 'i' || p.id === 'i')
         const to = (P.in || []).find((p) => /to|count|n/.test(p.name || p.id || ''))
@@ -312,6 +321,14 @@ function graphBody(g, doc, slugs, calledFuncs, refs) {
         const items = (P.out || []).map((p) => pnameOf(n, p, 'out'))
         const arr = (P.in || []).find((p) => /arr|list|items/.test(p.name || p.id || ''))
         return [`${items.length ? `for ${items.join(', ')} in ${arr ? pnameOf(n, arr, 'in') : '⇣arr'}` : 'for each ⇣arr'} [iter]`, 'end the loop [end]']
+      }
+      case 'while': {
+        const c = (P.in || []).find((p) => /cond|test/.test(p.name || p.id || ''))
+        return [`while ${c ? pnameOf(n, c, 'in') : '⇣cond'} [iter]`, 'once the condition turns false [end]']
+      }
+      case 'switch': {
+        const arms = (n.cases || []).map((c) => `${q(c.label || 'case')} ▸ ${c.val || '—'}`)
+        return [`switch ⇣val ${arms.length ? `— ${arms.join(' · ')}` : '— no cases'}`, 'default when nothing matches']
       }
       case 'enter': {
         const v = (n.vars || []).filter((x) => String(x.value ?? '') !== '')
@@ -359,24 +376,21 @@ function graphBody(g, doc, slugs, calledFuncs, refs) {
     return `${pad(ind)}${KIND(n)}: ${s}${named ? ` ${q(named)}` : ''}${note}${ins.length ? ` ( ${ins.join(', ')} )` : ''}${gets.length ? ` -> ( ${gets.join(', ')} )` : ''}${lang} {`
   }
   // where the chain goes on: [ PORT:slug ], PORT named by what the design calls
-  // that exit (an IF arm, a machine's EXIT door, a CHOICE option, a loop's
-  // iter/end), left out for the plain out port — the names here are the names
+  // that exit (an IF arm, a machine's EXIT door, a loop's iter/end), left out for the
+  // plain out port — the names here are the names
   // the parts stepped under the part are run as
   const portName = (n, port) => {
     if (port == null) return ''
     // a loop’s body port is id out but the design calls it iter — the name is
     // what tells the reader which run repeats and which one is after the loop
-    if (n.kind === 'for' || n.kind === 'foreach') return port === 'out' ? 'iter' : port
+    if (n.kind === 'for' || n.kind === 'foreach' || n.kind === 'while') return port === 'out' ? 'iter' : port
+    if (n.kind === 'switch') return (n.cases || []).find((c) => c.id === port)?.label || port
     if (port === 'out' || port === '') return ''
     if (n.kind === 'machine' || n.kind === 'graph') {
       const e = ((n.graph || {}).nodes || []).find((x) => x.id === port)
       if (e) return q(e.name || 'exit')
     }
-    if (n.kind === 'choice') {
-      const e = (n.exits || []).find((x) => x.id === port)
-      if (e) return q(e.label || '?')
-    }
-    if (n.kind === 'ifb' || n.kind === 'condition') return (port || '').toUpperCase()
+    if (n.kind === 'ifb') return (port || '').toUpperCase()
     return port
   }
   const succName = (n, l) => {
@@ -469,10 +483,10 @@ function graphBody(g, doc, slugs, calledFuncs, refs) {
       // body is a block and its end continues; everything else is linear
       const portsOut = Object.keys(first)
       const branchPorts =
-        n.kind === 'choice' ? (n.exits || []).map((e) => e.id)
-        : n.kind === 'condition' || n.kind === 'ifb' ? ['true', 'false']
+        n.kind === 'ifb' ? ['true', 'false']
         : n.kind === 'machine' || n.kind === 'graph' ? portsOut // a machine's flow ports ARE its EXIT doors
-        : n.kind === 'for' || n.kind === 'foreach' ? ['out'] // iter = body; end continues below
+        : n.kind === 'for' || n.kind === 'foreach' || n.kind === 'while' ? ['out'] // iter = body; end continues below
+        : n.kind === 'switch' ? portsOut.filter((p) => p !== 'default') // case arms open blocks; default continues below
         : portsOut.length > 1 ? portsOut // more than one port = the part really does branch
         : []
       const blocks = branchPorts.filter((p) => first[p])
@@ -589,7 +603,7 @@ export function exportForLLM(doc) {
   const slugs = {}
   {
     const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-    const prefixOf = (k) => ({ machine: 'mach', graph: 'sub', condition: 'if', ifb: 'if', choice: 'pick', enter: 'enter', exit: 'exit', exitinst: 'exitref', func: 'fn', foreach: 'for', for: 'for' }[k] || slugify(k))
+    const prefixOf = (k) => ({ machine: 'mach', graph: 'sub', ifb: 'if', enter: 'enter', exit: 'exit', exitinst: 'exitref', func: 'fn', foreach: 'for', for: 'for' }[k] || slugify(k))
     const taken = new Set()
     const assign = (n, prefix) => {
       const base = prefixOf(n.kind)
@@ -887,7 +901,7 @@ export function exportForLLM(doc) {
     'edited with ledger.write::<T>(|rec| rec.field = …). One record per system ledger:',
     'LevelData { depth: i32, position: CurioCore:Vector2 (package type), map: LevelEngine:Map (package type) }',
     'InputEngine { input: InputEngine:Input (package type) } — engine-provided, read only',
-    'MATH (a + b), IF (if/else), CODE (translate the printed script statement by statement, keeping its arithmetic and control flow;',
+    'MATH (a + b), RAND (rand(a..b), an inclusive draw), IF (if/else), CODE (translate the printed script statement by statement, keeping its arithmetic and control flow;',
     'replace only reads/writes with the ledger calls above), INSPECT (field read) → plain Rust inside the body.',
     'Types: int → i32, float → f32, bool → bool.',
     '',

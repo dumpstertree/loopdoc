@@ -41,7 +41,11 @@ export function dataCanConnect(g, assets, from, fromPort, to, toPort, funcs = []
       return { ok: false, why: `⚠ if-compares both sides alike — ⇣ ${otherPort} is already ${ot}` }
     return { ok: true }
   }
-  // math-operands: int or float only — their ⇣ ports wear the type 'num'
+  if (tn?.kind === 'rand' && (toPort === '__min__' || toPort === '__max__'))
+    return ta === 'int' || ta === 'float'
+      ? { ok: true }
+      : { ok: false, why: `⚠ rand bounds take int or float — not ${ta}` }
+  // math-operands (and rand bounds): int or float only — their ⇣ ports wear the type 'num'
   if (tb === 'num')
     return ta === 'int' || ta === 'float'
       ? { ok: true }
@@ -105,7 +109,7 @@ export function branchLink(g, assets, src, idx, to, toPort, funcs = []) {
 //     chain is followed back through them
 //   · made values (VAR, GET GLOBAL/GET LEDGER) and ENTER door variables exist
 //     from the start of a run — order-free
-//   · everything else (EVENT/SYS CALL, IF verdict, loop item/index, nested
+//   · everything else (SYS CALL, IF verdict, loop item/index, nested
 //     MACHINE and FUNC results…) fires when a chain arrives: its ⇡ is
 //     guaranteed when the reader runs only if it DOMINATES the reader — every
 //     flow path from any entry (ENTER doors / the ▶ start) passes through it
@@ -114,7 +118,9 @@ export function branchLink(g, assets, src, idx, to, toPort, funcs = []) {
 // draw it red and the DRC reports the very same verdict. Pure static pass —
 // one call per graph, tiny graphs, no canvas in sight.
 const VALUE_FREE = new Set(['enter', 'var', 'getg', 'getledger'])
-const VALUE_DEMAND = new Set([...Object.keys(MATH), ...Object.keys(BOOL), 'inspect', 'clone', 'append', 'join', 'remove', 'removeat', 'sort'])
+// RAND is computed on read like the math folds — its draw is only as
+// guaranteed as the values feeding its own ⇣ bounds
+const VALUE_DEMAND = new Set([...Object.keys(MATH), ...Object.keys(BOOL), 'rand', 'inspect', 'clone', 'append', 'join', 'remove', 'removeat', 'sort'])
 
 export function valueWireRisks(g) {
   const nodes = g.nodes || []

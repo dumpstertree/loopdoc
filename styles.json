@@ -500,13 +500,24 @@
       "todo-line-min-width": "0",
       "todo-line-line-height": "1.25"
     },
-    "the styles json editor textarea monospac": {
-      "modal-settings-top": "50%",
-      "modal-settings-left": "50%",
-      "modal-settings-transform": "translate(-50%, -50%)",
-      "modal-settings-width": "min(780px, 88vw)",
-      "modal-settings-height": "min(58vh, 640px)",
-      "modal-settings-styles-edit-height": "42vh"
+    "settings sheet": {
+      "modal-settings-top": "56px",
+      "modal-settings-right": "14px",
+      "modal-settings-bottom": "14px",
+      "modal-settings-width": "min(560px, 64vw)",
+      "modal-settings-gap": "10px",
+      "modal-settings-padding": "12px 14px",
+      "modal-settings-styles-edit-height": "30vh",
+      "settings-section-gap": "8px",
+      "settings-list-min-height": "0",
+      "settings-list-gap": "0",
+      "web-row-grid-template-columns": "1fr min(26ch, 38%) auto",
+      "web-row-gap": "8px",
+      "web-row-padding": "3px 6px",
+      "web-row-border-bottom": "1px solid var(--line)",
+      "web-row-inp-width": "100%",
+      "web-status-font-size": "10px",
+      "web-status-font-weight": "400"
     }
   }
 }

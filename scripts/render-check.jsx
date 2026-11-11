@@ -31,8 +31,7 @@ const expect = {
   graph: ['nd-container', '▸', 'open →'],
   machine: ['nd-container', '▸', 'open →'],
   func: ['nd-container', '▸', '▶ enter'],
-  event: ['·', '+ call system', '+ generate asset'],
-  choice: ['·', '+ option'],
+  syscall: ['·'],
   todo: ['·', '+ task'],
   enter: ['·', '+ variable', '+ asset'],
   exit: ['·', '+ variable', 'nd-exit'],
@@ -87,10 +86,10 @@ for (const [kind, meta] of Object.entries(KINDS)) {
         bad++
         console.log(`?? ${kind} on ${canvas}: wide for content that fits`)
       }
-      if (['step', 'choice', 'var'].includes(kind)) {
+      if (['step', 'syscall', 'var'].includes(kind)) {
         const big = { ...node }
         if (kind === 'step') big.note = 'a sentence of prose far too long to fit the regular card'
-        if (kind === 'choice') big.exits = [{ id: uid('ex'), label: 'the one genuinely wide option label' }]
+        if (kind === 'syscall') big.name = 'the one genuinely wide system call name'
         if (kind === 'var') big.variable = { name: 'a longish variable', type: 'aWideType[]', value: '' }
         const wideHtml = renderToString(
           NodeCard({ node: big, graph, assets, types: [], globals, funcs, systems: assets.filter((a) => a.kind === 'system'), gvals: null, selected: false, isEntry: canvas === 'flow', sim: null, ...handlers }),

@@ -129,7 +129,7 @@ test('nested graphs are repaired too — machines included', () => {
     mode: 'machine',
     name: 'inner',
     entry: null,
-    nodes: [{ id: 'p', kind: 'action', x: -900, y: -10 }],
+    nodes: [{ id: 'p', kind: 'syscall', x: -900, y: -10 }],
     links: [],
   }
   const back = parseDoc(serializeDoc(d))

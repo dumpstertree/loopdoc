@@ -25,7 +25,7 @@ const homeOrigin = (g) => {
   return { x: 40 - Math.min(0, minX), y: 40 - Math.min(0, minY) }
 }
 
-export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph, rail = true }) {
+export default function GraphCanvas({ graph, assets, types = [], globals = [], funcs = [], onChange, onOpenGraph, focus = null, rail = true }) {
   const [sel, setSel] = useState(null) // { link, anchor }
   const selRef = useRef(sel)
   selRef.current = sel
@@ -88,6 +88,26 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
       return { x: pt.x - originRef.current.x, y: pt.y - originRef.current.y }
     },
   })
+  // a DRC panel jump hands over the flagged part as focus — it opens already
+  // selected AND centered: a part parked far from the last view would sit
+  // off-screen and the jump would feel like it went nowhere, so pan to it
+  // (overflow scroll can't go negative — grow the surface toward the top/left
+  // first, which keeps the view still, then scroll to center); the effect
+  // reruns only when focus itself changes, so whatever the user picks
+  // afterwards stays theirs
+  useEffect(() => {
+    if (!focus) return
+    setSelection([focus])
+    const sc = scrollRef.current
+    const n = (graphRef.current.nodes || []).find((x) => x.id === focus)
+    if (!sc || !n) return
+    // viewport pos of a part = (n.x + origin.x) − scrollLeft — solve for center
+    const t = (n.x || 0) + originRef.current.x - sc.clientWidth / 2
+    const u = (n.y || 0) + originRef.current.y - sc.clientHeight / 2
+    if (t < 0 || u < 0) grow(Math.max(0, -t), Math.max(0, -u))
+    sc.scrollLeft = Math.max(0, t)
+    sc.scrollTop = Math.max(0, u)
+  }, [focus])
   const patch = (id, p) => mutate((g) => pruneLinks(patchNode(g, id, p), assets, id, funcs))
   const addNodeAt = (kind, x, y) => {
     const n = newNode(kind, snap(x), snap(y))
@@ -485,7 +505,7 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
           <button
             key={k}
             className="rail-btn"
-            style={{ '--accent-c': `var(--${k === 'event' ? 'magenta' : k === 'condition' ? 'cyan' : 'mint'})` }}
+            style={{ '--accent-c': `var(--${k === 'ifb' ? 'cyan' : 'mint'})` }}
             title={KINDS[k].hint}
             onClick={() => addNode(k)}
           >
@@ -725,8 +745,8 @@ export default function GraphCanvas({ graph, assets, types = [], globals = [], f
                 <p>
                   <b>Empty graph.</b> Add nodes from the bar above or double-click here to drop a STEP.
                 </p>
-                <p>▶ marks the entry · IF/CHOICE branch · GRAPH nests another loop · MACHINE nests a chain sim.</p>
-                <p>EVENT nodes call ⚙️ systems; teal squares carry typed data between calls.</p>
+                <p>▶ marks the entry · IF branches · GRAPH nests another loop · MACHINE nests a chain sim.</p>
+                <p>SYS CALL parts call ⚙️ systems; teal squares carry typed data between calls.</p>
               </div>
             )}
           </div>

@@ -37,6 +37,10 @@ const mathCustom = (n, port) => {
   const c = port === '__a__' ? n.aVal : n.bVal
   return String(c ?? '').trim() === '' ? null : numSide(c)
 }
+const randCustom = (n, port) => {
+  const c = port === '__min__' ? n.minVal : n.maxVal
+  return String(c ?? '').trim() === '' ? null : numSide(c)
+}
 export function mathVal(nodes, links, mem, n, depth = 0) {
   const side = (port) => {
     const d = dataValue(nodes, links, mem, n.id, port, depth + 1)
@@ -52,6 +56,27 @@ export function mathVal(nodes, links, mem, n, depth = 0) {
   if (kind === 'mul') return x * y
   if (kind === 'div') return y === 0 ? null : Number.isInteger(x) && Number.isInteger(y) ? Math.trunc(x / y) : x / y
   return y === 0 ? null : x % y // mod
+}
+
+// RAND — one draw between its ⇣ bounds, every time it is read. int bounds draw
+// a whole number inclusive of both ends; a float bound (or a ⇡ that learned
+// float) draws any decimal in between. Reversed bounds still work — the range
+// is normalized
+export function randVal(nodes, links, mem, n, depth = 0) {
+  const side = (port) => {
+    const d = dataValue(nodes, links, mem, n.id, port, depth + 1)
+    if (d) return d.val === null || d.val === undefined ? null : numSide(d.val)
+    return randCustom(n, port)
+  }
+  const x = side('__min__')
+  const y = side('__max__')
+  if (x === null || y === null) return null
+  const a = Math.min(x, y)
+  const b = Math.max(x, y)
+  const isFloat = n.rType === 'float' || !Number.isInteger(a) || !Number.isInteger(b)
+  if (isFloat) return a + Math.random() * (b - a)
+  const span = Math.trunc(b) - Math.trunc(a) + 1
+  return Math.trunc(a) + Math.floor(Math.random() * (span > 0 ? span : 1))
 }
 
 // and/or parts — every fed bool slot counts (wired wire first, else the
@@ -95,6 +120,8 @@ function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
   if (src.kind === 'ifb') return { val: (mem.ifres || {})[w.from] ?? null, from: src.name || 'if' }
   if (MATH[src.kind])
     return { val: mathVal(nodes, links, mem, src, depth + 1), from: src.name || src.kind }
+  if (src.kind === 'rand')
+    return { val: randVal(nodes, links, mem, src, depth + 1), from: src.name || 'rand' }
   if (BOOL[src.kind])
     return { val: boolVal(nodes, links, mem, src, depth + 1), from: src.name || src.kind }
   if (src.kind === 'getg') return { val: (mem.g || {})[src.gRef] ?? null, from: `⚙ ${src.gName || 'global'}` }
@@ -294,25 +321,17 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
       continue // landed this step — it acts on the next one
     }
 
-    // click-gated parts: actions wait to fire; blocking sys calls stay
-    // "opened" until clicked — the chain freezes right here
-    if (n.kind === 'action' || (n.kind === 'syscall' && n.block)) {
+    // blocking sys calls stay "opened" until clicked — the chain freezes
+    // right here
+    if (n.kind === 'syscall' && n.block) {
       if (!t.armed) {
         t.armed = true
-        t.wait = n.kind === 'action' ? 'click' : 'block'
-        log.push(
-          n.kind === 'action'
-            ? `▶ ${n.name || 'action'} — waiting for click`
-            : `⏳ sys call "${n.name || ''}" opened — click to return`,
-        )
+        t.wait = 'block'
+        log.push(`⏳ sys call "${n.name || ''}" opened — click to return`)
         put(t)
         continue
       }
-      if (n.kind === 'action') {
-        log.push(`▶ ${n.name || 'action'} fired`)
-      } else {
-        callSystem(n, nodes, links, mem, log, assets)
-      }
+      callSystem(n, nodes, links, mem, log, assets)
       advance(t, n)
       continue
     }
@@ -387,6 +406,38 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
       ;(mem.ifres = mem.ifres || {})[n.id] = res
       log.push(`${res ? '✓' : '✗'} ${n.name || 'if'}: ${fmt(da.val)} ${op} ${fmt(db.val)} → ${res ? 'true' : 'false'}`)
       advance(t, n, res ? 'true' : 'false')
+      continue
+    }
+
+    // SWITCH — one ⇣ value picks one flow-out arm by equality: the first case
+    // whose typed match equals val fires; nothing matching leaves via default.
+    // an unwired arm simply ends the chain — advance already kills on a port
+    // with no wire
+    if (n.kind === 'switch') {
+      const d = dataValue(nodes, links, mem, n.id, '__val__')
+      const cv = (n.cVals || {})['__val__']
+      const dv = d || (cv === undefined || cv === null || String(cv).trim() === '' ? null : { val: cv, from: 'custom' })
+      if (!dv) {
+        log.push(`⚠ ${n.name || 'switch'} — ⇣ val has no wire and no custom value — chain dropped`)
+        kill(t)
+        continue
+      }
+      if (dv.val === null || dv.val === undefined) {
+        if (!t.armed) {
+          t.armed = true
+          log.push(`⏳ ${n.name || 'switch'} holding — ⇣ val from "${dv.from}" has no value yet`)
+        }
+        put(t) // producer hasn't fired — wait and retry
+        continue
+      }
+      const hit = (n.cases || []).find((c) => String(dv.val) === String(c.val ?? ''))
+      if (hit) {
+        log.push(`◆ ${n.name || 'switch'}: ⇣ val ${fmt(dv.val)} equals "${hit.val}" → arm "${hit.label || 'case'}" ▸`)
+        advance(t, n, hit.id)
+      } else {
+        log.push(`◆ ${n.name || 'switch'}: ⇣ val ${fmt(dv.val)} matches no case — default ▸`)
+        advance(t, n, 'default')
+      }
       continue
     }
 
@@ -547,6 +598,79 @@ function stepOnce(nodes, links, log, mem = {}, assets = []) {
         log.push(`≡ ${n.name || 'foreach'}: loaded [${arr.join(', ')}]`)
         put(t)
       }
+      continue
+    }
+
+    // while — the condition is re-evaluated every round, so a state that turns
+    // false down the chain ends the loop honestly; 100 rounds without turning
+    // false is a runaway condition, reported and dropped
+    if (n.kind === 'while') {
+      const loops = (mem.loops = mem.loops || {})
+      const st = loops[n.id]
+      const cond = () => dataValue(nodes, links, mem, n.id, '__cond__')
+      const on = (d) => d.val === true || (typeof d.val === 'number' && d.val !== 0)
+      if (st && !st.done) {
+        if ((st.body || 0) > 0) {
+          put(t) // this round's body chain still walking — one round at a time
+          continue
+        }
+        const d = cond()
+        if (!d) {
+          log.push(`⚠ ${n.name || 'while'} — nothing wired to ⇣ cond — chain dropped`)
+          kill(t)
+          continue
+        }
+        if (d.val === null || d.val === undefined) {
+          if (!t.armed) {
+            t.armed = true
+            log.push(`⏳ ${n.name || 'while'} holding — ⇣ cond from "${d.from}" hasn't a value yet`)
+          }
+          put(t) // wait and retry — the producer may still be down the chain
+          continue
+        }
+        if (!on(d)) {
+          st.done = true
+          log.push(`↻ ${n.name || 'while'} ⇣ cond is ${fmt(d.val)} — end ⤳`)
+          advance(t, n, 'end')
+          continue
+        }
+        if (st.i >= 100) {
+          st.done = true
+          log.push(`⚠ ${n.name || 'while'} ran ${st.i} rounds — ⇣ cond never turned false — chain dropped`)
+          kill(t)
+          continue
+        }
+        st.i += 1
+        log.push(`↻ ${n.name || 'while'} round ${st.i} — ⇣ cond true →`)
+        const body = outsOf(n.id).filter((e) => e.fromPort !== 'end')
+        st.body = (st.body || 0) + body.length
+        for (const e of body) put({ id: 't' + mem.tseq++, node: e.to, entry: t.entry, owner: n.id })
+        put(t) // the loop keeps its token until the condition turns false
+        continue
+      }
+      // fresh trigger — evaluate the condition; false on arrival never runs a round
+      const d = cond()
+      if (!d) {
+        log.push(`⚠ ${n.name || 'while'} — nothing wired to ⇣ cond — chain dropped`)
+        kill(t)
+        continue
+      }
+      if (d.val === null || d.val === undefined) {
+        if (!t.armed) {
+          t.armed = true
+          log.push(`⏳ ${n.name || 'while'} holding — ⇣ cond from "${d.from}" hasn't a value yet`)
+        }
+        put(t) // wait and retry — the producer may still be down the chain
+        continue
+      }
+      if (!on(d)) {
+        log.push(`⚠ ${n.name || 'while'} — ⇣ cond from "${d.from}" is ${fmt(d.val)} — chain dropped`)
+        kill(t)
+        continue
+      }
+      loops[n.id] = { i: 0, body: 0 }
+      log.push(`↻ ${n.name || 'while'}: ⇣ cond is true — rounds run until it turns false`)
+      put(t)
       continue
     }
 

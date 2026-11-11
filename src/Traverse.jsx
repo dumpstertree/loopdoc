@@ -1,7 +1,7 @@
 // ▶ Traverse — a story walkthrough of the flow graphs (machines are not
 // simulated here, only reported). Flow arrives at the entry, applies each
-// node's effect (load/unload, input, var, events + their data wiring), and
-// auto-advances through single-exit nodes. IF/CHOICE (and ambiguous wires)
+// node's effect (load/unload, input, var, sys calls + their data wiring), and
+// auto-advances through single-exit nodes. IF (and ambiguous wires)
 // pause for a click. GRAPH nodes nest: their inner chain runs until it dead
 // ends, then pops back through the node's RETURN exit.
 import React, { useEffect, useState } from 'react'
@@ -9,7 +9,7 @@ import { kindMeta, resolveCall, fnSig, assetLabel } from './model.js'
 
 const nameOf = (n) => n?.name || KINDLABEL[n?.kind] || n?.kind || '?'
 const KINDLABEL = {
-  step: 'step', event: 'event', condition: 'if', choice: 'choice', load: 'load', unload: 'unload',
+  step: 'step', ifb: 'if', load: 'load', unload: 'unload',
   input: 'input', var: 'var', graph: 'graph', machine: 'machine',
 }
 
@@ -28,10 +28,8 @@ function applyEnter(node, st, graph) {
   const L = st.log
   const A = st.assets
   switch (node.kind) {
-    case 'event': {
-      L.push(`⚡ ${node.name || '(unnamed event)'} fires`)
-      if (node.gen && (node.gen.name || '').trim())
-        L.push(`   ✨ generated: ${node.gen.name} (exists only in this graph)`)
+    case 'syscall': {
+      L.push(`⏳ ${node.name || '(unnamed sys call)'} — system call runs`)
       for (const call of node.calls || []) {
         const r = resolveCall(call, A)
         if (!r) {
@@ -91,6 +89,18 @@ function applyEnter(node, st, graph) {
       break
     case 'func':
       L.push(`ƒ ${node.fName || 'function'} — isolated function called, chain continues`)
+      break
+    case 'for':
+      L.push(`🔁 ${node.name || 'for'} — counted loop: iter runs the body each round (⇡ i), end continues once done`)
+      break
+    case 'foreach':
+      L.push(`🔁 ${node.name || 'foreach'} — array loop: iter runs the body per item (⇡ item, ⇡ index), end continues once done`)
+      break
+    case 'while':
+      L.push(`🔁 ${node.name || 'while'} — condition loop: iter rounds the body while ⇣ cond is true (re-checked every round), end continues once false`)
+      break
+    case 'switch':
+      L.push(`🔱 ${node.name || 'switch'} — value branch: the arm whose match equals ⇣ val runs, default when nothing matches`)
       break
     default:
       L.push(`· ${nameOf(node)}${node.note ? ` — ${node.note}` : ''}`)
@@ -238,7 +248,7 @@ export default function Traverse({ doc, onClose }) {
           ))
         ) : (
           <span className="modal-sub">
-            Walks the flow from the ▶ START node: assets in/out, inputs, vars, events, system calls and their
+            Walks the flow from the ▶ START node: assets in/out, inputs, vars, system calls and their
             data wiring. Nested graphs run and return. Press start.
           </span>
         )}

@@ -7,7 +7,7 @@ import React from 'react'
 import { T } from './styles.gen.js' // every styling value, generated from styles.json
 import { kindMeta, dataPorts, assetIcon, ASSET_KINDS, resolveCall, uid, enterVarsOf, exitVarsOf, exitNameTaken, resolveExitRef, exitInstVars, fieldsOf, emptyValue, typedValue, MATH, BOOL } from './model.js'
 import { takesFlow } from './wireRules.js'
-import { dataValue, fmt, mathVal, boolVal } from './engine.js'
+import { dataValue, fmt, mathVal, boolVal, randVal } from './engine.js'
 import { TypeSelect } from './AssetsPanel.jsx'
 import { validateCode, inferCodeIO } from './codeLang.js'
 
@@ -107,8 +107,8 @@ function Dock({ actions, dock }) {
   )
 }
 
-// system-call picker rows shared by EVENT (flow) and SYS CALL (machine):
-// pick ⚙️ asset, then one fn of its api; shows typed ⇣/⇡ rows as data ports
+// system-call picker rows on SYS CALL: pick ⚙️ asset, then one fn of its api;
+// shows typed ⇣/⇡ rows as data ports
 function CallsEditor({ node, assets, types, multiple, simCall, sim, links, onPatch, onSimOut, onDataOut, onGrow }) {
   // an unwired ⇣ call input falls back to a custom value typed on the card,
   // kept per port in node.cVals — exactly like math parts' aVal/bVal
@@ -439,52 +439,6 @@ function TaskLine({ value, done, onChange, onEnter }) {
         }
       }}
     />
-  )
-}
-
-function GenerateAsset({ node, onPatch, onGrow }) {
-  const gen = node.gen || null
-  const set = (g) => onPatch({ gen: g })
-  const fresh = () => set({ id: uid('gen'), kind: 'art', name: '' })
-  if (!gen) {
-    // the + button belongs to the card's dock, when the card owns one
-    if (onGrow) {
-      onGrow('+ generate asset', fresh)
-      return null
-    }
-    return (
-      <button className="tb-btn" style={{ width: '100%' }} onClick={fresh}>
-        + generate asset
-      </button>
-    )
-  }
-  return (
-    <div className="nd-row">
-      <span title="this event generates an asset that exists only in this graph">✨</span>
-      <select
-        className="inp"
-        value={gen.kind}
-        onChange={(e) => set({ ...gen, kind: e.target.value })}
-        style={{ width: 78 }}
-      >
-        {ASSET_KINDS.map((k) => (
-          <option key={k.id} value={k.id}>
-            {k.icon} {k.label}
-          </option>
-        ))}
-      </select>
-      <input
-        className="inp"
-        style={{ flex: 1 }}
-        placeholder="asset name…"
-        value={gen.name}
-        onChange={(e) => set({ ...gen, name: e.target.value })}
-        onKeyDown={(e) => e.stopPropagation()}
-      />
-      <button className="icon-btn" onClick={() => set(null)} title="remove">
-        ×
-      </button>
-    </div>
   )
 }
 
@@ -937,41 +891,7 @@ export default function NodeCard({
           )
         })(),
 
-      // IF — the test
-      test: () =>
-        node.kind === 'condition'
-          ? <input className="inp" placeholder="if… (the test)" value={node.cond || ''} onChange={(e) => onPatch({ cond: e.target.value })} onKeyDown={(e) => e.stopPropagation()} />
-          : null,
 
-      // CHOICE — one row per option, + option docks
-      options: () =>
-        node.kind === 'choice' && (
-          <>
-            {(node.exits || []).map((ex, i) => (
-              <div className="nd-row" key={ex.id}>
-                <span className="exit-label">?</span>
-                <input
-                  className="inp"
-                  style={{ flex: 1 }}
-                  placeholder="option label…"
-                  value={ex.label}
-                  onChange={(e) =>
-                    onPatch({ exits: node.exits.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })
-                  }
-                  onKeyDown={(e) => e.stopPropagation()}
-                />
-                <button
-                  className="icon-btn"
-                  onClick={() => onPatch({ exits: node.exits.filter((_, j) => j !== i) })}
-                  title="remove option"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            {grow('option', '+ option', () => onPatch({ exits: [...(node.exits || []), { id: uid('ex'), label: 'option' }] }))}
-          </>
-        ),
 
       // LOAD · UNLOAD · INPUT — pick an asset
       asset: () =>
@@ -1237,6 +1157,78 @@ export default function NodeCard({
           )
         })(),
 
+      // SWITCH — its ⇣ value and the ⇡ arms the value picks between;
+      // each case row names an arm and types the value it matches
+      sw: () =>
+        node.kind === 'switch' &&
+        (() => {
+          const dp = dataPorts(node, assets, funcs, graph)
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const cs = node.cases || []
+          return (
+            <>
+              {!sim && (
+                <div className="nd-row" title="⇣ val leaves through the arm whose match equals it — default when nothing does">
+                  <span className="nd-sub">⇣ val ⟨case⟩ → ⇡ arm</span>
+                </div>
+              )}
+              {dp.in.map((p) => (
+                <div
+                  className="dvar"
+                  key={p.id}
+                  title={wired(p.id) ? 'reads any value from the wire' : 'no wire — the value typed here is what gets matched'}
+                >
+                  <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                  <span>
+                    ⇣ {p.name}:<b>{p.type}</b>
+                  </span>
+                  {!wired(p.id) && !sim && (
+                    <input
+                      className="inp"
+                      style={{ flex: 1, minWidth: 0 }}
+                      placeholder="value to match…"
+                      value={(node.cVals || {})[p.id] ?? ''}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onChange={(e) => onPatch({ cVals: { ...(node.cVals || {}), [p.id]: e.target.value } })}
+                    />
+                  )}
+                  {!wired(p.id) && sim && String((node.cVals || {})[p.id] ?? '') !== '' && (
+                    <span className="dval">{String((node.cVals || {})[p.id])}</span>
+                  )}
+                </div>
+              ))}
+              {cs.map((c) => (
+                <div className="nd-row" key={c.id} title="this ⇡ arm fires when ⇣ val equals the match — its name labels the port">
+                  <input
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    placeholder="case name…"
+                    value={c.label ?? ''}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => onPatch({ cases: cs.map((x) => (x.id === c.id ? { ...x, label: e.target.value } : x)) })}
+                  />
+                  <span className="nd-sub">= ⇣val</span>
+                  <input
+                    className="inp"
+                    style={{ flex: 1, minWidth: 0 }}
+                    placeholder="match…"
+                    value={c.val ?? ''}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => onPatch({ cases: cs.map((x) => (x.id === c.id ? { ...x, val: e.target.value } : x)) })}
+                  />
+                  <button className="icon-btn" title="remove case" onClick={() => onPatch({ cases: cs.filter((x) => x.id !== c.id) })}>
+                    ×
+                  </button>
+                </div>
+              ))}
+              <div className="nd-row" title="the arm that runs when ⇣ val matches no case">
+                <span className="nd-sub">default ⇡</span>
+              </div>
+              {grow('case', '+ case', () => onPatch({ cases: [...cs, { id: uid('cs'), label: `case ${cs.length + 1}`, val: '' }] }))}
+            </>
+          )
+        })(),
+
       // ADD · SUBTRACT · MULTIPLY · DIVIDE · MOD — two number operands, one
       // number out; unwired sides fall back to the custom value on the card
       math: () =>
@@ -1289,6 +1281,78 @@ export default function NodeCard({
               })}
               {dp.out.map((p) => (
                 <div className="dvar out" key={p.id} title="the computed number — any consumer of this type can read it">
+                  <span>
+                    ⇡ {p.name}:<b>{p.type}</b>
+                  </span>
+                  {live !== null && <span className="dval">{live}</span>}
+                  <span
+                    className="port-data out"
+                    data-port={portKey(node.id, p.id, 'out')}
+                    title="drag to feed a ⇣ of the same type"
+                    onPointerDown={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      onDataPortDown(e, node.id, p.id)
+                    }}
+                  />
+                </div>
+              ))}
+            </>
+          )
+        })(),
+
+      // RAND — one draw between its ⇣ bounds; unwired bounds fall back to the
+      // value typed on the card. Pure data: no flow ports around it
+      rand: () =>
+        node.kind === 'rand' &&
+        (() => {
+          const dp = dataPorts(node, assets, funcs, graph)
+          const wired = (pid) => (graph.links || []).some((l) => l.kind === 'data' && l.to === node.id && l.toPort === pid)
+          const live = sim ? randVal(graph.nodes, graph.links, sim.mem || {}, node) : null
+          return (
+            <>
+              {!sim && (
+                <div className="nd-row" title="the draw taken between ⇣ min and ⇣ max">
+                  <span className="nd-sub">⇣ min</span>
+                  <span className="nd-sub">rand..</span>
+                  <span className="nd-sub">⇣ max</span>
+                </div>
+              )}
+              {dp.in.map((p) => {
+                const key = p.id === '__min__' ? 'minVal' : 'maxVal'
+                return (
+                  <div
+                    className="dvar"
+                    key={p.id}
+                    title={
+                      wired(p.id)
+                        ? 'reads int or float from the wire'
+                        : 'no wire — the bound typed here is used instead'
+                    }
+                  >
+                    <span className="port-data in" data-port={portKey(node.id, p.id, 'in')} />
+                    <span>
+                      ⇣ {p.name}:<b>{p.type}</b>
+                    </span>
+                    {!wired(p.id) && !sim && (
+                      <input
+                        className="inp"
+                        style={{ flex: 1 }}
+                        placeholder="number…"
+                        title="custom bound while ⇣ is unwired — int or float"
+                        value={node[key] ?? ''}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onChange={(e) => onPatch({ [key]: e.target.value })}
+                      />
+                    )}
+                    {!wired(p.id) && sim && String(node[key] ?? '') !== '' && (
+                      <span className="dval">{String(node[key])}</span>
+                    )}
+                  </div>
+                )
+              })}
+              {dp.out.map((p) => (
+                <div className="dvar out" key={p.id} title="the drawn number — any consumer of this type can read it">
                   <span>
                     ⇡ {p.name}:<b>{p.type}</b>
                   </span>
@@ -1382,9 +1446,9 @@ export default function NodeCard({
           )
         })(),
 
-      // FOR · FOREACH — the values the loop carries
+      // FOR · FOREACH · WHILE — the values the loop carries
       count: () =>
-        ['for', 'foreach'].includes(node.kind) && dataRows(),
+        ['for', 'foreach', 'while'].includes(node.kind) && dataRows(),
 
       // INSPECT — one ⇣ to look at
       args: () => node.kind === 'inspect' && dataRows(),
@@ -1612,26 +1676,10 @@ export default function NodeCard({
           </>
         ),
 
-      // EVENT · SYS CALL — system calls, and what they need
+      // SYS CALL — system calls, and what they need
       calls: () =>
-        ['event', 'syscall'].includes(node.kind) && (
+        node.kind === 'syscall' && (
           <>
-            {node.kind === 'event' && (
-              <>
-                <CallsEditor
-                  node={node}
-                  links={graph.links || []}
-                  assets={assets}
-                  types={types}
-                  sim={!!sim}
-                  multiple
-                  onDataOut={onDataPortDown}
-                  onPatch={onPatch}
-                  onGrow={(label, fn) => grow('call', label, fn)}
-                />
-                <GenerateAsset node={node} onPatch={onPatch} onGrow={(label, fn) => grow('generate', label, fn)} />
-              </>
-            )}
             {node.kind === 'syscall' && (
               <CallsEditor
                 node={node}
@@ -1763,12 +1811,6 @@ export default function NodeCard({
             </>
           )
         })(),
-
-      // ACTION — the chain pauses here
-      status: () =>
-        node.kind === 'action' && sim && (
-          <div className={`mc-click${tokWait ? '' : ' info'}`}>{tokWait ? '▶ click to fire' : 'chain passing…'}</div>
-        ),
 
       // TEXT — an annotation you size with the corner grip
       text: () =>

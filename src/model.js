@@ -348,6 +348,12 @@ const mathData = (n) => ({
   in: [{ id: '__a__', type: 'num', name: 'a' }, { id: '__b__', type: 'num', name: 'b' }],
   out: [{ id: '__val__', type: n.rType || 'int', name: 'result' }],
 })
+// RAND shares the math ⇣ convention — its bounds are int or float only — and
+// its ⇡ learns the same way: float when either bound is a float, int otherwise
+const randData = (n) => ({
+  in: [{ id: '__min__', type: 'num', name: 'min' }, { id: '__max__', type: 'num', name: 'max' }],
+  out: [{ id: '__val__', type: n.rType || 'int', name: 'result' }],
+})
 
 // step/code — typed ⇣ inputs and ⇡ outputs, edited on the card like STEP
 const ioData = (n) => ({
@@ -392,33 +398,6 @@ export const KINDS = {
     ports: flowIO(),
     data: ioData,
     shape: { title: true, in: true, outs: true, rows: 'code', actions: [], data: true, grip: 'form' },
-  },
-  event: {
-    canvas: ['flow'],
-    label: 'EVENT',
-    cls: 'nd-event',
-    hint: 'an event that fires when flow reaches it — calls system fns, may generate an asset',
-    ports: () => [{ id: 'out', dir: 'out', label: 'out' }],
-    shape: { title: true, in: true, outs: true, rows: 'calls', actions: ['call', 'generate'] },
-  },
-  condition: {
-    canvas: ['flow'],
-    label: 'IF',
-    cls: 'nd-cond',
-    hint: 'test a condition — flow leaves through TRUE or FALSE',
-    ports: () => [
-      { id: 'true', dir: 'out', label: 'true' },
-      { id: 'false', dir: 'out', label: 'false' },
-    ],
-    shape: { title: true, in: true, outs: true, rows: 'test' },
-  },
-  choice: {
-    canvas: ['flow'],
-    label: 'CHOICE',
-    cls: 'nd-choice',
-    hint: 'player/loop decision — one exit port per option',
-    ports: (n) => (n.exits || []).map((e) => ({ id: e.id, dir: 'out', label: e.label || '?' })),
-    shape: { title: true, in: true, outs: true, rows: 'options', actions: ['option'] },
   },
   load: {
     canvas: ['flow'],
@@ -572,7 +551,7 @@ export const KINDS = {
     shape: { title: true, in: true, outs: true, rows: 'pick', actions: ['enter'], data: true, container: true },
   },
   ifb: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
     label: 'IF',
     cls: 'mc-ifb',
     hint: 'compares ⇣ a ⟨sign⟩ ⇣ b — int or bool, unwired sides take a custom value — chain leaves via true or false · ⇡ result:bool carries the verdict',
@@ -609,7 +588,7 @@ export const KINDS = {
     shape: { title: true, in: true, outs: true, rows: 'bool', actions: ['slot'], data: true },
   },
   for: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
     label: 'FOR',
     cls: 'mc-for',
     hint: 'counted loop — a chain arriving loads ⇣ to:int, iter out runs one iteration per step publishing ⇡ i:int · end out continues the chain when done',
@@ -625,7 +604,7 @@ export const KINDS = {
     shape: { title: true, in: true, outs: true, rows: 'count', data: true, actions: ['row'] },
   },
   foreach: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
     label: 'FOREACH',
     cls: 'mc-foreach',
     hint: 'array loop — a chain arriving loads ⇣ arr, iter out runs one iteration per step publishing ⇡ item + ⇡ index · end out continues the chain when done',
@@ -643,8 +622,35 @@ export const KINDS = {
     }),
     shape: { title: true, in: true, outs: true, rows: 'count', data: true, actions: ['row'] },
   },
+  while: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'WHILE',
+    cls: 'mc-while',
+    hint: 'condition loop — a chain arriving evaluates ⇣ cond:bool, iter out runs the body while it stays true and re-checks it every round · end out continues the chain once cond turns false',
+    ports: () => [
+      { id: 'in', dir: 'in', label: '' },
+      { id: 'out', dir: 'out', label: 'iter' },
+      { id: 'end', dir: 'out', label: 'end' },
+    ],
+    data: () => ({ in: [{ id: '__cond__', type: 'bool', name: 'cond' }], out: [] }),
+    shape: { title: true, in: true, outs: true, rows: 'count', data: true },
+  },
+  switch: {
+    canvas: ['flow', 'machine', 'func'],
+    label: 'SWITCH',
+    cls: 'mc-switch',
+    hint: 'value branch — ⇣ val:any picks one flow-out arm: the “case” whose match equals val fires · default out continues when none match · + case on the card grows more arms',
+    ports: (n) => [
+      { id: 'in', dir: 'in' },
+      ...(n.cases || []).map((c) => ({ id: c.id, dir: 'out', label: c.label || 'case' })),
+      { id: 'default', dir: 'out', label: 'default' },
+    ],
+    data: () => ({ in: [{ id: '__val__', type: 'any', name: 'val' }], out: [] }),
+    shape: { title: true, in: true, outs: true, rows: 'sw', data: true, actions: ['case'] },
+  },
   inspect: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'INSPECT',
     cls: 'mc-inspect',
     hint: 'pure data — no flow needed · ⇣ obj any value; one ⇡ per field of its declared type',
@@ -656,7 +662,8 @@ export const KINDS = {
     shape: { title: true, rows: 'args', actions: ['arg'], data: true },
   },
   append: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'APPEND',
     cls: 'mc-append',
     hint: 'pure data — ⇡ a copy of ⇣ arr with ⇣ val added at the end',
@@ -665,7 +672,8 @@ export const KINDS = {
     shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   join: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'JOIN',
     cls: 'mc-join',
     hint: 'pure data — ⇡ ⇣ a followed by ⇣ b, one array',
@@ -674,7 +682,8 @@ export const KINDS = {
     shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   remove: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'REMOVE',
     cls: 'mc-remove',
     hint: 'pure data — ⇡ ⇣ arr without any element equal to ⇣ val',
@@ -683,7 +692,8 @@ export const KINDS = {
     shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   removeat: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'REMOVE AT',
     cls: 'mc-removeat',
     hint: 'pure data — ⇡ ⇣ arr with the element at ⇣ at:int dropped',
@@ -695,7 +705,8 @@ export const KINDS = {
     shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
   sort: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'SORT',
     cls: 'mc-sort',
     hint: 'pure data — ⇡ ⇣ arr ordered ascending — by ⇡ field of the item type, or by value itself',
@@ -704,7 +715,8 @@ export const KINDS = {
     shape: { title: true, rows: 'list', data: true },
   },
   clone: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
     label: 'CLONE',
     cls: 'mc-clone',
     hint: 'pure data — ⇡ a deep copy of ⇣ val: mutations of the copy never touch the base value',
@@ -761,16 +773,19 @@ export const KINDS = {
     data: mathData,
     shape: { title: true, in: true, outs: true, rows: 'math', data: true },
   },
-  action: {
-    canvas: ['machine', 'func'],
-    label: 'ACTION',
-    cls: 'mc-action',
-    hint: 'chain waits here — click to fire',
-    ports: flowIO(),
-    shape: { title: true, in: true, outs: true, rows: 'status' },
+  rand: {
+    canvas: ['flow', 'machine', 'func'],
+    // pure data like VAR and GET GLOBAL — the draw publishes through its ⇡ alone
+    dataOnly: true,
+    label: 'RAND',
+    cls: 'mc-math',
+    hint: 'pure data — no flow ports at all · ⇡ result is drawn between ⇣ min and ⇣ max — int draws are whole and inclusive, a float side makes the draw decimal · an unwired ⇣ falls back to the value typed on the card',
+    ports: () => [],
+    data: randData,
+    shape: { title: true, rows: 'rand', data: true },
   },
   syscall: {
-    canvas: ['machine', 'func'],
+    canvas: ['flow', 'machine', 'func'],
     label: 'SYS CALL',
     cls: 'mc-syscall',
     hint: 'calls its system fn as the chain passes · ⏳ can block — stays opened until clicked to return',
@@ -892,7 +907,7 @@ export function adoptInto(g, ids) {
 export const kindMeta = (node) => KINDS[node.kind] || {}
 
 // Data ports of a node: { in: [{id,type,name}], out: [...] }
-// event/syscall nodes expose every resolved system call's fn variables;
+// sys-call nodes expose every resolved system call's fn variables;
 // ENTER/EXIT doors and VAR parts expose their typed values.
 // coerce a VAR fill-in into its runtime value — leaf strings become their
 // declared numbers/bools, structs and arrays keep their shape and recurse.
@@ -937,10 +952,12 @@ export function dataPortType(graph, assets, nodeId, portId, dir, funcs = []) {
 
 // Keep math parts in step with their operands: after any wire lands or
 // leaves, re-derive each ⇡ result type — float when either side (wired
-// value or custom value typed on the card) is float, int otherwise.
+// value or custom value typed on the card) is float, int otherwise. RAND's ⇡
+// learns the same way from its ⇣ min / ⇣ max bounds.
 export function syncMath(g, assets, funcs = []) {
+  const sidesOf = (n) => (MATH[n.kind] ? [['__a__', n.aVal], ['__b__', n.bVal]] : [['__min__', n.minVal], ['__max__', n.maxVal]])
   const rType = (n) => {
-    for (const [port, custom] of [['__a__', n.aVal], ['__b__', n.bVal]]) {
+    for (const [port, custom] of sidesOf(n)) {
       const w = (g.links || []).find((l) => l.kind === 'data' && l.to === n.id && l.toPort === port)
       if (w) {
         if (dataPortType(g, assets, w.from, w.fromPort, 'out', funcs) === 'float') return 'float'
@@ -951,7 +968,10 @@ export function syncMath(g, assets, funcs = []) {
     }
     return 'int'
   }
-  return { ...g, nodes: (g.nodes || []).map((n) => (MATH[n.kind] ? { ...n, rType: rType(n) } : n)) }
+  return {
+    ...g,
+    nodes: (g.nodes || []).map((n) => (MATH[n.kind] || n.kind === 'rand' ? { ...n, rType: rType(n) } : n)),
+  }
 }
 
 // The data a call takes/returns, for logs and labels. Blank input vars
@@ -965,8 +985,6 @@ export function fnSig(r) {
 // ---- nodes & graphs ------------------------------------------------------------
 export function newNode(kind, x, y) {
   const n = { id: uid('nd'), kind, name: '', x: Math.round(x), y: Math.round(y) }
-  if (kind === 'choice') n.exits = [{ id: uid('ex'), label: 'option a' }, { id: uid('ex'), label: 'option b' }]
-  if (kind === 'event') n.calls = []
   if (kind === 'load' || kind === 'unload' || kind === 'input') n.asset = null
   if (kind === 'var') n.variable = { name: '', type: 'string', value: '' }
   if (kind === 'code') { n.inVars = []; n.outVars = []; n.code = ''; n.lang = 'python' }
@@ -982,8 +1000,20 @@ export function newNode(kind, x, y) {
     n.bVal = ''
     n.rType = 'int' // learns 'float' while any operand side is a float
   }
+  if (kind === 'rand') {
+    n.minVal = ''
+    n.maxVal = ''
+    n.rType = 'int' // learns 'float' while either bound (wire or typed value) is a float
+  }
   if (BOOL[kind]) n.slots = 2 // + ⇣ at the card foot grows more bool inputs
   if (kind === 'inspect') n.objType = 'any'
+  if (kind === 'ifb') {
+    n.op = '=='
+    n.aVal = ''
+    n.bVal = ''
+    n.cmpType = 'any'
+  }
+  if (kind === 'switch') n.cases = [] // the flow-out arms — + case on the card grows more
   if (kind === 'syscall') n.calls = [{ asset: null, fn: null }]
   if (kind === 'syscall') n.out = {}
   if (kind === 'todo') n.todos = [{ id: uid('td'), text: '', done: false }]
@@ -1043,7 +1073,7 @@ export function pruneLinks(graph, assets, nodeId, funcs = []) {
   if (!node) return graph
   const meta = kindMeta(node)
   const flowIds = new Set(meta.ports ? meta.ports(node).map((p) => p.id) : [])
-  // chained parts (STEP, EVENT…) take flow in through an implicit 'in' port
+  // chained parts (STEP, SYS CALL…) take flow in through an implicit 'in' port
   // that ports() never declares — incoming flow links ride it
   if (!meta.dataOnly && (meta.shape?.in === true || (meta.ports ? meta.ports(node) : []).some((p) => p.dir === 'in')))
     flowIds.add('in')
@@ -1339,6 +1369,26 @@ export function parseDoc(text) {
   d.vars = d.vars || []
   d.funcs = d.funcs || []
   const repair = (g) => {
+    // unify legacy flow IF ("condition", text test) into the machine IF ("ifb",
+    // typed ⇣a/⇣b comparison) — there is only one IF kind now
+    for (const n of g.nodes || []) {
+      if (n.kind === 'condition') {
+        if (!n.note && n.cond) n.note = n.cond
+        n.kind = 'ifb'
+        if (n.op === undefined) n.op = '=='
+        if (n.aVal === undefined) n.aVal = ''
+        if (n.bVal === undefined) n.bVal = ''
+        if (n.cmpType === undefined) n.cmpType = 'any'
+        delete n.cond
+      }
+      // ensure ifb nodes always have comparison fields
+      if (n.kind === 'ifb') {
+        if (n.op === undefined) n.op = '=='
+        if (n.aVal === undefined) n.aVal = ''
+        if (n.bVal === undefined) n.bVal = ''
+        if (n.cmpType === undefined) n.cmpType = 'any'
+      }
+    }
     dedupeIds(g) // heal any doc corrupted by the old paste bug
     dedupeExitNames(g) // real EXIT names must be unique (instances pick by name)
     intoView(g) // pull edge-parked parts back inside the reachable canvas

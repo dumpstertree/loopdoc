@@ -5,7 +5,7 @@ import { fuzzyRank } from '../src/fuzzy.js'
 const items = [
   { id: 'step', label: 'STEP', hint: 'plain step in the loop — flow passes through' },
   { id: 'event', label: 'EVENT', hint: 'an event that fires when flow reaches it' },
-  { id: 'condition', label: 'CONDITION', hint: 'test a condition — flow leaves through TRUE or FALSE' },
+  { id: 'ifb', label: 'IF', hint: 'compares ⇣ a ⟨sign⟩ ⇣ b — chain leaves via true or false' },
   { id: 'choice', label: 'CHOICE', hint: 'player/loop decision — one exit port per option' },
   { id: 'load', label: 'LOAD', hint: 'load a 📦 asset into memory' },
   { id: 'log', label: 'LOG', hint: 'print a line to the console' },
@@ -26,7 +26,7 @@ test('characters must appear in order', () => {
 })
 
 test('prefix beats scattered letters', () => {
-  assert.equal(ids('co')[0], 'condition') // CHOICE also matches, but scattered
+  assert.equal(ids('if')[0], 'ifb')
 })
 
 test('word-start bonus in the hint surfaces it', () => {

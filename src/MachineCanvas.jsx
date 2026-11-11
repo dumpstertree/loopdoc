@@ -13,7 +13,7 @@ import { useCanvasEditor, measurePorts, boxHits } from './useCanvasEditor.js'
 // ---- editor ------------------------------------------------------------------
 // wire routing (orth / routePath) now lives in model.js — shared with the flow canvas
 
-export default function MachineCanvas({ graph, assets, types, globals = [], funcs = [], gstore, onChange, onOpenNode, rail = true }) {
+export default function MachineCanvas({ graph, assets, types, globals = [], funcs = [], gstore, onChange, onOpenNode, focus = null, rail = true }) {
   const [sim, setSim] = useState(null)
   const [drag, setDrag] = useState(null)
   const dragRef = useRef(drag)
@@ -73,6 +73,21 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
     getPointer: () => lastPointerRef.current,
     clamp0: true,
   })
+  // a DRC panel jump hands over the flagged part as focus — it opens already
+  // selected AND centered: a part parked far from the last view would sit
+  // off-screen and the jump would feel like it went nowhere, so pan to it
+  // (machine content is clamped to x,y ≥ 0, so scrolling is all there is);
+  // the effect reruns only when focus itself changes, so whatever the user
+  // picks afterwards stays theirs
+  useEffect(() => {
+    if (!focus) return
+    setSelection([focus])
+    const sc = scrollRef.current
+    const n = (graphRef.current.nodes || []).find((x) => x.id === focus)
+    if (!sc || !n) return
+    sc.scrollLeft = Math.max(0, (n.x || 0) - sc.clientWidth / 2)
+    sc.scrollTop = Math.max(0, (n.y || 0) - sc.clientHeight / 2)
+  }, [focus])
   const patch = (id, p) =>
     mutate((g) => {
       let g2 = pruneLinks(patchNode(g, id, p), assets, id, funcs)
@@ -797,7 +812,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
                 <div className="canvas-empty">
                   <p>
                     <b>Empty machine.</b> Add parts from the bar above: ENTER/EXIT doors frame the chain, STEPs walk it,
-                    ACTIONs fire on click, SYS CALLs call ⚙️ systems on flow.
+                    SYS CALLs call ⚙️ systems on flow.
                   </p>
                   <p>
                     chain sim — ENTER doors start chains; chains walk downstream one hop per step and the door re-runs when its chains

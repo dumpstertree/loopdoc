@@ -52,7 +52,7 @@ test('data rule matrix: same, mismatch, self, if-operand sides alike', () => {
 })
 
 test('compatTargets pulses exactly the accepting ports', () => {
-  const act = n('action')
+  const act = n('syscall')
   const fr = n('for')
   const sys = n('syscall', { calls: [{ asset: 'as', fn: 'fn' }] })
   const assets = [{ id: 'as', name: 's', api: [{ id: 'fn', name: 'f', inputs: [], outputs: [{ id: 'v', name: 'o', type: 'int' }] }] }]
@@ -287,7 +287,7 @@ test('DRC flags flow wired into a VAR and a VAR set as entry', () => {
 // pulling a second connection off of it (both canvases call this) -------------
 
 test('a flow branch shares the run up to the grabbed anchor, then breaks to the new part', () => {
-  const [a, b, c] = [n('enter'), n('step'), n('action')]
+  const [a, b, c] = [n('enter'), n('step'), n('syscall')]
   const src = { ...flow(a, b), id: 'L', anchors: [{ x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }] }
   const g = { id: 'g', mode: 'machine', name: '', entry: null, nodes: [a, b, c], links: [src] }
   const r = branchLink(g, [], src, 1, c.id, 'in')

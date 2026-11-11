@@ -42,18 +42,18 @@ test('fork duplicates the token to every output', () => {
   assert.ok(ends.some((l) => l.includes('two')), 'fork branch two ran')
 })
 
-test('action waits for a click, then fires', () => {
+test('a blocking sys call stays opened until clicked', () => {
   const en = n('enter')
-  const ac = n('action', { name: 'attack' })
+  const ac = n('syscall', { name: 'attack', block: true })
   const sk = n('step', { name: 'done' })
   const nodes = [en, ac, sk]
   const links = [flow(en, ac), flow(ac, sk)]
   const mem = { tokens: [] }
   const { log } = run(nodes, links, 4, mem)
-  assert.ok(log.some((l) => l.includes('waiting for click')), 'chain held at the action')
+  assert.ok(log.some((l) => l.includes('opened — click to return')), 'chain held at the blocking call')
   mem.tokens.forEach((t) => (t.ready = true)) // the click
   const again = run(nodes, links, 6, mem)
-  assert.ok(again.log.some((l) => l.includes('attack fired')), 'the click released the action')
+  assert.ok(again.log.some((l) => l.includes('no system fn selected')), 'the click released the call — it ran')
   assert.ok(again.log.some((l) => l.includes('done — chain end')), 'the chain got through')
 })
 
@@ -163,6 +163,83 @@ test('foreach walks the array one iteration at a time, then pulses end', () => {
   assert.ok(log.some((l) => l.includes('3/3')), 'iteration 3 ran')
   assert.ok(log.some((l) => l.includes('finished (3)')), 'end pulsed after the last one')
   assert.ok(log.some((l) => l.includes('after — chain end')), 'end chain fired downstream')
+})
+
+test('while rounds run while its ⇣ cond stays true, one round at a time', () => {
+  const assets = [
+    {
+      id: 'as1',
+      name: 'gate',
+      api: [{ id: 'fn1', name: 'open', inputs: [], outputs: [{ id: 'v1', name: 'again', type: 'bool' }] }],
+    },
+  ]
+  const en = n('enter')
+  const sys = n('syscall', { calls: [{ asset: 'as1', fn: 'fn1' }], out: { v1: true } })
+  const wh = n('while')
+  const body = n('step', { name: 'body' })
+  const nodes = [en, sys, wh, body]
+  const links = [flow(en, sys), flow(sys, wh), data(sys, 'v1', wh, '__cond__'), flow(wh, body)]
+  const { log } = run(nodes, links, 20, { tokens: [] }, assets)
+  assert.ok(log.some((l) => l.includes('round 1')), 'the first round ran')
+  assert.ok(log.some((l) => l.includes('round 3')), 'the loop kept its token and kept rounding')
+})
+
+test('a while whose ⇣ cond is already false drops the chain', () => {
+  const assets = [
+    {
+      id: 'as1',
+      name: 'gate',
+      api: [{ id: 'fn1', name: 'open', inputs: [], outputs: [{ id: 'v1', name: 'again', type: 'bool' }] }],
+    },
+  ]
+  const en = n('enter')
+  const sys = n('syscall', { calls: [{ asset: 'as1', fn: 'fn1' }], out: { v1: false } })
+  const wh = n('while')
+  const after = n('step', { name: 'after' })
+  const nodes = [en, sys, wh, after]
+  const lEnd = flow(wh, after)
+  lEnd.fromPort = 'end'
+  const links = [flow(en, sys), flow(sys, wh), data(sys, 'v1', wh, '__cond__'), lEnd]
+  const { log } = run(nodes, links, 6, { tokens: [] }, assets)
+  assert.ok(log.some((l) => l.includes('chain dropped')), 'the false condition never ran a round')
+  assert.ok(!log.some((l) => l.includes('round ')), 'no round fired')
+  assert.ok(!log.some((l) => l.includes('after — chain end')), 'the end chain stayed quiet')
+})
+
+test('switch leaves through the case arm whose match equals ⇣ val', () => {
+  const en = n('enter')
+  const v = n('var', { variable: { name: 'which', type: 'int', value: '2' } })
+  const sw = n('switch', { cases: [{ id: 'c1', label: 'one', val: '1' }, { id: 'c2', label: 'two', val: '2' }] })
+  const arm = n('step', { name: 'two arm' })
+  const fb = n('step', { name: 'fallback' })
+  const nodes = [en, v, sw, arm, fb]
+  const lArm = flow(sw, arm)
+  lArm.fromPort = 'c2'
+  const lDef = flow(sw, fb)
+  lDef.fromPort = 'default'
+  const links = [flow(en, sw), data(v, '__val__', sw, '__val__'), lArm, lDef]
+  const { log } = run(nodes, links, 20, { tokens: [] }, [])
+  assert.ok(log.some((l) => l.includes('equals "2" → arm "two"')), 'the matching case fired')
+  assert.ok(log.some((l) => l.includes('two arm — chain end')), 'the matching arm ran downstream')
+  assert.ok(!log.some((l) => l.includes('fallback — chain end')), 'default stayed quiet')
+})
+
+test('a switch with no matching case leaves via default', () => {
+  const en = n('enter')
+  const v = n('var', { variable: { name: 'which', type: 'int', value: '9' } })
+  const sw = n('switch', { cases: [{ id: 'c1', label: 'one', val: '1' }, { id: 'c2', label: 'two', val: '2' }] })
+  const arm = n('step', { name: 'two arm' })
+  const fb = n('step', { name: 'fallback' })
+  const nodes = [en, v, sw, arm, fb]
+  const lArm = flow(sw, arm)
+  lArm.fromPort = 'c2'
+  const lDef = flow(sw, fb)
+  lDef.fromPort = 'default'
+  const links = [flow(en, sw), data(v, '__val__', sw, '__val__'), lArm, lDef]
+  const { log } = run(nodes, links, 20, { tokens: [] }, [])
+  assert.ok(log.some((l) => l.includes('matches no case — default')), 'the default arm fired')
+  assert.ok(log.some((l) => l.includes('fallback — chain end')), 'the default chain ran')
+  assert.ok(!log.some((l) => l.includes('two arm — chain end')), 'the case arm stayed quiet')
 })
 
 test('blocking syscall freezes the chain until clicked', () => {
@@ -516,6 +593,29 @@ test('a grown slot is a real port — the engine reads slot three', () => {
   const links = [data(t, '__val__', an, '__s0__'), data(t, '__val__', an, '__s1__'), data(f, '__val__', an, '__s2__'), data(an, '__bool__', sink, '__in__')]
   const got = dataValue([t, f, an, sink], links, {}, sink.id, '__in__')
   assert.ok(got && got.val === false, 'wiring false into the grown slot folds the and to false')
+})
+
+test('RAND draws between its bounds — inclusive ints, decimals for floats', () => {
+  const r = n('rand', { minVal: '1', maxVal: '3' })
+  const sink = n('step', { name: 'sink' })
+  const nodes = [r, sink]
+  const links = [data(r, '__val__', sink, '__in__')]
+  for (let i = 0; i < 20; i++) {
+    const got = dataValue(nodes, links, {}, sink.id, '__in__')
+    assert.ok(got && Number.isInteger(got.val) && got.val >= 1 && got.val <= 3, `int draw stays whole inside 1..3 (got ${got && got.val})`)
+  }
+  const lo = n('var', { variable: { name: 'half', type: 'float', value: '0.5' } })
+  const rf = n('rand', { rType: 'float' })
+  const nodes2 = [lo, rf, sink]
+  const links2 = [data(lo, '__val__', rf, '__min__'), data(rf, '__val__', sink, '__in__')]
+  for (let i = 0; i < 20; i++) {
+    const got = dataValue(nodes2, links2, {}, sink.id, '__in__')
+    if (got && got.val !== null)
+      assert.ok(got.val >= 0.5 && got.val <= 1, `the max-typed 1 bounds a float draw with the unwired side (got ${got.val})`)
+  }
+  const empty = n('rand')
+  const gone = dataValue([empty, sink], [data(empty, '__val__', sink, '__in__')], {}, sink.id, '__in__')
+  assert.ok(gone && gone.val === null, 'a rand with nothing on either bound draws nothing')
 })
 
 test('the chain flows through and/or — they fold and log as the token passes', () => {

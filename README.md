@@ -45,8 +45,8 @@ to a ⇣ input **of the same type** (types compare case-insensitively).
 
 canvas: `STEP` · `CODE` (edits a script — Python syntax validated on the card —
 with `+ ⇣ input` / `+ ⇡ output` buttons for typed data ports, like STEP;
-available on flow, machine and func canvases, chain passes through) · `EVENT` (calls 0..n system fns, may ✨generate a
-graph-local asset) · `IF` (true/false) · `CHOICE` (one port per option) ·
+available on flow, machine and func canvases, chain passes through) · `SYS CALL` (picks a ⚙️ system + fn, calls it as the chain
+passes — ⏳ can block; see machines) · `IF` (true/false) ·
 `LOAD` / `UNLOAD` (📦 asset memory) · `INPUT` (🎮 input asset) · `VAR` (**pure data, no flow ports** — make a typed
 value: pick any type and fill in every field, recursively; child structs nest
 inside, arrays grow row by row, `bool` is a pick and `asset` a 📦 dropdown;
@@ -60,6 +60,11 @@ door it leaves through) ·
 both canvases also carry `GET GLOBAL` (reads a ⚙ doc-wide variable) and
 `SET GLOBAL` (flow passes through as it writes the ⚙ — ⇣ takes the value,
 same type as the picked variable).
+
+flow graphs carry the same loop and data parts machines do — `FOR`, `FOREACH`,
+`WHILE`, `SWITCH`, `INSPECT` and the **array tools** work identically on a flow
+chain, and so do
+the math parts (`+ − × ÷ mod`), `AND`/`OR` and `RAND` on every canvas.
 
 machine canvas: `ENTER` (**the machine's door** — always the chain start,
 nothing else self-starts · a dynamic list of typed **variables** you set on
@@ -76,12 +81,19 @@ function's own `func` graph, not here) ·
 or `bool`, both sides alike; an unwired side takes a **custom value** typed on
 the card; chain leaves via **true** or **false**, and ⇡ `result:bool`
 republishes the verdict) ·
+`SWITCH` (⇣ `val:any` picks one flow-out **arm** by equality — `+ case` grows
+arms, each naming an arm and typing the value it matches on the card; the first
+arm whose match equals `val` fires, **default** out continues when none match;
+removing a case prunes the wires on its arm) ·
 `FOR` (⇣ `to:int` loads a
 count on trigger; one iteration per step once the previous body chain has
 ended, ⇡ `i:int` is the current iteration) · `FOREACH` (⇣ any `T[]` array,
 from a sys-call output; one iteration per step, ⇡ `item:T` + ⇡ `index:int`;
 **end** out continues the chain once the last body chain finishes) ·
-`ACTION` (the chain waits here — click to fire) · `SYS CALL` (calls its system fn as the chain
+`WHILE` (⇣ `cond:bool` re-checked every round — **iter** out runs the body
+while it stays true, **end** out continues once it turns false; a cond that
+never flips is reported as a runaway at 100 rounds) ·
+`SYS CALL` (calls its system fn as the chain
 passes · tick **⏳ can block** and it stays *opened* — the chain freezes
 until you click it to return) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT` ·
@@ -108,7 +120,7 @@ victory — gold: 12 · party: [goblin, orc]`)
 .
 
 Chain sim visuals: parts with a chain token in flight glow teal; waiting
-parts (⏳ ACTION / blocked SYS CALL) pulse amber and are clickable.
+parts (⏳ blocked SYS CALL) pulse amber and are clickable.
 
 Array data: give a system fn an output typed `Foo[]` and edit its sim value
 as a comma list (`goblin, orc, dragon`) — foreach consumes it and its live
@@ -127,7 +139,7 @@ never typed. Renaming a type cascades into fn variables and foreach item
 types.
 
 Define a ⚙️ **system** asset and give it an API: function names with typed
-⇣ inputs and ⇡ outputs. EVENT nodes and SYS CALL nodes pick a system + fn
+⇣ inputs and ⇡ outputs. SYS CALL nodes pick a system + fn
 and grow typed port squares. Drag ⇡ → ⇣ to wire data; mismatches are refused
 with a warning. In machines, typed wires feed values into fn inputs. A sys call is a
 black box: while **simulating**, its ⇡ rows become editable so you type the
@@ -141,13 +153,13 @@ wire also carries an ordering demand, checked against the graph's flow.
 `wireRules.valueWireRisks(graph)` answers it once per graph, and both canvases
 plus the DRC read the same verdict:
 
-- **computed parts** (`+ − × ÷ mod`, `all/any`, `INSPECT`, `CLONE`, array
+- **computed parts** (`+ − × ÷ mod`, `RAND`, `all/any`, `INSPECT`, `CLONE`, array
   tools) are recomputed the moment they are read — their ⇡ is exactly as
   guaranteed as the wires feeding their own ⇣, so the demand chain is walked
   back through them (`M → ⇡` is only as safe as `SYS CALL → M`)
 - **made values** (`VAR`, `GET GLOBAL`, `GET LEDGER`, ENTER-door variables)
   exist from the start of a run — order-free
-- **everything else** (`EVENT`/`SYS CALL` results, `IF` verdicts, `FOR`/`FOREACH`
+- **everything else** (`SYS CALL` results, `IF` verdicts, `FOR`/`FOREACH`
   items and indices, nested `MACHINE`/`FUNC` outputs…) fires when a chain
   arrives: its ⇡ is guaranteed at a reader only if it **dominates** it — every
   flow path from an entry (`ENTER` door / the ▶ start) passes through it first
@@ -219,7 +231,7 @@ function body, and since fetched items keep their slot ids, SYS CALL parts and
   members keep their offsets), resizes, pastes and new parts; existing positions
   are never moved, they snap the next time you touch them
 - ▶ on a node marks the graph entry · ▶ **traverse** walks the flow,
-  pausing at IF/CHOICE; nested graphs run and RETURN pops back
+  pausing at IF; nested graphs run and RETURN pops back
 - **⚙ GLOBALS** (DATA tab): document-wide named variables with defaults —
   the **live session state of the game**: machine sims read and write the one
   shared store (SET GLOBAL parts write as the chain passes), so
@@ -247,7 +259,20 @@ function body, and since fetched items keep their slot ids, SYS CALL parts and
 - **⚑ check** opens the design-rule panel — a PCB-style DRC over the open
   graph or the whole doc: dropped-chain wiring (unwired IF operand, empty
   loop body, no entry), last-iteration item reads on end chains, unreachable exits, dangling data wires, value wires reading before their producer can have run (the wires drawn red — "has the producer run?" per `wireRules`), deleted-type drift;
-  ✕ errors · ⚠ warnings · ℹ info, click a finding to jump to its graph
+  ✕ errors · ⚠ warnings · ℹ info, click a finding to jump to its graph — the flagged
+  part opens selected in the middle of the view — the canvas pans to it, so even
+  a part parked far from the last view lands on screen
+- **⚿ validate** (in the same menu) bolts whole-doc integrity checks onto that
+  panel — the same part id living in two graphs, a graph mounted twice, a part
+  chained to a text frame that is gone, a nested graph on a kind that never
+  opens one, ƒ bodies no call site reaches: the old floating data an edit can
+  leave behind, which otherwise shows as errors whose click leads nowhere;
+  clicking a ⚿ finding selects the suspect part
+- **✂ clean up** (also in the menu) removes what ⚿ flags as stale — duplicate
+  part copies (the first copy wins) with their wires, the second mount of a
+  twice-mounted graph, unknown-kind parts, group links chained to a frame that
+  is gone — and reports the cut counts on the button; ƒ bodies are never
+  removed, so ⚿ keeps listing never-called ones
 - **Ctrl+S** save / open `.json` (File System Access API; autosaves to
   localStorage meanwhile)
 

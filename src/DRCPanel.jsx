@@ -1,5 +1,6 @@
 // The design-rule-check panel: live findings for the open graph or the whole
-// doc, grouped per graph; clicking a finding jumps to its graph.
+// doc, grouped per graph; clicking a finding opens its graph and selects the
+// part it flags (findings carry the part's nid for that).
 import React, { useState } from 'react'
 
 const SEV = {
@@ -64,8 +65,8 @@ export default function DRCPanel({ findings, scope, onScope, onJump, onClose }) 
               <button
                 key={i}
                 className={`drc-row ${SEV[f.sev].cls}`}
-                title={`${SEV[f.sev].title} — click to open that graph`}
-                onClick={() => onJump(f.path)}
+                title={`${SEV[f.sev].title} — click to open that graph and select the part`}
+                onClick={() => onJump(f.path, f.nid)}
               >
                 <span className="drc-sev">{SEV[f.sev].icon}</span>
                 <span className="drc-text">

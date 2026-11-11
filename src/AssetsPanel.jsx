@@ -63,7 +63,7 @@ export function TypeSelect({ value, onChange, types, title }) {
           </optgroup>
           <optgroup label="declared arrays">
             {names.filter((n) => !BASIC_TYPES.includes(n)).map((n) => (
-              <option key={n} value={n}>{n}[]</option>
+              <option key={`${n}[]`} value={`${n}[]`}>{n}[]</option>
             ))}
           </optgroup>
         </>
@@ -301,7 +301,7 @@ function ApiEditor({ asset, onChange, types }) {
     upd(fi, { [key]: api[fi][key].map((v, j) => (j === vi ? { ...v, ...patch } : v)) })
   return (
     <div className="api-box">
-      <div className="io-label head">API · {api.length} — exposed to event & sys-call nodes</div>
+      <div className="io-label head">API · {api.length} — exposed to SYS CALL nodes</div>
       {api.map((f, i) => (
         <div className="fn-card" key={f.id}>
           <div className="ty-head">
@@ -491,7 +491,7 @@ const EMPTY_HINT = {
   ui: 'No UI assets yet — screens, buttons, HUD elements…',
   audio: 'No audio assets yet — music, sfx, ambiences…',
   input: 'No input assets yet — named key/button bindings systems can ask about.',
-  system: 'No systems yet — a system is a black box with a typed API: add one, then declare its functions and events.',
+  system: 'No systems yet — a system is a black box with a typed API: add one, then declare its functions.',
 }
 
 // a media kind list with its add button (art / ui / audio / input)
