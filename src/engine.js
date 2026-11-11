@@ -182,6 +182,24 @@ function dataValue(nodes, links, mem, nodeId, varId, depth = 0) {
     }
     return { val: c, from: src.name || 'clone' }
   }
+  if (src.kind === 'length') {
+    // an element count — the wired value is read the same way the array tools
+    // read their ⇣ arr; anything that isn't an array simply has no length
+    const d = dataValue(nodes, links, mem, src.id, '__arr__', depth + 1)
+    const arr = d ? d.val : null
+    return { val: Array.isArray(arr) ? arr.length : null, from: src.name || 'length' }
+  }
+  if (src.kind === 'getat') {
+    // an element read — same ⇣ pair as REMOVE AT, but one element out instead
+    // of a copy without it; a missing or out-of-range index simply has no value
+    const a = dataValue(nodes, links, mem, src.id, '__arr__', depth + 1)
+    const i = dataValue(nodes, links, mem, src.id, '__index__', depth + 1)
+    const arr = a ? a.val : null
+    const raw = i ? i.val : null
+    const k = raw === null || raw === undefined || raw === '' ? null : Number(raw)
+    const hit = Array.isArray(arr) && Number.isInteger(k) && k >= 0 && k < arr.length
+    return { val: hit ? arr[k] : null, from: src.name || 'get at' }
+  }
   if (['append', 'join', 'remove', 'removeat', 'sort'].includes(src.kind)) {
     // pure array arithmetic — null (never fired / unwired) on any side means no value yet
     // JOIN reads its first array from ⇣ a — its __arr__ port is the output

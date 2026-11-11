@@ -1066,7 +1066,7 @@ svg.edges .edge {
 .mc-foreach { --kc: var(--clay); }
 .mc-while { --kc: var(--clay); }
 .mc-inspect { --kc: var(--mc-inspect-kc); }
-.mc-append, .mc-join, .mc-remove, .mc-removeat, .mc-sort, .mc-clone { --kc: var(--mc-append-mc-join-mc-remove-mc-removeat-mc-sort-kc); }
+.mc-append, .mc-join, .mc-remove, .mc-removeat, .mc-getat, .mc-sort, .mc-clone, .mc-length { --kc: var(--mc-append-mc-join-mc-remove-mc-removeat-mc-sort-kc); }
 .mc-syscall { --kc: var(--mint); }
 .mc-text { --kc: var(--dim); background: var(--mc-text-background); }
 .mc-todo { --kc: var(--amber); background: var(--mc-todo-background); }

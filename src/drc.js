@@ -219,13 +219,14 @@ function scanGraph(g, assets, types, globals, add, funcs = [], ownerId = null) {
     if (n.kind === 'for' && !dataTo(n.id, '__to__')) add('error', nf(n), 'counted loop has no ⇣ to:int — nothing to count to')
     if (n.kind === 'foreach' && !dataTo(n.id, '__arr__')) add('error', nf(n), 'foreach has no ⇣ arr source — it can never iterate')
     if (n.kind === 'while' && !dataTo(n.id, '__cond__')) add('error', nf(n), 'while has no ⇣ cond:bool — it can never decide to run')
-    if (['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind) && !dataTo(n.id, '__arr__'))
+    if (['append', 'join', 'remove', 'removeat', 'getat', 'sort', 'length'].includes(n.kind) && !dataTo(n.id, '__arr__'))
       add('error', nf(n), 'no ⇣ array wired — it has nothing to work on')
     if (n.kind === 'join' && dataTo(n.id, '__arr__') && !dataTo(n.id, '__b__'))
       add('error', nf(n), '⇣ b is unwired — join needs two arrays')
     if ((n.kind === 'append' || n.kind === 'remove') && !dataTo(n.id, '__val__'))
       add('error', nf(n), `⇣ val unwired — nothing to ${n.kind === 'append' ? 'append' : 'remove'}`)
     if (n.kind === 'removeat' && !dataTo(n.id, '__index__')) add('error', nf(n), '⇣ at:int is unwired — no index to cut at')
+    if (n.kind === 'getat' && !dataTo(n.id, '__index__')) add('error', nf(n), '⇣ at:int is unwired — no index to read at')
     if (n.kind === 'clone' && !dataTo(n.id, '__val__')) add('error', nf(n), '⇣ val unwired — nothing to clone')
 
     if ((n.kind === 'for' || n.kind === 'foreach' || n.kind === 'while') && hasIn(n.id)) {

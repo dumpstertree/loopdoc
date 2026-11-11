@@ -1453,9 +1453,10 @@ export default function NodeCard({
       // INSPECT — one ⇣ to look at
       args: () => node.kind === 'inspect' && dataRows(),
 
-      // APPEND · JOIN · REMOVE · REMOVE AT · SORT · CLONE — arrays in, array out
+      // APPEND · JOIN · REMOVE · REMOVE AT · GET AT · SORT · CLONE · LENGTH — data in,
+      // computed value out
       list: () =>
-        ['append', 'join', 'remove', 'removeat', 'sort', 'clone'].includes(node.kind) &&
+        ['append', 'join', 'remove', 'removeat', 'getat', 'sort', 'clone', 'length'].includes(node.kind) &&
         (() => {
           const dp = dataPorts(node, assets, funcs, graph)
           const fields = node.kind === 'sort' ? fieldsOf(types, node.itemType) : null

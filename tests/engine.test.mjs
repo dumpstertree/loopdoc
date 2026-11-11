@@ -325,6 +325,35 @@ test('APPEND adds one value to the end of an array', () => {
   assert.ok(log.some((x) => x.includes('loaded [1, 2, 9]')), 'value appended')
 })
 
+test('LENGTH counts the elements of the array wired in — null for non-arrays', () => {
+  const en = n('enter', { vars: [{ id: 'v1', name: 'xs', type: 'int[]', value: '1, 2, 9' }] })
+  const le = n('length')
+  const nodes = [en, le]
+  const links = [data(en, 'v1', le, '__arr__')]
+  const got = dataValue(nodes, links, {}, le.id, '__len__')
+  assert.ok(got && got.val === 3, 'three elements counted')
+  const unwired = dataValue([le], [], {}, le.id, '__len__')
+  assert.ok(unwired.val === null, 'an unwired ⇣ arr has no length')
+})
+
+test('GET AT reads one element by index — nothing when the index is out of range', () => {
+  const en = n('enter', {
+    vars: [
+      { id: 'v1', name: 'xs', type: 'int[]', value: '1, 2, 9' },
+      { id: 'v2', name: 'at', type: 'int', value: '2' },
+      { id: 'v3', name: 'past', type: 'int', value: '5' },
+    ],
+  })
+  const ga = n('getat', { itemType: 'int' })
+  const nodes = [en, ga]
+  const links = [data(en, 'v1', ga, '__arr__'), data(en, 'v2', ga, '__index__')]
+  const got = dataValue(nodes, links, {}, ga.id, '__item__')
+  assert.ok(got && got.val === 9, 'element at index 2 read')
+  const oorLinks = [data(en, 'v1', ga, '__arr__'), data(en, 'v3', ga, '__index__')]
+  const oor = dataValue(nodes, oorLinks, {}, ga.id, '__item__')
+  assert.ok(oor && oor.val === null, 'an index past the end has no value')
+})
+
 test('JOIN concatenates, REMOVE cuts by value, REMOVE AT cuts by index', () => {
   const en = n('enter', {
     vars: [

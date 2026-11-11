@@ -107,10 +107,14 @@ function detail(n, g, doc) {
       return '⇡ = ⇣ arr without any element equal to ⇣ val'
     case 'removeat':
       return '⇡ = ⇣ arr with element at ⇣ at:int dropped'
+    case 'getat':
+      return '⇡ item = the element of ⇣ arr at ⇣ at:int (0 is the first) — null when the index is out of range'
     case 'sort':
       return `⇡ = ⇣ arr ascending${n.field ? ` by ${n.field} of each item` : ' by value'}`
     case 'clone':
       return '⇡ = deep copy of ⇣ val — writes to it never reach the original'
+    case 'length':
+      return '⇡ len:int = how many elements ⇣ arr has (null when the wired value is not an array)'
     case 'rand':
       return '⇡ = one draw between ⇣ min and ⇣ max (inclusive for int bounds, unwired bounds take the card value)'
     case 'add':

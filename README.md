@@ -99,9 +99,11 @@ until you click it to return) · `INSPECT` (pure data —
 no flow ports at all; ⇣ `obj` of any declared type → one ⇡ per field) · `TEXT` ·
 **array tools** (pure data, no flow) — `APPEND` (⇣ arr + ⇣ val → ⇡ arr with the
 value at the end) · `JOIN` (⇣ a + ⇣ b → one array) · `REMOVE` (drops every
-element equal to ⇣ val) · `REMOVE AT` (cuts the element at ⇣ `at:int`) ·
-`SORT` (ascending — by a chosen field of struct items, or by value) · they all
-learn their item type from the first array wired in; `CLONE` takes any ⇣ value
+element equal to ⇣ val) · `REMOVE AT` (cuts the element at ⇣ `at:int`) · `GET AT`
+(⇣ arr + ⇣ `at:int` → ⇡ the element at that index, 0 first — nothing when the index
+is out of range) · `SORT` (ascending — by a chosen field of struct items, or by value) · they all
+learn their item type from the first array wired in; `LENGTH` needs none
+(⇣ any array → ⇡ `len:int` — how many elements it has); `CLONE` takes any ⇣ value
 and ⇡ a deep copy — the copy is what downstream write-backs (e.g. a foreach item) touch,
 **never** the base value ·
 `TODO` (checklist leaf on **both** canvases — add task lines, tick the

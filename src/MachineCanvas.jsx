@@ -169,7 +169,7 @@ export default function MachineCanvas({ graph, assets, types, globals = [], func
               if (n.id !== to) return n
               if (toPort === '__arr__' && n.kind === 'foreach') return { ...n, itemType: ta.replace('[]', '') }
               // array ops learn the item type from the array wired in first
-              if ((toPort === '__arr__' || toPort === '__a__') && ['append', 'join', 'remove', 'removeat', 'sort'].includes(n.kind))
+              if ((toPort === '__arr__' || toPort === '__a__') && ['append', 'join', 'remove', 'removeat', 'getat', 'sort'].includes(n.kind))
                 return { ...n, itemType: ta.replace('[]', '') }
               if (toPort === '__val__' && n.kind === 'clone') return { ...n, vType: ta }
               if (toPort === '__obj__' && n.kind === 'inspect') {

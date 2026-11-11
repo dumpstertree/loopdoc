@@ -120,7 +120,7 @@ export function branchLink(g, assets, src, idx, to, toPort, funcs = []) {
 const VALUE_FREE = new Set(['enter', 'var', 'getg', 'getledger'])
 // RAND is computed on read like the math folds — its draw is only as
 // guaranteed as the values feeding its own ⇣ bounds
-const VALUE_DEMAND = new Set([...Object.keys(MATH), ...Object.keys(BOOL), 'rand', 'inspect', 'clone', 'append', 'join', 'remove', 'removeat', 'sort'])
+const VALUE_DEMAND = new Set([...Object.keys(MATH), ...Object.keys(BOOL), 'rand', 'inspect', 'clone', 'length', 'append', 'join', 'remove', 'removeat', 'getat', 'sort'])
 
 export function valueWireRisks(g) {
   const nodes = g.nodes || []

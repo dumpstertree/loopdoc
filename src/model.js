@@ -704,6 +704,19 @@ export const KINDS = {
     }),
     shape: { title: true, rows: 'list', data: true, actions: ['row'] },
   },
+  getat: {
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
+    label: 'GET AT',
+    cls: 'mc-getat',
+    hint: 'pure data — ⇡ item reads the element of ⇣ arr at ⇣ at:int (0 is the first); an index out of range has no value',
+    ports: () => [],
+    data: (n) => ({
+      in: [arrIn(n), { id: '__index__', type: 'int', name: 'at' }],
+      out: [{ id: '__item__', type: n.itemType || 'any', name: 'item' }],
+    }),
+    shape: { title: true, rows: 'list', data: true },
+  },
   sort: {
     canvas: ['flow', 'machine', 'func'],
     dataOnly: true,
@@ -712,6 +725,16 @@ export const KINDS = {
     hint: 'pure data — ⇡ ⇣ arr ordered ascending — by ⇡ field of the item type, or by value itself',
     ports: () => [],
     data: (n) => ({ in: [arrIn(n)], out: [arrOut(n)] }),
+    shape: { title: true, rows: 'list', data: true },
+  },
+  length: {
+    canvas: ['flow', 'machine', 'func'],
+    dataOnly: true,
+    label: 'LENGTH',
+    cls: 'mc-length',
+    hint: 'pure data — ⇡ len:int counts the elements of ⇣ arr; any array works, a non-array has no length',
+    ports: () => [],
+    data: () => ({ in: [{ id: '__arr__', type: 'any', name: 'arr' }], out: [{ id: '__len__', type: 'int', name: 'len' }] }),
     shape: { title: true, rows: 'list', data: true },
   },
   clone: {
@@ -992,7 +1015,7 @@ export function newNode(kind, x, y) {
   if (kind === 'machine') n.graph = newGraph('machine', n.name || 'machine')
   if (kind === 'func') n.func = null
   if (kind === 'foreach') n.itemType = '?'
-  if (['append', 'join', 'remove', 'removeat', 'sort'].includes(kind)) n.itemType = null // learns from the first array wired in
+  if (['append', 'join', 'remove', 'removeat', 'sort', 'getat'].includes(kind)) n.itemType = null // learns from the first array wired in
   if (kind === 'sort') n.field = ''
   if (kind === 'clone') n.vType = ''
   if (MATH[kind]) {
